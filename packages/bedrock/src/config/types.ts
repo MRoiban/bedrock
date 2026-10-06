@@ -16,9 +16,9 @@ export interface FunctionContext {
   request: Request;
 }
 
-export interface FunctionDefinition<Args = any, Result = any> {
+export interface FunctionDefinition<Args = any, Result = any, Input = Args> {
   readonly kind: "query" | "mutation";
-  readonly schema?: StandardSchemaV1<unknown, Args>;
+  readonly schema?: StandardSchemaV1<Input, Args>;
   readonly run: (ctx: FunctionContext, args: Args) => Result;
 }
 
@@ -61,7 +61,7 @@ export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends Fun
   plugins?: readonly PluginConfig[];
 }
 
-export type FunctionArgs<F extends FunctionDefinition> = F extends FunctionDefinition<infer A, any> ? A : never;
+export type FunctionArgs<F extends FunctionDefinition> = F extends FunctionDefinition<any, any, infer Input> ? Input : never;
 export type FunctionResult<F extends FunctionDefinition> = F extends FunctionDefinition<any, infer R> ? Awaited<R> : never;
 export type QueryNames<P extends PebbleConfig> = keyof NonNullable<P["queries"]> & string;
 export type MutationNames<P extends PebbleConfig> = keyof NonNullable<P["mutations"]> & string;

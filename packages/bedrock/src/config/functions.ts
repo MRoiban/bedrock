@@ -14,13 +14,13 @@ function defineFunction(kind: "query" | "mutation", schemaOrFn: StandardSchemaV1
 }
 
 export function query<R>(fn: Handler<void, R>): FunctionDefinition<void, R>;
-export function query<S extends StandardSchemaV1, R>(schema: S, fn: Handler<StandardSchemaV1.InferOutput<S>, R>): FunctionDefinition<StandardSchemaV1.InferOutput<S>, R>;
+export function query<S extends StandardSchemaV1, R>(schema: S, fn: Handler<StandardSchemaV1.InferOutput<S>, R>): FunctionDefinition<StandardSchemaV1.InferOutput<S>, R, StandardSchemaV1.InferInput<S>>;
 export function query(schemaOrFn: StandardSchemaV1 | Handler<any, any>, fn?: Handler<any, any>): FunctionDefinition {
   return defineFunction("query", schemaOrFn, fn);
 }
 
 export function mutation<R>(fn: Handler<void, R>): FunctionDefinition<void, R>;
-export function mutation<S extends StandardSchemaV1, R>(schema: S, fn: Handler<StandardSchemaV1.InferOutput<S>, R>): FunctionDefinition<StandardSchemaV1.InferOutput<S>, R>;
+export function mutation<S extends StandardSchemaV1, R>(schema: S, fn: Handler<StandardSchemaV1.InferOutput<S>, R>): FunctionDefinition<StandardSchemaV1.InferOutput<S>, R, StandardSchemaV1.InferInput<S>>;
 export function mutation(schemaOrFn: StandardSchemaV1 | Handler<any, any>, fn?: Handler<any, any>): FunctionDefinition {
   return defineFunction("mutation", schemaOrFn, fn);
 }

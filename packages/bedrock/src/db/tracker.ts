@@ -18,20 +18,33 @@ export class TableTracker implements Logger {
   private readonly calls = new AsyncLocalStorage<TableUsage>();
   private readonly known: Map<string, string>;
 
-  constructor(tables: Iterable<string>) {
+  constructor(tables: Iterable<string>, private effects = new Map<string, Set<string>>()) {
     this.known = new Map([...tables].map(name => [name.toLowerCase(), name]));
   }
 
   logQuery(sql: string, _params: unknown[]) {
     const usage = this.calls.getStore();
     if (!usage) return;
-    const tokens = sqlTokens(sql);
+    const captured = this.inspect(sqlTokens(sql));
+    for (const table of captured.reads) usage.reads.add(table);
+    for (const table of captured.writes) usage.writes.add(table);
+  }
+
+  setEffects(effects: Map<string, Set<string>>) { this.effects = effects; }
+
+  inspect(tokens: string[]): TableUsage {
+    const usage: TableUsage = { reads: new Set(), writes: new Set() };
     let statement: string[] = [];
     for (const token of [...tokens, ";"]) {
       if (token !== ";") { statement.push(token); continue; }
       this.record(statement, usage);
       statement = [];
     }
+    // Follow newly added targets because effects can span several tables.
+    for (const table of usage.writes) {
+      for (const affected of this.effects.get(table) ?? []) usage.writes.add(affected);
+    }
+    return usage;
   }
 
   private record(tokens: string[], usage: TableUsage) {

@@ -1,12 +1,14 @@
-import type { FunctionContext, PebbleConfig } from "../config";
+import type { FunctionContext, PebbleConfig, User } from "../config";
 import type { openDatabase } from "../db";
 import { BedrockError, asBedrockError } from "../error";
+import { checkAccess } from "./access";
 import { resolveUser } from "./identity";
 
 export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof openDatabase>) {
   let tail: Promise<unknown> = Promise.resolve();
   let closed = false;
-  function execute(kind: "query" | "mutation", name: string, args: unknown, request: Request) {
+  const listeners = new Set<(writes: Set<string>) => void>();
+  function execute(kind: "query" | "mutation", name: string, args: unknown, request: Request, identity?: { user: User | null; validated?: boolean }) {
     if (closed) return Promise.reject(new BedrockError("PEBBLE_STOPPED", "The pebble has stopped.", "Start a new pebble runtime before executing functions."));
     const run = tail.then(async () => {
       const definitions = kind === "query" ? pebble.queries : pebble.mutations;
@@ -14,16 +16,9 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         throw new BedrockError("FUNCTION_NOT_FOUND", `Unknown ${kind}: ${name}`, "Check the function name in pebble.ts.");
       }
       const definition = definitions[name]!;
-      const user = resolveUser(request);
-      if (pebble.access && pebble.access !== "public") {
-        if (!user) throw new BedrockError("UNAUTHENTICATED", "Sign-in is required.", "In local development enable BEDROCK_INSECURE_DEV_USER=1 and send x-bedrock-user.");
-        if (pebble.access === "creators") throw new BedrockError("ACCESS_UNAVAILABLE", "Creator access requires the daemon.", "Use public or users access during Phase 1 development.");
-        if (typeof pebble.access === "object" && !pebble.access.allow.some(entry => user.email &&
-          (entry.startsWith("@") ? user.email.toLowerCase().endsWith(entry.toLowerCase()) : user.email.toLowerCase() === entry.toLowerCase()))) {
-          throw new BedrockError("FORBIDDEN", "This user is not allowed to access the pebble.", "Use an email permitted by the pebble's access.allow list.");
-        }
-      }
-      if (definition.schema) {
+      const user = identity ? identity.user : resolveUser(request);
+      checkAccess(pebble, user);
+      if (definition.schema && !identity?.validated) {
         const result = await definition.schema["~standard"].validate(args);
         if (result.issues) throw new BedrockError("INVALID_ARGS", result.issues.map(issue => issue.message).join("; "), "Send JSON matching the function's Standard Schema.");
         args = result.value;
@@ -37,7 +32,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         // Detect unserializable results before committing any writes.
         JSON.stringify({ ok: true, value: result.value ?? null });
         sqlite.exec("COMMIT");
-        return result;
+        return { ...result, args };
       } catch (error) {
         if (sqlite.inTransaction) sqlite.exec("ROLLBACK");
         throw asBedrockError(error, "FUNCTION_FAILED", kind === "query"
@@ -49,9 +44,17 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
     });
     // Rejections must not poison the queue for later requests.
     tail = run.catch(() => {});
+    // Observers run outside the queue slot, so they can safely enqueue queries.
+    if (kind === "mutation") void run.then(result => {
+      for (const listener of listeners) listener(new Set(result.writes));
+    }, () => {});
     return run;
   }
   return Object.assign(execute, {
+    onCommit(listener: (writes: Set<string>) => void) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
     async close() { closed = true; await tail; },
   });
 }
