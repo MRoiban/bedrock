@@ -30,7 +30,9 @@ test("Windows task installs, reports state, restarts and uninstalls without a sh
     expect(await Bun.file(file.path).exists()).toBe(false);
     expect(await restartService(options)).toEqual({ restarted: false });
     expect(await service("status", { ...options, run: async () => "0" })).toMatchObject({ installed: false, running: false });
-  } finally { temp.cleanup(); }
+  } finally {
+    try { await service("uninstall", options); } finally { temp.cleanup(); }
+  }
 });
 
 test("Windows task script escapes XML and PowerShell metacharacters", () => {

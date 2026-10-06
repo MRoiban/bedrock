@@ -31,7 +31,9 @@ for (const platform of ["darwin", "linux"]) test(`service ${platform}: absolute 
     expect(commands).toHaveLength(count);
     expect(await Bun.file(options.target).exists()).toBe(false);
     expect(commands.some(args => args[0] === (platform === "darwin" ? "launchctl" : "systemctl"))).toBe(true);
-  } finally { temp.cleanup(); }
+  } finally {
+    try { await service("uninstall", options); } finally { temp.cleanup(); }
+  }
 });
 
 test("service validates paths and escapes systemd specifiers", () => {
