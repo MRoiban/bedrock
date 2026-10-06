@@ -1,0 +1,256 @@
+/* Vendored from Onyx. Do not edit; run bun run sync:onyx. */
+@import '@vscode/codicons/dist/codicon.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --onyx-surface-app: #100F0F;
+  --onyx-surface-editor: #100F0F;
+  --onyx-surface-panel: #1C1B1A;
+  --onyx-surface-sidebar: #1C1B1A;
+  --onyx-surface-menu: #1C1B1A;
+  --onyx-surface-dialog: #1C1B1A;
+  --onyx-surface-overlay: rgba(16, 15, 15, 0.76);
+
+  --onyx-text-foreground: #CECDC3;
+  --onyx-text-muted: #B7B5AC;
+  --onyx-text-description: #878580;
+  --onyx-text-link: #4385BE;
+  --onyx-text-inverse: #FFFCF0;
+
+  --onyx-control-button-bg: #205EA6;
+  --onyx-control-button-fg: #FFFCF0;
+  --onyx-control-button-hover-bg: #4385BE;
+  --onyx-control-secondary-bg: #282726;
+  --onyx-control-secondary-fg: #CECDC3;
+  --onyx-control-secondary-hover-bg: #343331;
+  --onyx-control-destructive-bg: #AF3029;
+  --onyx-control-destructive-fg: #FFFCF0;
+  --onyx-control-input-bg: #1C1B1A;
+  --onyx-control-input-fg: #CECDC3;
+  --onyx-control-input-border: #403E3C;
+  --onyx-control-focus-ring: #4385BE;
+
+  --onyx-state-hover: #282726;
+  --onyx-state-active: #403E3C;
+  --onyx-state-selected: #343331;
+  --onyx-state-selected-fg: #FFFCF0;
+  --onyx-state-disabled: rgba(183, 181, 172, 0.38);
+  --onyx-state-warning: #D0A215;
+  --onyx-state-error: #D14D41;
+  --onyx-state-success: #879A39;
+
+  --onyx-shell-activity-bar-bg: #100F0F;
+  --onyx-shell-activity-bar-fg: #CECDC3;
+  --onyx-shell-activity-bar-inactive-fg: rgba(206, 205, 195, 0.62);
+  --onyx-shell-status-bar-bg: #282726;
+  --onyx-shell-status-bar-fg: #CECDC3;
+  --onyx-shell-tabs-bg: #1C1B1A;
+  --onyx-shell-tabs-border: #403E3C;
+  --onyx-shell-toolbar-bg: #1C1B1A;
+  --onyx-shell-toolbar-border: #403E3C;
+  --onyx-shell-badge-bg: #4385BE;
+  --onyx-shell-badge-fg: #100F0F;
+  --onyx-shell-scrollbar-thumb: #575653;
+  --onyx-shell-scrollbar-thumb-hover: var(--onyx-text-description);
+  --onyx-shell-scrollbar-thumb-active: var(--onyx-text-muted);
+
+  --onyx-radius-sm: 0.375rem;
+  --onyx-radius-md: 0.5rem;
+  --onyx-radius-lg: 0.75rem;
+  --onyx-shadow-sm: 0 4px 14px rgba(16, 15, 15, 0.24);
+  --onyx-shadow-md: 0 18px 40px rgba(16, 15, 15, 0.36);
+  --onyx-shadow-lg: 0 24px 56px rgba(16, 15, 15, 0.48);
+  --onyx-z-popover: 300000;
+  --onyx-z-dialog: 300001;
+  --onyx-z-overlay: 299999;
+  --onyx-scale-ui: 1;
+  --onyx-scale-type: 1;
+  --onyx-font-family: var(--theme-font-family, 'Segoe UI'), system-ui, sans-serif;
+  --onyx-font-size: 13px;
+}
+
+.onyx-theme-root,
+[data-onyx-theme-root] {
+  --onyx-resolved-font-size: calc(var(--onyx-font-size) * var(--onyx-scale-type));
+  font-family: var(--onyx-font-family);
+  font-size: var(--onyx-resolved-font-size);
+  line-height: 1.5;
+  color: var(--onyx-text-foreground);
+  background-color: var(--onyx-surface-app);
+}
+
+.onyx-theme-root *,
+[data-onyx-theme-root] * {
+  box-sizing: border-box;
+}
+
+.onyx-theme-root .codicon,
+[data-onyx-theme-root] .codicon {
+  font-size: inherit;
+}
+
+/* Document-wide, including body portals. Editors own their scrollbar rendering. */
+*:not(:where(.monaco-editor, .monaco-editor *, .monaco-diff-editor, .monaco-diff-editor *, .xterm, .xterm *)) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--onyx-shell-scrollbar-thumb) transparent;
+}
+*:not(:where(.monaco-editor, .monaco-editor *, .monaco-diff-editor, .monaco-diff-editor *, .xterm, .xterm *))::-webkit-scrollbar { width: 8px; height: 8px; }
+*:not(:where(.monaco-editor, .monaco-editor *, .monaco-diff-editor, .monaco-diff-editor *, .xterm, .xterm *))::-webkit-scrollbar-track { background: transparent; }
+*:not(:where(.monaco-editor, .monaco-editor *, .monaco-diff-editor, .monaco-diff-editor *, .xterm, .xterm *))::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--onyx-shell-scrollbar-thumb);
+}
+*:not(:where(.monaco-editor, .monaco-editor *, .monaco-diff-editor, .monaco-diff-editor *, .xterm, .xterm *))::-webkit-scrollbar-thumb:hover { background: var(--onyx-shell-scrollbar-thumb-hover); }
+*:not(:where(.monaco-editor, .monaco-editor *, .monaco-diff-editor, .monaco-diff-editor *, .xterm, .xterm *))::-webkit-scrollbar-thumb:active { background: var(--onyx-shell-scrollbar-thumb-active); }
+/* scrollbar-color inherits; stop it at editor boundaries. */
+:where(.monaco-editor, .monaco-diff-editor, .xterm) { scrollbar-color: auto; scrollbar-width: auto; }
+
+.onyx-theme-root ::selection,
+[data-onyx-theme-root] ::selection {
+  color: var(--onyx-state-selected-fg);
+  background-color: var(--onyx-state-selected);
+}
+
+body.onyx-section-select-open,
+body.onyx-section-select-open * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.onyx-number-effect {
+  display: inline-grid;
+  grid-template-areas: 'stack';
+  align-items: center;
+  justify-items: center;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  vertical-align: baseline;
+}
+
+.onyx-number-effect__sizer,
+.onyx-number-effect__viewport {
+  grid-area: stack;
+}
+
+.onyx-number-effect__sizer {
+  visibility: hidden;
+  white-space: pre;
+}
+
+.onyx-number-effect__viewport {
+  position: relative;
+  display: inline-block;
+  min-width: 100%;
+  height: 1em;
+  overflow: hidden;
+  line-height: 1;
+}
+
+.onyx-number-effect__value {
+  display: block;
+  min-width: 100%;
+  text-align: center;
+  white-space: pre;
+  will-change: transform, opacity;
+}
+
+.onyx-number-effect__value--static {
+  position: relative;
+}
+
+.onyx-number-effect__value--enter,
+.onyx-number-effect__value--exit {
+  animation-duration: var(--onyx-number-effect-duration, 180ms);
+  animation-timing-function: cubic-bezier(0.2, 0, 0.16, 1);
+  animation-fill-mode: both;
+}
+
+.onyx-number-effect__value--exit {
+  position: absolute;
+  inset: 0;
+}
+
+.onyx-number-effect[data-direction='up'] .onyx-number-effect__value--enter {
+  animation-name: onyx-number-effect-enter-up;
+}
+
+.onyx-number-effect[data-direction='up'] .onyx-number-effect__value--exit {
+  animation-name: onyx-number-effect-exit-up;
+}
+
+.onyx-number-effect[data-direction='down'] .onyx-number-effect__value--enter {
+  animation-name: onyx-number-effect-enter-down;
+}
+
+.onyx-number-effect[data-direction='down'] .onyx-number-effect__value--exit {
+  animation-name: onyx-number-effect-exit-down;
+}
+
+@keyframes onyx-number-effect-enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(0.85em);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes onyx-number-effect-exit-up {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-0.85em);
+  }
+}
+
+@keyframes onyx-number-effect-enter-down {
+  from {
+    opacity: 0;
+    transform: translateY(-0.85em);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes onyx-number-effect-exit-down {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(0.85em);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onyx-number-effect__value--enter,
+  .onyx-number-effect__value--exit {
+    animation-duration: 1ms;
+  }
+}
+
+/* Radix hides Select's native viewport scrollbar; use the shared theme instead. */
+[data-slot='select-viewport'][data-radix-select-viewport] {
+  scrollbar-width: thin;
+}
+[data-slot='select-viewport'][data-radix-select-viewport]::-webkit-scrollbar {
+  display: block;
+}
+/* Overlay glyphs retain their original 14px/20px metrics at scale 1. */
+:where([data-slot='command'], [data-slot='select-content'],
+  [data-slot='context-menu-content'], [data-slot='context-menu-sub-content'],
+  [data-slot='section-select-content']) .codicon[data-slot='icon'] {
+  font-size: calc(14px * var(--onyx-scale-ui));
+  line-height: 1.428571;
+}

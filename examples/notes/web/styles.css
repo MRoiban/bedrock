@@ -1,0 +1,20 @@
+.notes-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 32px; }
+.notes-eyebrow { margin-bottom: 10px; font-size: 10px; letter-spacing: .16em; font-weight: 700; color: var(--onyx-text-description); }
+.notes-intro > button { flex-shrink: 0; }
+.notes-intro h1 { font-size: clamp(24px, 4vw, 32px); font-weight: 600; letter-spacing: -.035em; margin-bottom: 10px; }
+.notes-intro p.bedrock-muted { font-size: 14px; line-height: 1.6; }
+.notes-form { display: flex; flex-direction: column; gap: 14px; padding: 8px; }
+.notes-label { font-size: 13px; font-weight: 600; }
+.notes-form textarea { min-height: 120px; resize: vertical; line-height: 1.7; }
+.notes-actions { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.notes-attachment { display: flex; align-items: center; gap: 8px; font-size: 13px; overflow-wrap: anywhere; }
+.notes-saved { margin-top: 40px; }
+.notes-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.notes-section-heading h2 { font-size: 15px; font-weight: 600; }
+.notes-live { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--onyx-text-description); }
+.notes-live span { width: 6px; height: 6px; border-radius: 50%; background: var(--onyx-state-success); }
+.notes-list { display: grid; gap: 14px; list-style: none; padding: 0; }
+.notes-list [data-slot="panel-body"] { padding: 24px; }
+.notes-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; font-size: 14px; }
+.notes-meta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin-top: 20px; font-size: 11px; color: var(--onyx-text-description); }
+.notes-meta a { display: inline-flex; align-items: center; gap: 5px; color: var(--onyx-text-link); }

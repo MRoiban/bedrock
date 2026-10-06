@@ -1,31 +1,3 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Notes · Bedrock</title>
-  <style>
-    body { font: 17px system-ui; max-width: 640px; margin: 64px auto; padding: 0 24px; color: #27372e; background: #f6f5ef; }
-    h1 { font-size: 42px; } label { display: block; margin: 16px 0 8px; }
-    input, textarea, button { font: inherit; box-sizing: border-box; padding: 12px; border: 1px solid #a2afa5; border-radius: 6px; }
-    input, textarea { width: 100%; } button { margin-top: 12px; background: #214a36; color: white; cursor: pointer; }
-    li { padding: 16px 0; border-bottom: 1px solid #d5dad2; white-space: pre-wrap; } ul { padding: 0; list-style: none; }
-    #status { min-height: 24px; }
-  </style>
-</head>
-<body>
-  <h1>Your notes</h1>
-  <p id="account"></p>
-  <button id="logout" type="button">Sign out</button>
-  <form id="form">
-    <label for="body">New note</label>
-    <textarea id="body" required maxlength="10000" rows="3"></textarea>
-    <label for="attachment">Attachment (optional)</label>
-    <input id="attachment" type="file">
-    <button>Add note</button>
-  </form>
-  <p id="status" role="status"></p>
-  <ul id="notes"></ul>
-  <script type="module" src="./app.js"></script>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#100f0f"><title>Notes · Bedrock</title></head>
+<body><div id="root"><p>Your notes are loading…</p></div><noscript>Your notes need JavaScript to stay in sync.</noscript><script type="module" src="./app.tsx"></script></body></html>
