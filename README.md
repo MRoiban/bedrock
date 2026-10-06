@@ -14,7 +14,7 @@ signed identity, and Origin checks protect against end users and the internet.
 Use a domain whose DNS is managed by Cloudflare. On your home server:
 
 ```sh
-git clone <repo> ~/.bedrock/src && ~/.bedrock/src/install.sh
+git clone https://github.com/MRoiban/bedrock.git ~/.bedrock/src && ~/.bedrock/src/install.sh
 bedrock setup
 ```
 
