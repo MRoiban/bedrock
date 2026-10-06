@@ -1,0 +1,8 @@
+# Bedrock
+Bedrock is a lightweight Bun personal cloud hosting small projects called pebbles.
+Read AGENTS.md for the API and ARCHITECTURE.md in the repository for the contract.
+Package entry points: bedrock (config + Drizzle), bedrock/server (startPebble).
+CLI: bedrock init <name>, bedrock dev, bedrock db generate|plan|migrate.
+All commands accept --json. No build step; Bun runs TypeScript source.
+Phase 1 includes config, SQLite migrations/tracking, HTTP functions, static/HTML web, and CLI.
+Auth, daemon, WebSocket sync, SDKs, storage, and plugin execution belong to later phases.

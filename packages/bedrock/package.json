@@ -1,0 +1,35 @@
+{
+  "name": "bedrock",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/runtime/index.ts"
+  },
+  "bin": {
+    "bedrock": "./src/cli/index.ts"
+  },
+  "files": [
+    "src",
+    "AGENTS.md",
+    "llms.txt"
+  ],
+  "dependencies": {
+    "drizzle-orm": "^0.45.1",
+    "@standard-schema/spec": "^1.1.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.9"
+  },
+  "peerDependencies": {
+    "drizzle-kit": "^0.31.0"
+  },
+  "peerDependenciesMeta": {
+    "drizzle-kit": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "bun": ">=1.2"
+  }
+}

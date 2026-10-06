@@ -1,0 +1,11 @@
+{
+  "name": "@bedrock-example/notes",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "bedrock": "workspace:*"
+  },
+  "devDependencies": {
+    "valibot": "^1.5.0"
+  }
+}
