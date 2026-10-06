@@ -74,9 +74,14 @@ import * as v from "valibot";
 export const notes = sqliteTable("notes", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   ownerId: text("owner_id").notNull(),
+  attachmentId: text("attachment_id"),
   body: text("body").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
 });
+
+export const attachments = bucket("attachments", { maxSize: "50mb", access: "owner" });
+
+const attachments = bucket("attachments", { maxSize: "50mb", access: "owner" });
 
 export default definePebble({
   name: "notes",                        // subdomain; [a-z0-9-]{1,32}
@@ -90,13 +95,15 @@ export default definePebble({
   },
 
   mutations: {
-    add: mutation(v.object({ body: v.string() }), ({ db, user }, { body }) =>
-      db.insert(notes).values({ ownerId: user!.id, body }).returning()),
+    add: mutation(v.object({ body: v.string(), attachmentId: v.optional(v.string()) }),
+      async ({ db, user, storage }, { body, attachmentId }) => {
+        // The owner policy prevents linking another user’s attachment.
+        if (attachmentId) await storage.get(attachments, attachmentId);
+        return db.insert(notes).values({ ownerId: user!.id, body, attachmentId }).returning();
+      }),
   },
 
-  storage: {
-    attachments: bucket({ maxSize: "50mb", access: "owner" }),
-  },
+  storage: [attachments],
 
   web: "./web/index.html",              // Bun HTML entry, bundled by Bun; or a static dir
   routes: { "GET /api/health": () => new Response("ok") }, // escape hatch, plain Bun handlers
@@ -153,10 +160,13 @@ Future (do not build yet): row-level diffs, optimistic updates.
 ## 7. Storage
 
 - Files live in `$BEDROCK_HOME/pebbles/<name>/data/files/<bucket>/<id>`; metadata in the pebble DB table `_bedrock_files(id, bucket, owner_id, name, mime, size, sha256, created_at)`.
-- `bucket({ maxSize, access, accept? })`, `access`: `"public" | "users" | "owner" | (ctx, file) => boolean`.
-- Endpoints: `POST /_bedrock/files/<bucket>` (upload), `GET /_bedrock/files/<bucket>/<id>` (download with Range support), `DELETE` same path.
+- `bucket(name, { maxSize, access, accept? })`; register with `storage: [attachments]`, `access`: `"public" | "users" | "owner" | (ctx, file) => boolean`.
+- Endpoints: `POST /_bedrock/files/<bucket>` (upload), `GET /_bedrock/files/<bucket>/<id>` (download with Range support), `HEAD` and `DELETE` same path.
 - **Chunked uploads** are mandatory for files > 90 MB (Cloudflare's free plan rejects request bodies > 100 MB): `POST .../uploads` → `PUT .../uploads/<uid>/<n>` → `POST .../uploads/<uid>/complete`. The client SDK chunks transparently.
-- Server-side API in functions: `storage.attachments.put(blob, meta)`, `.get(id)`, `.delete(id)`, `.list(filter)`.
+- Server-side API in functions: `storage.put(attachments, blobOrStream, { name, mime? })`, `storage.get(attachments, id)` (Blob), `storage.delete(attachments, id)`, `storage.list(attachments, { ownerId?, limit?, cursor? })` (metadata).
+- Bucket names use `[a-z0-9_-]{1,32}`; names must be unique within a pebble. `bucket()` and `definePebble()` validate configuration with repair hints. Passing a bucket object absent from the registered array throws `BedrockError("UNKNOWN_BUCKET", …, hint)`.
+- `ctx.storage` is shared across all handlers; bucket objects supply configuration without pebble-specific context inference. Function signatures remain `query(fn) | query(schema, fn)` and `mutation(fn) | mutation(schema, fn)`.
+- Client APIs take bucket names inferred from `typeof pebble`: `client.upload("attachments", file)`, `client.fileUrl("attachments", id)`, `client.deleteFile("attachments", id)` and `useUpload<typeof pebble>("attachments")`. Client code does not import server bucket configurations.
 - Driver interface `{ put, get, delete, stat }` — `fs` is the only built-in driver; R2 can be added later.
 
 ## 8. Daemon and hosting

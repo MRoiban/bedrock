@@ -12,7 +12,7 @@ export interface FunctionContext {
   db: BunSQLiteDatabase<Record<string, unknown>>;
   user: User | null;
   pebble: { readonly name: string };
-  storage: Record<string, never>;
+  storage: import("../storage").Storage;
   request: Request;
 }
 
@@ -28,6 +28,9 @@ export type RouteHandler = (request: Request, server: Bun.Server<undefined>) => 
 
 export interface FileMetadata {
   id: string;
+  bucket: string;
+  sha256: string;
+  createdAt: number;
   ownerId: string | null;
   name: string;
   mime: string;
@@ -38,6 +41,12 @@ export interface BucketConfig {
   access: "public" | "users" | "owner" | ((ctx: FunctionContext, file: FileMetadata) => boolean | Promise<boolean>);
   accept?: readonly string[];
 }
+
+export interface Bucket<Name extends string = string> extends BucketConfig {
+  readonly name: Name;
+}
+
+export type BucketNames<P extends PebbleConfig> = NonNullable<P["storage"]>[number]["name"];
 
 export interface PluginConfig {
   name: string;
@@ -54,7 +63,7 @@ export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends Fun
   schema?: Record<string, unknown>;
   queries?: Q;
   mutations?: M;
-  storage?: Record<string, BucketConfig>;
+  storage?: readonly Bucket[];
   sync?: boolean;
   web?: string;
   routes?: Record<string, RouteHandler>;

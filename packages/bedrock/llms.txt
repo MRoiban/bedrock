@@ -13,4 +13,13 @@ Dev serves http://<name>.localhost:<port>; protected pages redirect to host-loca
 Production Google redirect URI: https://auth.<domain>/callback; setup accepts --google-client-id and --google-client-secret.
 Session cookies never reach pebble code. Writes/WebSocket upgrades require the pebble's own Origin.
 Sync, bedrock/client and bedrock/react are implemented: client.user(), loginUrl(), logout(), useUser().
-Storage and plugin execution belong to later phases.
+Plugin execution belongs to a later phase.
+Phase 4 includes WebSocket sync, the typed browser client, and React hooks. Phase 5 includes filesystem storage, streamed/chunked uploads, access policies, safe downloads, and byte ranges.
+Declare const attachments = bucket("attachments", { maxSize: "50mb", access: "owner", accept: ["image/*"] }); register storage: [attachments].
+Bucket names: [a-z0-9_-]{1,32}, unique per pebble. bucket() and definePebble() validate with hints.
+query(fn) / query(schema, fn) and mutation(fn) / mutation(schema, fn) are the only function signatures.
+ctx.storage.put(attachments, blobOrStream, { name, mime? }), get(attachments, id), delete(attachments, id), list(attachments, { ownerId?, limit?, cursor? }).
+put returns metadata; get returns a Blob; list returns metadata. Unregistered bucket objects throw UNKNOWN_BUCKET with a repair hint.
+Before linking attachments, await storage.get(attachments, attachmentId) with access: "owner" to verify ownership; see examples/notes.
+createClient<typeof pebble>() from bedrock/client infers upload/fileUrl/deleteFile bucket names from the storage array. Clients accept names, not server bucket objects.
+useUpload<typeof pebble>("attachments") from bedrock/react exposes upload, progress, isUploading, error. The SDK transparently chunks files above 90 MiB.

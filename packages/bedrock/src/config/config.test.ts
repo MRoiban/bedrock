@@ -33,7 +33,7 @@ test("Standard Schema overloads and configuration helpers retain inference", () 
   const bad: FunctionArgs<NonNullable<typeof pebble.mutations>["add"]> = { body: 123 };
   expect([names, mutationNames, args, output, noArgs]).toEqual([true, true, true, true, true]);
   void bad;
-  expect(bucket({ maxSize: "50mb", access: "owner" }).access).toBe("owner");
+  expect(bucket("attachments", { maxSize: "50mb", access: "owner" }).access).toBe("owner");
   expect(plugin({ name: "audit-log" }).name).toBe("audit-log");
 });
 

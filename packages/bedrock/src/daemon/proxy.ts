@@ -14,7 +14,7 @@ export function proxyHeaders(request: Request) {
   const headers = new Headers(request.headers);
   const connection = headers.get("connection")?.split(",").map(name => name.trim().toLowerCase()) ?? [];
   for (const name of [...headers.keys()]) {
-    if (name.startsWith("x-bedrock-") || [...connection, "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"].includes(name)) headers.delete(name);
+    if ((name.startsWith("x-bedrock-") && name !== "x-bedrock-file-name") || [...connection, "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"].includes(name)) headers.delete(name);
   }
   const cookies = (headers.get("cookie") ?? "").split(";").map(part => part.trim()).filter(part => part && part.split("=", 1)[0]!.trim() !== "bedrock_session");
   if (cookies.length) headers.set("cookie", cookies.join("; ")); else headers.delete("cookie");

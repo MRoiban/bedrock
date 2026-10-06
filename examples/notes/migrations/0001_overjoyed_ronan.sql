@@ -1,0 +1,1 @@
+ALTER TABLE `notes` ADD `attachment_id` text;
