@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { BedrockError } from "../src/error";
 import { join, resolve } from "node:path";
 import { symlink, stat } from "node:fs/promises";
 import { tempDirectory } from "./helpers";
@@ -32,7 +33,7 @@ test("scripted full wizard uses fake cloudflared, private local config and real 
     expect(fixture.output.join("\n")).not.toContain("google-secret");
     expect(fixture.calls.some(args => args.includes("--help"))).toBe(true);
     expect(fixture.urls).toEqual(["https://console.cloud.google.com/auth/clients/create", "https://bedrock.example.com"]);
-    const transcript = fixture.output.join("\n") + "\n";
+    const transcript = fixture.output.join("\n").replace(process.execPath, "<bun-path>") + "\n";
     if (process.env.UPDATE_ONBOARDING_TRANSCRIPT) await Bun.write(join(import.meta.dir, "fixtures/wizard-transcript.txt"), transcript);
     expect(transcript).toBe(await Bun.file(join(import.meta.dir, "fixtures/wizard-transcript.txt")).text());
     fixture.calls.length = 0;
@@ -249,5 +250,44 @@ test("setup entrypoint emits one JSON error/status object and never prompts with
       else expect(result.error).toMatchObject({ code: "SETUP_FLAGS_MISSING", hint: expect.stringContaining("--creator") });
     }
     expect(await Bun.file(join(temp.dir, "home/setup.json")).exists()).toBe(false);
+  } finally { temp.cleanup(); }
+});
+
+test("unexpected setup command and parse errors name the step/command and retain cause as detail", async () => {
+
+  for (const kind of ["execute", "parse", "typed"]) {
+    const temp = tempDirectory();
+    try {
+      const fixture = await wizardHarness(temp.dir);
+      const { setup } = await import("../src/daemon/config");
+      await setup(fixture.home, "example.com", "creator@example.com", 3000);
+      await Bun.write(join(fixture.home, "cloudflared/cert.pem"), "fake cert");
+      const typed = new BedrockError("CUSTOM_FAILURE", "Original message", "Original hint");
+      fixture.options.terminal!.run = async () => {
+        if (kind === "typed") throw typed;
+        if (kind === "execute") throw new Error("raw failure");
+        return "invalid json";
+      };
+      try { await setupWizard(["cloudflare", "--yes"], true, fixture.options); throw new Error("expected failure"); }
+      catch (error) {
+        if (kind === "typed") expect(error).toBe(typed);
+        else {
+          expect(error).toMatchObject({ code: "SETUP_FAILED", message: "Setup step cloudflare failed while running or processing cloudflared tunnel list.", hint: "Rerun bedrock setup cloudflare.", detail: expect.any(String), cause: expect.any(Error) });
+          expect((error as BedrockError).message).not.toContain("raw failure");
+          expect((error as BedrockError).toJSON()).toHaveProperty("detail");
+        }
+      }
+      expect((await setupWizard(["--status"], true, fixture.options)).steps.find(step => step.step === "cloudflare")?.done).toBe(false);
+    } finally { temp.cleanup(); }
+  }
+});
+
+test("prerequisites reports the running Bun path and rejects Bun older than 1.2", async () => {
+  const temp = tempDirectory();
+  try {
+    const fixture = await wizardHarness(temp.dir);
+    await setupWizard(["prereqs", "--yes"], false, { ...fixture.options, version: "1.2.19" });
+    expect(fixture.output).toContain(`✓ Bun 1.2.19 (${process.execPath})`);
+    await expect(setupWizard(["prereqs", "--yes"], true, { ...fixture.options, version: "1.1.9" })).rejects.toMatchObject({ code: "BUN_TOO_OLD" });
   } finally { temp.cleanup(); }
 });

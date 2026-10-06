@@ -7,7 +7,7 @@
 7. · verify
 
 [1/7] Prerequisites
-✓ Bun 1.2.0
+✓ Bun 1.2.0 (<bun-path>)
 ✓ cloudflared installed
 
 [2/7] Identity

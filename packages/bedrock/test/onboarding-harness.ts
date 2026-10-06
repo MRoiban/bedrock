@@ -19,7 +19,7 @@ if (args.includes("login")) {
   await Bun.write(join(process.env.HOME, ".cloudflared/cert.pem"), "fake origin cert");
 } else if (args.includes("--help")) console.log("cloudflared tunnel route dns [TUNNEL] [HOSTNAME]");
 else if (args.includes("list")) {
-  const state = await Bun.file(join(dirname(cert), "fake-tunnel.json")).json().catch(() => []);
+  const state = await Bun.file(join(dirname(cert), "fake-tunnel.json")).json().catch(() => null);
   console.log(JSON.stringify(state));
 } else if (args.includes("create")) {
   const id = "11111111-1111-1111-1111-111111111111";

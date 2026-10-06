@@ -5,12 +5,13 @@ export class BedrockError extends Error {
     readonly code: string,
     message: string,
     readonly hint: string,
+    readonly detail?: string,
   ) {
     super(message);
   }
 
   toJSON() {
-    return { code: this.code, message: this.message, hint: this.hint };
+    return { code: this.code, message: this.message, hint: this.hint, ...(this.detail === undefined ? {} : { detail: this.detail }) };
   }
 }
 

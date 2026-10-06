@@ -11,21 +11,29 @@ import { doctor } from "./doctor";
 export { promptSecret } from "./terminal";
 export const opsCommands = ["tunnel", "service", "doctor", "login", "logout"];
 export async function opsCommand(command: string, args: string[], json: boolean) {
+  const usage: Record<string, string> = {
+    login: "Use bedrock login <domain>, e.g. bedrock login example.com.",
+    logout: "Use bedrock logout [--json].",
+    doctor: "Use bedrock doctor [--json].",
+    service: "Use bedrock service install|uninstall|status [--dry-run] [--json].",
+    tunnel: "Use bedrock tunnel setup [--api-token <token>] [--account-id <id> --zone-id <id>], bedrock tunnel status, or bedrock tunnel teardown --yes [--api-token <token>].",
+  };
+  const hint = usage[command]!;
   const flags: Record<string, string> = {};
   const positions: string[] = [];
   const allowed = command === "tunnel" ? ["--account-id", "--zone-id", "--api-token", "--yes"] : command === "service" ? ["--dry-run"] : command === "login" ? ["--url"] : [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (!arg.startsWith("--")) { positions.push(arg); continue; }
-    if (!allowed.includes(arg) || flags[arg]) throw new BedrockError("INVALID_ARGS", "Unknown or repeated option.", "Use tunnel setup|status|teardown, service install|uninstall|status, doctor, login --url <url>, or logout.");
+    if (!allowed.includes(arg) || flags[arg]) throw new BedrockError("INVALID_ARGS", "Unknown or repeated option.", hint);
     if (["--yes", "--dry-run"].includes(arg)) flags[arg] = "true";
     else {
       const value = args[++i];
-      if (!value || value.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Missing value for ${arg}.`, "Provide the option value.");
+      if (!value || value.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Missing value for ${arg}.`, `Provide ${arg} <value>. ${hint}`);
       flags[arg] = value;
     }
   }
-  const invalid = () => { throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, "Use tunnel setup --account-id <id> --zone-id <id>, tunnel status, tunnel teardown --yes, service install|uninstall|status [--dry-run], doctor, login --url <url>, or logout."); };
+  const invalid = () => { throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, hint); };
   const home = bedrockHome();
   if (command === "doctor") {
     if (positions.length) invalid();

@@ -8,14 +8,14 @@ import { bedrockHome, readConfig } from "../daemon/config";
 import { createArchive } from "../daemon/archive";
 import { loadPebble } from "../runtime/load";
 
-function parse(args: string[]) {
+function parse(args: string[], hint: string) {
   const positionals: string[] = [];
   const flags: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (["--yes", "--force", "--no-open", "-f"].includes(arg)) flags[arg] = "true";
     else if (arg.startsWith("--")) {
-      if (!["--port", "--url", "--token"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, "Provide a value for port, url or token.");
+      if (!["--port", "--url", "--token"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, hint);
       flags[arg] = args[++i]!;
     } else positionals.push(arg);
   }
@@ -66,9 +66,15 @@ export async function call(flags: Record<string, string>, path: string, init: Re
 
 export const daemonCommands = ["daemon", "deploy", "ls", "logs", "start", "stop", "restart", "rollback", "rm", "token", "whoami", "status"];
 export async function daemonCommand(command: string, args: string[], json: boolean, options: { open?: typeof openBrowser; tty?: boolean } = {}): Promise<unknown> {
-  const { positionals, flags } = parse(args);
+  const usage: Record<string, string> = {
+    daemon: "[--port <port>]", deploy: "[dir] [--no-open]", ls: "", logs: "<name> [-f]",
+    start: "<name>", stop: "<name>", restart: "<name>", rollback: "<name> [--force]",
+    rm: "<name> --yes", token: "create|ls|revoke <id>", whoami: "", status: "",
+  };
+  const hint = `Use bedrock ${command}${usage[command] ? ` ${usage[command]}` : ""}${command === "daemon" ? "" : " [--url <url>] [--token <token>]"} [--json].`;
+  const { positionals, flags } = parse(args, hint);
   const name = positionals[0];
-  const invalid = () => { throw new BedrockError("INVALID_ARGS", `Invalid arguments for ${command}.`, "Use setup --domain <d> [--creator <email>], daemon, deploy [dir], ls, logs <name> [-f], start|stop|restart|rollback <name>, rm <name> --yes, or token create."); };
+  const invalid = () => { throw new BedrockError("INVALID_ARGS", `Invalid arguments for ${command}.`, hint); };
   const allowed = command === "rollback" ? ["--url", "--token", "--force"] : command === "daemon" ? ["--port"] : command === "deploy" ? ["--url", "--token", "--no-open"] : command === "logs" ? ["--url", "--token", "-f"] : command === "rm" ? ["--url", "--token", "--yes"] : ["--url", "--token"];
   if (Object.keys(flags).some(key => !allowed.includes(key))) invalid();
   if (command === "daemon") {

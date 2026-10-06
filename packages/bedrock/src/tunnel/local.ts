@@ -32,7 +32,10 @@ export async function localTunnelSetup(home: string, options: LocalOptions = {})
   }
   const prefix = [binary, "tunnel", "--origincert", cert];
   const name = config.cloudflare?.name ?? `bedrock-${options.host ?? hostname()}`;
-  const tunnels = JSON.parse(await execute([...prefix, "list", "--output", "json", "--name", name])) as { id: string; name: string }[];
+  const output = await execute([...prefix, "list", "--output", "json", "--name", name]);
+  // cloudflared serializes an empty Go slice as null, not [].
+  const tunnels = (output.trim() ? JSON.parse(output) : null) ?? [];
+  if (!Array.isArray(tunnels) || tunnels.some(t => !t || typeof t.id !== "string" || typeof t.name !== "string")) throw new BedrockError("CLOUDFLARED_OUTPUT_INVALID", "cloudflared tunnel list returned an invalid tunnel list.", "Check cloudflared's version and retry bedrock setup cloudflare.");
   const matches = tunnels.filter(t => t.name === name);
   if (matches.length > 1) throw new BedrockError("TUNNEL_CONFLICT", "Multiple tunnels match this hostname.", "Remove duplicate tunnels in Cloudflare and retry.");
   const credentialsFile = config.cloudflare?.credentialsFile ?? join(directory, "credentials.json");

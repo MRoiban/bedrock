@@ -26,7 +26,7 @@ async function prereqs(context: StepContext) {
   const version = options.version ?? Bun.version;
   const [major = 0, minor = 0] = version.split(".").map(Number);
   if (major < 1 || major === 1 && minor < 2) throw new BedrockError("BUN_TOO_OLD", "Bun >= 1.2 is required.", "Run bun upgrade.");
-  action(`Bun ${version}`);
+  action(`Bun ${version} (${process.execPath})`);
   try { (options.binary ?? cloudflaredBinary)(); }
   catch {
     const platform = options.platform ?? process.platform;

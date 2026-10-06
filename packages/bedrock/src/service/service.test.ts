@@ -41,3 +41,9 @@ test("service validates paths and escapes systemd specifiers", () => {
   expect(file.content).toContain("100%%");
   expect(file.content).toContain("$$CLI");
 });
+
+for (const platform of ["darwin", "linux"]) test(`service ${platform} pins the currently running Bun without consulting PATH`, () => {
+  const file = serviceFile({ home: "/tmp/bedrock-test", platform });
+  expect(file.content).toContain(process.execPath);
+  expect(file.content).not.toContain(platform === "darwin" ? "<string>bun</string>" : "ExecStart=bun ");
+});

@@ -17,18 +17,27 @@ export class Cloudflare {
     const value = await response.json().catch(() => null) as Envelope<T> | null;
     if (!response.ok || !value?.success) {
       // Never echo remote error text: it may contain request credentials.
-      const permission = response.status === 401 || response.status === 403 || value?.errors?.some(error => [10000, 10001, 9109].includes(error.code));
-      throw new BedrockError(permission ? "CLOUDFLARE_PERMISSION" : "CLOUDFLARE_API_FAILED", `Cloudflare returned HTTP ${response.status}${value?.errors?.length ? ` (code ${value.errors[0]!.code})` : ""}.`,
+      const permission = response.status === 401 || response.status === 403 || Array.isArray(value?.errors) && value.errors.some(error => error && [10000, 10001, 9109].includes(error.code));
+      throw new BedrockError(permission ? "CLOUDFLARE_PERMISSION" : "CLOUDFLARE_API_FAILED", `Cloudflare returned HTTP ${response.status}${Array.isArray(value?.errors) && value.errors[0]?.code ? ` (code ${value.errors[0].code})` : ""}.`,
         permission ? "Grant this API token Cloudflare Tunnel: Edit on the account and DNS: Edit on the zone." : "Check the account/zone IDs and tunnel state in Cloudflare; retry after resolving conflicts.");
     }
     return value;
   }
-  async call<T>(path: string, method = "GET", body?: unknown) { return (await this.request<T>(path, method, body)).result; }
+  async call<T>(path: string, method = "GET", body?: unknown) {
+    const result = (await this.request<T>(path, method, body)).result;
+    if (result == null && method !== "DELETE") throw this.invalidResult();
+    return result;
+  }
+  private invalidResult() {
+    return new BedrockError("CLOUDFLARE_RESPONSE_INVALID", "Cloudflare returned an invalid result.", "Check the account/zone IDs and retry; inspect Cloudflare's API status if this persists.");
+  }
   async list<T>(path: string) {
     const items: T[] = [];
     for (let page = 1; ; page++) {
       const value = await this.request<T[]>(`${path}${path.includes("?") ? "&" : "?"}page=${page}&per_page=100`);
-      items.push(...value.result);
+      const result = value.result ?? [];
+      if (!Array.isArray(result) || result.some(item => !item || typeof item !== "object" || Array.isArray(item))) throw this.invalidResult();
+      items.push(...result);
       if (page >= (value.result_info?.total_pages ?? 1)) return items;
     }
   }

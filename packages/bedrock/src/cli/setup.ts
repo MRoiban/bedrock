@@ -1,10 +1,10 @@
 import { mkdir, type statfs } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { createServer } from "node:net";
 import { atomicWrite, bedrockHome, readConfig } from "../daemon/config";
 import { Cloudflare } from "../tunnel/client";
 import { type Check } from "./doctor";
-import { BedrockError, asBedrockError } from "../error";
+import { BedrockError } from "../error";
 import { stepActions } from "./setup-steps";
 import { terminal, marker, type Terminal } from "./terminal";
 
@@ -46,6 +46,15 @@ export async function setupWizard(args: string[], json = false, options: SetupOp
   }
   const home = options.home ?? bedrockHome();
   const io = { ...terminal, ...options.terminal };
+  let lastCommand: string | undefined;
+  const execute = io.run;
+  io.run = async (args, options) => {
+    // Keep command context without exposing flag values such as secrets.
+    lastCommand = [basename(args[0]!), ...(basename(args[0]!) === "cloudflared"
+      ? args.slice(1).filter(arg => ["tunnel", "login", "list", "create", "route", "dns", "run"].includes(arg))
+      : [args[1]].filter(arg => arg && !arg.startsWith("-")))].join(" ");
+    return execute(args, options);
+  };
   const tty = options.tty ?? !!process.stdin.isTTY;
   const interactive = tty && !json && !flags["--yes"];
   const write = (line: string) => { if (!json) io.write(line); };
@@ -96,12 +105,19 @@ export async function setupWizard(args: string[], json = false, options: SetupOp
     if (current !== "service" && current !== "verify") { delete state.steps.service; delete state.steps.verify; }
     await atomicWrite(statePath, JSON.stringify(state, null, 2) + "\n");
     write(`\n[${setupSteps.indexOf(current) + 1}/${setupSteps.length}] ${stepLabels[current]}`);
+    lastCommand = undefined;
     let skipped = false;
     try {
       skipped = await stepActions[current]({ home, flags, options, io, interactive, redo: !!step, api, action, warning, write, ask, confirm });
       state.steps[current] = { completedAt: new Date().toISOString(), ...(skipped ? { skipped: true } : {}) };
       await atomicWrite(statePath, JSON.stringify(state, null, 2) + "\n");
-    } catch (error) { write(`${marker("✗", tty)} ${current} incomplete; rerun bedrock setup to resume.`); throw asBedrockError(error, "SETUP_FAILED", `Rerun bedrock setup ${current}.`); }
+    } catch (error) {
+      write(`${marker("✗", tty)} ${current} incomplete; rerun bedrock setup to resume.`);
+      if (error instanceof BedrockError) throw error;
+      const failure = new BedrockError("SETUP_FAILED", `Setup step ${current} failed${lastCommand ? ` while running or processing ${lastCommand}` : ""}.`, `Rerun bedrock setup ${current}.`, error instanceof Error ? error.message : String(error));
+      failure.cause = error;
+      throw failure;
+    }
   }
   config = await readConfig(home).catch(() => null);
   if (config && setupSteps.every(name => state.steps[name])) write(`\n┌ You're live\n│ https://bedrock.${config.domain}\n│ https://<pebble>.${config.domain}\n│ On your laptop:\n│ bedrock login ${config.domain}\n│ bedrock new my-app && cd my-app && bedrock dev\n│ bedrock deploy\n└`);
