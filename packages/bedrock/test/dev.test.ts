@@ -52,7 +52,11 @@ export default definePebble({ name: "devtest", schema: { items },
     expect((await listed.json()).value).toEqual([{ id: "saved" }]);
     expect(stdout.trim().split("\n")).toHaveLength(1);
   } finally {
-    child.kill("SIGTERM");
+    if (process.platform === "win32" && child.exitCode === null) {
+      // Windows terminates the parent without delivering SIGTERM to its children.
+      const stopped = Bun.spawn(["taskkill.exe", "/PID", String(child.pid), "/T", "/F"], { stdout: "ignore", stderr: "ignore" });
+      await stopped.exited;
+    } else child.kill("SIGTERM");
     await child.exited;
     await reading;
     temp.cleanup();
