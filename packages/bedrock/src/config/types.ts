@@ -18,6 +18,14 @@ export interface FunctionContext {
   invalidate: (tables: readonly (string | SQLiteTable)[]) => void;
 }
 
+export interface DetachedContext {
+  user: User | null;
+  pebble: { readonly name: string };
+  request: Request;
+  read: <R>(fn: (ctx: FunctionContext) => R) => Promise<Awaited<R>>;
+  write: <R>(fn: (ctx: FunctionContext) => R) => Promise<Awaited<R>>;
+}
+
 export interface FunctionDefinition<Args = any, Result = any, Input = Args> {
   readonly kind: "query" | "mutation";
   readonly schema?: StandardSchemaV1<Input, Args>;
@@ -27,6 +35,11 @@ export interface FunctionDefinition<Args = any, Result = any, Input = Args> {
 export type FunctionMap = Record<string, FunctionDefinition>;
 export type Access = "public" | "users" | "creators" | { allow: readonly string[] };
 export type RouteHandler = (request: Request, server: Bun.Server<undefined>, ctx: FunctionContext) => Response | Promise<Response>;
+
+export interface DetachedRouteDefinition {
+  readonly transaction: false;
+  readonly run: (request: Request, server: Bun.Server<undefined>, ctx: DetachedContext) => Response | Promise<Response>;
+}
 
 export interface FileMetadata {
   id: string;
@@ -50,12 +63,14 @@ export interface Bucket<Name extends string = string> extends BucketConfig {
 
 export type BucketNames<P extends PebbleConfig> = NonNullable<P["storage"]>[number]["name"];
 
-export interface JobDefinition { cron: string; run: (ctx: FunctionContext) => unknown }
+export interface TransactionalJobDefinition { cron: string; transaction?: true; run: (ctx: FunctionContext) => unknown }
+export interface DetachedJobDefinition { cron: string; transaction: false; run: (ctx: DetachedContext) => unknown }
+export type JobDefinition = TransactionalJobDefinition | DetachedJobDefinition;
 
 export interface PluginConfig {
   name: string;
   schema?: Record<string, unknown>;
-  routes?: Record<string, RouteHandler>;
+  routes?: Record<string, RouteHandler | DetachedRouteDefinition>;
   onQuery?: (ctx: FunctionContext, name: string, args: unknown, next: () => Promise<unknown>) => Promise<unknown>;
   onMutation?: PluginConfig["onQuery"];
   jobs?: Record<string, JobDefinition>;
@@ -70,7 +85,7 @@ export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends Fun
   storage?: readonly Bucket[];
   sync?: boolean;
   web?: string;
-  routes?: Record<string, RouteHandler>;
+  routes?: Record<string, RouteHandler | DetachedRouteDefinition>;
   plugins?: readonly PluginConfig[];
   jobs?: Record<string, JobDefinition>;
 }

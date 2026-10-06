@@ -1,7 +1,7 @@
 import { getTableName } from "drizzle-orm";
 import { join } from "node:path";
 import { createStorage, type StorageEffects } from "../storage";
-import type { FunctionContext, PebbleConfig, User } from "../config";
+import type { DetachedContext, FunctionContext, PebbleConfig, User } from "../config";
 import type { openDatabase } from "../db";
 import { BedrockError, asBedrockError } from "../error";
 import { checkAccess } from "./access";
@@ -10,6 +10,7 @@ import { resolveUser } from "./identity";
 export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof openDatabase>) {
   let tail: Promise<unknown> = Promise.resolve();
   let closed = false;
+  const detachedRuns = new Set<Promise<unknown>>();
   const listeners = new Set<(writes: Set<string>) => void>();
   function execute(kind: "query" | "mutation", name: string, args: unknown, request: Request, identity?: { user: User | null; validated?: boolean }, handler?: (ctx: FunctionContext) => unknown) {
     if (closed) return Promise.reject(new BedrockError("PEBBLE_STOPPED", "The pebble has stopped.", "Start a new pebble runtime before executing functions."));
@@ -72,7 +73,30 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
     }, () => {});
     return run;
   }
+  async function detached<R>(request: Request, handler: (ctx: DetachedContext) => R, identity?: { user: User | null }): Promise<Awaited<R>> {
+    const run = Promise.resolve().then(async () => {
+      if (closed) throw new BedrockError("PEBBLE_STOPPED", "The pebble has stopped.", "Start a new pebble runtime before executing functions.");
+      const user = identity ? identity.user : resolveUser(request);
+      const slot = async <T>(kind: "query" | "mutation", fn: (ctx: FunctionContext) => T): Promise<Awaited<T>> => {
+        const result = await execute(kind, "detached", null, request, { user }, fn);
+        return result.value;
+      };
+      const unavailable = () => { throw new BedrockError("DETACHED_CONTEXT", "Detached handlers cannot access db, storage, or invalidate directly.", "Use ctx.read(ctx => ...) or ctx.write(ctx => ...) for database and storage work."); };
+      const ctx: DetachedContext = {
+        user, pebble, request,
+        read: fn => slot("query", fn),
+        write: fn => slot("mutation", fn),
+      };
+      for (const key of ["db", "storage", "invalidate"]) Object.defineProperty(ctx, key, { get: unavailable });
+      try { return await handler(ctx); }
+      catch (error) { throw asBedrockError(error, "FUNCTION_FAILED", "Check the detached handler and its read/write callbacks."); }
+    });
+    detachedRuns.add(run);
+    void run.then(() => detachedRuns.delete(run), () => detachedRuns.delete(run));
+    return await run;
+  }
   return Object.assign(execute, {
+    detached,
     storage(kind: "query" | "mutation", request: Request, handler: (ctx: FunctionContext) => unknown) {
       return execute(kind, "storage", null, request, undefined, handler);
     },
@@ -86,6 +110,6 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
-    async close() { closed = true; await tail; },
+    async close() { closed = true; await Promise.allSettled(detachedRuns); await tail; },
   });
 }

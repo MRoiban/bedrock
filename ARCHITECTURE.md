@@ -61,7 +61,7 @@ Public entry points of `bedrock` (package.json `exports`):
 
 | Import            | Contents |
 |-------------------|----------|
-| `bedrock`         | `definePebble`, `query`, `mutation`, `bucket`, `job`, `plugin`, types; re-exports `drizzle-orm` operators and `drizzle-orm/sqlite-core` table builders |
+| `bedrock`         | `definePebble`, `query`, `mutation`, `bucket`, `job`, `detached`, `plugin`, types; re-exports `drizzle-orm` operators and `drizzle-orm/sqlite-core` table builders |
 | `bedrock/client`  | `createClient()` |
 | `bedrock/react`   | `BedrockProvider`, `useQuery`, `useMutation`, `useUser`, `useUpload` |
 | `bedrock/server`  | `startPebble()` (low-level, used by daemon and tests) |
@@ -344,16 +344,45 @@ ctx.invalidate([auditLog]);
 - `jobs: { name: job(cron, async ctx => ...) }` is supported on pebbles and plugins.
   Five numeric cron fields support `*`, lists, ranges, and steps in server-local
   time. Restricted day-of-month/day-of-week use traditional OR semantics.
-  Jobs execute in the pebble's write queue with `user: null` (bypassing pebble
+  By default, jobs execute in the pebble's write queue with `user: null` (bypassing pebble
   access, retaining bucket policies), invalidate sync after commit, log named
   failures, and skip overlapping runs of the same job. There is no catch-up or
   persisted history; overlap protection is process-local.
 - `bedrock jobs ls <pebble>` and `jobs run <pebble> <job>` use the authenticated
   daemon API and a signed service identity to the child.
 - Route handlers keep `(request, server)` and receive FunctionContext as a third
-  argument, including `{ db, user, storage, invalidate }`. They run inside write
+  argument, including `{ db, user, storage, invalidate }`. By default they run inside write
   transactions. Daemon access gating applies to all routes; direct low-level
   routes retain existing Bun behavior. Functions and jobs also expose invalidate.
+
+Routes and jobs can opt out of the outer queue/transaction for slow network I/O:
+
+```ts
+import { detached, job } from "bedrock";
+
+routes: { "POST /api/refresh": detached(async (_request, _server, ctx) => {
+  const rows = await fetch("https://example.com/items").then(r => r.json());
+  await ctx.write(({ db }) => db.insert(items).values(rows).run());
+  return Response.json(await ctx.read(({ db }) => db.select().from(items).all()));
+}) },
+jobs: { refresh: job("0 * * * *", async ctx => {
+  const rows = await fetch("https://example.com/items").then(r => r.json());
+  await ctx.write(({ db }) => db.insert(items).values(rows).run());
+}, { transaction: false }) },
+```
+
+`DetachedContext` exposes `{ user, pebble, request, read, write }`, without direct
+`db`, `storage`, or `invalidate`; accessing those throws a repair-hinted
+`BedrockError`. `read(fn)` and `write(fn)` resolve the callback's value in short
+queued slots with the same FunctionContext and transaction/storage/tracking
+semantics as queries and mutations. No query/mutation plugin middleware wraps
+these callbacks. Await every slot, keep network I/O outside callbacks, and do not
+retain a slot's context. A failed slot rolls back only itself; earlier committed
+slots survive later handler errors. Writes notify sync after each commit.
+Detached routes retain daemon access gating and signed user identity, just like
+ordinary routes. Jobs keep `user: null` in every slot, process-local overlap
+protection, scheduling, and `bedrock jobs run`. Existing routes/jobs remain
+transactional by default.
 
 ### Built-in backups
 

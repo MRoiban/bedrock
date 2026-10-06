@@ -7,7 +7,7 @@ import { backupSetup } from "../src/backup";
 import { createArchive } from "../src/daemon/archive";
 import { tempDirectory } from "./helpers";
 
-test("daemon CLI jobs, backup run/list/restore with files, rollback refusal and explicit force", async () => {
+test("daemon CLI detached jobs, backup run/list/restore with files, rollback refusal and explicit force", async () => {
   const temp = tempDirectory();
   const home = join(temp.dir, "home");
   const dir = join(temp.dir, "source");
@@ -31,7 +31,7 @@ const attachments = bucket("attachments", { maxSize: "1mb", access: "public" });
 export default definePebble({ name: "sample", schema: { items }, storage: [attachments],
 queries: { list: query(ctx => ctx.db.select().from(items)), files: query(ctx => ctx.storage.list(attachments)) },
 mutations: { add: mutation(ctx => ctx.db.insert(items).values({ id: "manual" }).run()), upload: mutation(ctx => ctx.storage.put(attachments, new Blob(["attachment"]), { name: "test.txt" })) },
-jobs: { sweep: job("0 0 31 2 *", ctx => { if (ctx.user !== null) throw new Error("expected anonymous job"); ctx.db.insert(items).values({ id: crypto.randomUUID() }).run(); }) } });`);
+jobs: { sweep: job("0 0 31 2 *", async ctx => { if (ctx.user !== null) throw new Error("expected anonymous job"); await ctx.write(slot => { if (slot.user !== null) throw new Error("expected anonymous slot"); slot.db.insert(items).values({ id: crypto.randomUUID() }).run(); }); }, { transaction: false }) } });`);
   try {
     expect((await deploy()).ok).toBe(true);
     expect((await command(["--version"])).body.version).toBe("0.1.0");

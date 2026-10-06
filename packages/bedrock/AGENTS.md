@@ -103,7 +103,7 @@ Drizzle table objects or SQL table names to post-commit sync notifications. Pref
 `ctx.invalidate([notes])` over `ctx.invalidate(["notes"])`; unknown names throw
 `BedrockError("UNKNOWN_TABLE", message, hint)`.
 
-Queries run inside read-only transactions. Mutations, jobs, and custom routes run
+Queries run inside read-only transactions. Mutations, and by default jobs and custom routes, run
 inside write transactions, serialized within a process. Throwing rolls back SQL
 and storage effects; errors become `BedrockError(code, message, hint)`. Middleware
 executes inside the same transaction. Avoid slow network work inside handlers,
@@ -128,6 +128,35 @@ Deploy keeps the last three code releases. `bedrock rollback notes` switches cod
 not data; it refuses a target missing applied migrations. `--force` bypasses the
 check when you have established compatibility. Restore a matching backup for
 schema recovery; restarting the current code applies its pending migrations.
+
+### Detached routes and jobs
+
+Use `detached(handler)` for a route and `job(cron, handler, { transaction: false })`
+for a job that awaits slow network I/O. Import both helpers from `bedrock`.
+Existing handlers remain transactional by default.
+
+```ts
+routes: { "POST /api/refresh": detached(async (_request, _server, ctx) => {
+  const rows = await fetch("https://example.com/items").then(r => r.json());
+  await ctx.write(({ db }) => db.insert(items).values(rows).run());
+  return Response.json(await ctx.read(({ db }) => db.select().from(items).all()));
+}) },
+jobs: { refresh: job("0 * * * *", async ctx => {
+  const rows = await fetch("https://example.com/items").then(r => r.json());
+  await ctx.write(({ db }) => db.insert(items).values(rows).run());
+}, { transaction: false }) },
+```
+
+`DetachedContext` has `{ user, pebble, request, read, write }`. Direct `db`,
+`storage`, and `invalidate` access throws `BedrockError` with a read/write hint.
+`read(fn)` is a queued read-only transaction; `write(fn)` is a queued write
+transaction with storage effects and sync notification after commit. Callbacks
+receive `FunctionContext` and resolve their returned value; plugin query/mutation
+middleware does not wrap them. Await every slot and never retain its context or
+perform slow network I/O inside it. A failed write rolls back only that slot;
+earlier committed slots survive a later handler error. Route access gating and
+identity stay the same; jobs retain `user: null`, scheduling, manual CLI runs,
+and process-local overlap protection.
 
 ## Authentication, authorization and trust
 
@@ -190,7 +219,7 @@ ctx.invalidate([notes]);
 ```
 
 Custom routes keep `(request, server)` working and add context as the third
-argument. They return Response/Promise<Response>. They run in a write transaction
+argument. They return Response/Promise<Response>. By default they run in a write transaction
 (even GET); keep them short and use function APIs for normal app data.
 
 ## Storage
@@ -246,7 +275,7 @@ seconds field, catch-up, or persisted execution history. Each process schedules
 once per observed minute; skipped minutes are not replayed. DST follows the local
 clock: missing local minutes are skipped and repeated local minutes can run twice.
 
-A job executes inside a write transaction with `user: null`, logs failures with
+By default a job executes inside a write transaction with `user: null`, logs failures with
 its name, and automatically tracks Drizzle writes for sync after commit. No
 `invalidate()` call is needed for these writes. Overlapping runs of the same job are
 skipped (manual or scheduled); different jobs queue through the executor.

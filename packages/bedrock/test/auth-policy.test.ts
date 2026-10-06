@@ -28,10 +28,10 @@ test("daemon discovers access at health check and enforces every policy before c
   try {
     for (const [name, access] of Object.entries({ open: "public", members: "users", makers: "creators", team: { allow: ["@company.test", "guest@other.test"] } })) {
       const dir = join(temp.dir, name);
-      await Bun.write(join(dir, "pebble.ts"), `import { definePebble, query } from "bedrock";
+      await Bun.write(join(dir, "pebble.ts"), `import { definePebble, query, detached } from "bedrock";
 export default definePebble({ name: "${name}", access: ${JSON.stringify(access)},
 queries: { who: query(({user, request}) => ({user, cookie: request.headers.get("cookie")})) },
-routes: { "GET /page": () => new Response("permitted") } });`);
+routes: { "GET /page": () => new Response("permitted"), "GET /detached": detached(() => new Response("permitted")) } });`);
       const archive = join(temp.dir, `${name}.tar.gz`);
       await createArchive(dir, archive);
       expect((await request("bedrock.example.test", `/api/deploy?name=${name}`, { method: "POST", body: Bun.file(archive), headers: { authorization: `Bearer ${adminToken}` } })).status).toBe(200);
@@ -52,6 +52,13 @@ routes: { "GET /page": () => new Response("permitted") } });`);
     expect((await request("team.example.test", "/page", { headers: { cookie: member } })).status).toBe(200);
     expect((await request("team.example.test", "/page", { headers: { cookie: guest } })).status).toBe(200);
     expect((await request("team.example.test", "/page", { headers: { cookie: creator } })).status).toBe(403);
+    for (const [name, cookie, status] of [
+      ["open", "", 200], ["members", "", 401], ["members", guest, 200],
+      ["makers", creator, 200], ["makers", member, 403],
+      ["team", member, 200], ["team", creator, 403],
+    ] as const) {
+      expect((await request(`${name}.example.test`, "/detached", { headers: { cookie } })).status).toBe(status);
+    }
     const identity = await (await request("makers.example.test", "/_bedrock/q/who", { method: "POST", body: "null", headers: { cookie: `${creator}; theme=dark`, "x-bedrock-user": "spoof" } })).json();
     expect(identity.value.user.email).toBe("creator@example.test");
     expect(identity.value.cookie).toBe("theme=dark");

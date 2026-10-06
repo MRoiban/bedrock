@@ -27,7 +27,9 @@ export async function startPebble(options: StartPebbleOptions) {
     await applyMigrations(database.sqlite, join(dir, "migrations"));
     database.refreshTracking();
     const execute = createExecutor(pebble, database);
-    const jobs = createJobs(pebble.jobs ?? {}, (_name, handler) => execute.job(handler));
+    const jobs = createJobs(pebble.jobs ?? {}, (_name, _handler, definition) => definition.transaction === false
+      ? execute.detached(new Request("http://localhost/_bedrock/jobs"), definition.run, { user: null })
+      : execute.job(definition.run));
     const files = createFileHandler(pebble, execute, join(database.dataDir, "uploads"));
     await files.cleanup();
     const sync = pebble.sync === true ? createSync(execute) : undefined;
@@ -39,7 +41,11 @@ export async function startPebble(options: StartPebbleOptions) {
       const path = match[2]!;
       routes[path] ??= {};
       routes[path][match[1]!] = async (request: Request, server: Bun.Server<undefined>) => {
-        try { return (await execute.route(request, ctx => handler(request, server, ctx))).value as Response; } catch (error) { return errorResponse(error); }
+        try {
+          return typeof handler === "function"
+            ? (await execute.route(request, ctx => handler(request, server, ctx))).value as Response
+            : await execute.detached(request, ctx => handler.run(request, server, ctx));
+        } catch (error) { return errorResponse(error); }
       };
     }
     if (web.html && !Object.hasOwn(routes, "/*")) routes["/*"] = web.html;

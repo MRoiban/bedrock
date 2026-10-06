@@ -1,14 +1,18 @@
-import type { FunctionContext, JobDefinition } from "../config/types";
+import type { FunctionContext, DetachedContext, DetachedJobDefinition, TransactionalJobDefinition, JobDefinition } from "../config/types";
 import { BedrockError, asBedrockError } from "../error";
 import { parseCron } from "./cron";
 
-export function job(cron: string, run: (ctx: FunctionContext) => unknown): JobDefinition {
+export function job(cron: string, run: (ctx: FunctionContext) => unknown, options?: { transaction?: true }): TransactionalJobDefinition;
+export function job(cron: string, run: (ctx: DetachedContext) => unknown, options: { transaction: false }): DetachedJobDefinition;
+export function job(cron: string, run: JobDefinition["run"], options?: { transaction?: boolean }): JobDefinition {
   parseCron(cron);
   if (typeof run !== "function") throw new BedrockError("INVALID_JOB", "Job handler is missing.", "Use job(cron, async ctx => { ... }).");
-  return { cron, run };
+  return options?.transaction === false
+    ? { cron, run: run as DetachedJobDefinition["run"], transaction: false }
+    : { cron, run: run as TransactionalJobDefinition["run"] };
 }
 
-export function createJobs(definitions: Record<string, JobDefinition>, execute: (name: string, handler: JobDefinition["run"]) => Promise<unknown>, clock = () => new Date(), log = (name: string, error: unknown) => console.error(`Job ${name} failed`, asBedrockError(error).toJSON())) {
+export function createJobs(definitions: Record<string, JobDefinition>, execute: (name: string, handler: JobDefinition["run"], definition: JobDefinition) => Promise<unknown>, clock = () => new Date(), log = (name: string, error: unknown) => console.error(`Job ${name} failed`, asBedrockError(error).toJSON())) {
   const matches = new Map(Object.entries(definitions).map(([name, definition]) => [name, parseCron(definition.cron)]));
   const running = new Map<string, Promise<unknown>>();
   let lastMinute: number | undefined;
@@ -18,7 +22,7 @@ export function createJobs(definitions: Record<string, JobDefinition>, execute: 
     if (!Object.hasOwn(definitions, name)) throw new BedrockError("JOB_NOT_FOUND", `Unknown job: ${name}`, "Use bedrock jobs ls <pebble> to see available jobs.");
     if (stopped) throw new BedrockError("PEBBLE_STOPPED", "Jobs have stopped.", "Start the pebble before running jobs.");
     if (running.has(name)) return { name, skipped: true };
-    const work = Promise.resolve().then(() => execute(name, definitions[name]!.run));
+    const work = Promise.resolve().then(() => execute(name, definitions[name]!.run, definitions[name]!));
     running.set(name, work);
     try { await work; return { name, skipped: false }; }
     catch (error) { log(name, error); throw error; }

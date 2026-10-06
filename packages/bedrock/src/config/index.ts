@@ -6,6 +6,7 @@ import type { Bucket, BucketConfig, PebbleConfig, PluginConfig } from "./types";
 export { job } from "../jobs";
 import { parseCron } from "../jobs/cron";
 
+export { detached } from "./detached";
 export { query, mutation } from "./functions";
 export type * from "./types";
 
