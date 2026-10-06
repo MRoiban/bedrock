@@ -2,6 +2,7 @@ import { mkdir, open, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
+import { privateFile } from "../private-file";
 
 export interface LocalTunnel { mode: "local"; tunnelId: string; name: string; credentialsFile: string; configFile: string }
 export interface RemoteTunnel { mode?: "remote"; accountId: string; zoneId: string; tunnelId: string; dnsRecordId: string; name: string }
@@ -25,6 +26,7 @@ export async function atomicWrite(path: string, value: string, mode = 0o600) {
   try {
     await file.writeFile(value);
     await file.close();
+    if (process.platform === "win32" && mode === 0o600) await privateFile(temporary);
     await rename(temporary, path);
   } catch (error) {
     await file.close().catch(() => {});

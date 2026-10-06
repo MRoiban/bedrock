@@ -43,7 +43,7 @@ export async function prompt(label: string, fallback = "", secret = false, signa
   finally { reader.close(); }
 }
 export async function clipboard(value: string) {
-  const command = ["pbcopy", "wl-copy", "xclip"].find(name => Bun.which(name));
+  const command = (process.platform === "win32" ? ["clip.exe"] : ["pbcopy", "wl-copy", "xclip"]).find(name => Bun.which(name));
   if (!command) return false;
   try {
     const child = Bun.spawn(command === "xclip" ? [command, "-selection", "clipboard"] : [command], { stdin: "pipe", stdout: "ignore", stderr: "ignore" });

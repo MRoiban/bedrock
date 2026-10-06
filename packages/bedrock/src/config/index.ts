@@ -13,6 +13,7 @@ export function validateName(name: string) {
   if (typeof name !== "string" || !/^[a-z0-9-]{1,32}$/.test(name) || ["auth", "bedrock", "www"].includes(name)) {
     throw new BedrockError("INVALID_PEBBLE_NAME", `Invalid pebble name: ${name}`, "Use 1–32 lowercase letters, digits, or hyphens; auth, bedrock, and www are reserved.");
   }
+  if (process.platform === "win32" && /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(name)) throw new BedrockError("INVALID_PEBBLE_NAME", `${name} is a reserved Windows device name.`, "Choose a different pebble name, such as my-app.");
 }
 
 const validated = new WeakSet<object>();

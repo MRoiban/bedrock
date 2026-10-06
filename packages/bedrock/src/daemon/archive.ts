@@ -15,7 +15,7 @@ export async function run(command: string[], cwd?: string) {
 export async function extract(archive: string, release: string) {
   const names = await run(["tar", "-tzf", archive]);
   for (const name of names.trim().split("\n")) {
-    if (name.startsWith("/") || name.split("/").some(part => ["..", "node_modules", ".bedrock", ".git"].includes(part))) {
+    if (/^[\\/]|:/.test(name) || name.split(/[\\/]/).some(part => ["..", "node_modules", ".bedrock", ".git"].includes(part))) {
       throw new BedrockError("UNSAFE_ARCHIVE", "Archive contains an unsafe or excluded path.", "Tar the pebble directory without node_modules, .bedrock, .git, or parent paths.");
     }
   }
@@ -84,7 +84,7 @@ export async function installRelease(release: string) {
     const target = join(release, "node_modules", name);
     await mkdir(resolve(target, ".."), { recursive: true });
     await rm(target, { recursive: true, force: true });
-    await symlink(dir, target, "dir");
+    await symlink(dir, target, process.platform === "win32" ? "junction" : "dir");
   }
 }
 

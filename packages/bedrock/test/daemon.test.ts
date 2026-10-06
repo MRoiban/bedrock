@@ -47,7 +47,7 @@ test("daemon routes, strips headers, authorizes, swaps, retains releases, rolls 
   const dir = join(h.temp.dir, "source");
   await Bun.write(join(dir, "pebble.ts"), source("v1"));
   try {
-    expect((await stat(join(h.home, "admin-token"))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(join(h.home, "admin-token"))).mode & 0o777).toBe(0o600);
     expect((await h.api("/api/pebbles", {}, "bad")).status).toBe(401);
     expect((await h.request("bedrock.example.test", "/api/pebbles", { headers: { authorization: `Bearer ${h.token}` } })).status).toBe(200);
     for (const host of ["unknown.localhost", "auth.localhost", "www.example.test", "sample.evil.test", "nested.sample.localhost"]) expect((await h.request(host)).status).toBe(404);
@@ -112,7 +112,7 @@ test("deploys notes with production dependencies, serves HTML, adds/lists, and r
   const h = await harness(true);
   const dir = join(h.temp.dir, "notes");
   await mkdir(dir);
-  await cp(resolve(import.meta.dir, "../../../examples/notes"), dir, { recursive: true, filter: path => !path.split("/").includes("node_modules") && !path.split("/").includes(".bedrock") });
+  await cp(resolve(import.meta.dir, "../../../examples/notes"), dir, { recursive: true, filter: path => !path.split(/[\\/]/).includes("node_modules") && !path.split(/[\\/]/).includes(".bedrock") });
   try {
     const response = await h.deploy("notes", dir);
     const body = await response.json();

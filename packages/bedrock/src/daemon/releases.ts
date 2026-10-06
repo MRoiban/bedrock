@@ -26,19 +26,31 @@ export class Releases {
     const root = join(this.home, "pebbles", name);
     const temporary = join(root, `current.${crypto.randomUUID()}`);
     const old = this.supervisor.child(name);
-    await symlink(child.release, temporary, "dir");
+    await symlink(child.release, temporary, process.platform === "win32" ? "junction" : "dir");
     try {
       if (child.process.exitCode !== null) throw new BedrockError("HEALTH_FAILED", "Candidate exited before activation.", `Check bedrock logs ${name} and retry.`);
-      await rename(temporary, join(root, "current"));
+      await this.replaceCurrent(temporary, root);
       try { this.db.save({ name, release: child.release, previous_release: previous?.release ?? null, status: "running" }); }
       catch (error) {
-        if (previous) { await symlink(previous.release, temporary, "dir"); await rename(temporary, join(root, "current")); }
+        if (previous) { await symlink(previous.release, temporary, process.platform === "win32" ? "junction" : "dir"); await this.replaceCurrent(temporary, root); }
         else await rm(join(root, "current"), { force: true });
         throw error;
       }
       this.supervisor.activate(name, child);
     } finally { await rm(temporary, { force: true }); }
     if (old) await retireChild(old).catch(error => this.warn(name, error));
+  }
+  private async replaceCurrent(temporary: string, root: string) {
+    const current = join(root, "current");
+    if (process.platform !== "win32") { await rename(temporary, current); return; }
+    // Windows cannot rename over a junction; routing still uses the live child.
+    const old = join(root, `current.old-${crypto.randomUUID()}`);
+    let moved = false;
+    try { await rename(current, old); moved = true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    try { await rename(temporary, current); }
+    catch (error) { if (moved) await rename(old, current); throw error; }
+    if (moved) await rm(old, { recursive: true, force: true });
   }
   async deploy(name: string, request: Request) {
     return this.exclusive(name, async () => {

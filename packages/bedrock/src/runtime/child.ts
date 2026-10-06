@@ -13,6 +13,8 @@ try {
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+  process.on("message", message => { if ((message as { op?: string })?.op === "stop") void stop(); });
+  process.on("disconnect", stop);
 } catch (error) {
   const typed = asBedrockError(error).toJSON();
   console.error(JSON.stringify(typed));

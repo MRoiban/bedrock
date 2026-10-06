@@ -48,7 +48,7 @@ test("tunnel reconciles idempotently, stores only run token privately, detects d
     expect(mock.puts).toBe(2);
     expect(mock.requests.find(request => request.method === "POST" && request.path.endsWith("/cfd_tunnel"))?.body).toMatchObject({ name: "bedrock-home", config_src: "cloudflare" });
     expect(await Bun.file(join(temp.dir, "config.json")).text()).not.toContain("secret");
-    expect((await stat(tunnelTokenPath(temp.dir))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(tunnelTokenPath(temp.dir))).mode & 0o777).toBe(0o600);
     expect(await tunnelStatus(temp.dir, mock.api)).toMatchObject({ matches: true, tokenStored: true });
     mock.drift();
     expect(await tunnelStatus(temp.dir, mock.api)).toMatchObject({ matches: false });

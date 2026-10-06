@@ -3,8 +3,9 @@ import { PebbleLogs } from "../daemon/logs";
 import { BedrockError } from "../error";
 
 export function cloudflaredBinary() {
-  const binary = Bun.which("cloudflared") ?? Bun.which("cloudflared", { PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin" });
-  if (!binary) throw new BedrockError("CLOUDFLARED_MISSING", "cloudflared is not installed.", process.platform === "darwin" ? "Install cloudflared with: brew install cloudflared" : "Install the cloudflared package from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/ for your Linux distribution.");
+  const windowsPaths = [process.env.ProgramFiles && join(process.env.ProgramFiles, "cloudflared"), process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Microsoft/WinGet/Links")].filter(Boolean).join(";");
+  const binary = Bun.which("cloudflared") ?? Bun.which("cloudflared", { PATH: process.platform === "win32" ? windowsPaths : "/opt/homebrew/bin:/usr/local/bin:/usr/bin" });
+  if (!binary) throw new BedrockError("CLOUDFLARED_MISSING", "cloudflared is not installed.", process.platform === "win32" ? "Run winget install --id Cloudflare.cloudflared --exact, then open a new terminal." : process.platform === "darwin" ? "Install cloudflared with: brew install cloudflared" : "Install the cloudflared package from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/ for your Linux distribution.");
   return binary;
 }
 export class TunnelSupervisor {
@@ -14,7 +15,7 @@ export class TunnelSupervisor {
   private failures = 0;
   private readers = new Set<Promise<unknown>>();
   private logs: PebbleLogs;
-  constructor(home: string, private token: string, private binary = cloudflaredBinary, private configFile?: string) {
+  constructor(home: string, private token: string, private binary: () => string | string[] = cloudflaredBinary, private configFile?: string) {
     this.logs = new PebbleLogs(home, "", 10 * 1024 * 1024, join(home, "logs"), "cloudflared.log");
   }
   status() { return { running: this.child?.exitCode === null, pid: this.child?.exitCode === null ? this.child.pid : null }; }
@@ -22,7 +23,8 @@ export class TunnelSupervisor {
     if (this.stopping || this.child?.exitCode === null) return;
     const started = Date.now();
     try {
-      const child = Bun.spawn([this.binary(), "tunnel", "--no-autoupdate", ...(this.configFile ? ["--config", this.configFile] : []), "run"], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, CLOUDFLARE_API_TOKEN: undefined, TUNNEL_TOKEN: this.configFile ? undefined : this.token } });
+      const binary = this.binary();
+      const child = Bun.spawn([...(typeof binary === "string" ? [binary] : binary), "tunnel", "--no-autoupdate", ...(this.configFile ? ["--config", this.configFile] : []), "run"], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, CLOUDFLARE_API_TOKEN: undefined, TUNNEL_TOKEN: this.configFile ? undefined : this.token } });
       this.child = child;
       const redact = async (stream: ReadableStream<Uint8Array>) => {
         // Redact across pipe chunks as well as complete log lines.

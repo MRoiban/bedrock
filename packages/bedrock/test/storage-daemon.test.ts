@@ -1,5 +1,6 @@
+import { linkDependencies } from "./helpers";
 import { expect, test } from "bun:test";
-import { cp, symlink } from "node:fs/promises";
+import { cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { startDaemon } from "../src/daemon";
 import { createArchive } from "../src/daemon/archive";
@@ -10,8 +11,8 @@ test("daemon dev login uploads a notes attachment, links it, and isolates downlo
   const temp = tempDirectory();
   const dir = join(temp.dir, "notes");
   await cp(resolve(import.meta.dir, "../../../examples/notes"), dir, { recursive: true,
-    filter: path => !path.split("/").some(part => ["node_modules", ".bedrock"].includes(part)) });
-  await symlink(resolve(import.meta.dir, "../../../examples/notes/node_modules"), join(dir, "node_modules"));
+    filter: path => !path.split(/[\\/]/).some(part => ["node_modules", ".bedrock"].includes(part)) });
+  linkDependencies(resolve(import.meta.dir, "../../../examples/notes/node_modules"), join(dir, "node_modules"));
   const daemon = await startDaemon({ home: join(temp.dir, "home"), port: 0, domain: "localhost", dev: true, devPebble: { name: "notes", dir } });
   const origin = `http://notes.localhost:${daemon.server.port}`;
   const request = (path: string, init: RequestInit = {}) => fetch(new URL(path, daemon.server.url), {

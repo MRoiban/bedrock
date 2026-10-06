@@ -9,15 +9,15 @@ import { startDaemon } from "../src/daemon";
 import { tempDirectory } from "./helpers";
 
 for (const template of ["react", "minimal"]) {
-  test(`standalone ${template} installs from cache, typechecks and deploys daemon-owned packages`, async () => {
+  test(`standalone ${template} installs, typechecks and deploys daemon-owned packages`, async () => {
     const temp = tempDirectory();
     const root = resolve(import.meta.dir, "../../..");
     let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
     try {
       expect(resolve(temp.dir).startsWith(root + "/")).toBe(false);
       const created = await newPebble(`standalone-${template}`, template, { cwd: temp.dir, json: true, terminal: {
-        // The required root bun install primes the cache; never fetch in this regression.
-        run: (args, options) => runCommand(args[1] === "install" ? [...args, "--offline"] : args, { ...options, env: { ...process.env, BEDROCK_HOME: join(temp.dir, "home") } }),
+        // A fresh host may have packages cached without their semver manifests.
+        run: (args, options) => runCommand(args[1] === "install" ? [...args, "--prefer-offline"] : args, { ...options, env: { ...process.env, BEDROCK_HOME: join(temp.dir, "home") } }),
       } });
       expect(await Bun.file(join(created.dir, "bun.lock")).exists()).toBe(true);
       await run([process.execPath, "run", "typecheck"], created.dir);

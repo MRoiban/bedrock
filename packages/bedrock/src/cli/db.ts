@@ -15,7 +15,7 @@ export async function dbCommand(command: string, dir = process.cwd()) {
       const wrapper = `import pebble from ${JSON.stringify(resolve(dir, "pebble.ts"))};\n` +
         tables.map(([key], i) => `export const table${i} = pebble.schema![${JSON.stringify(key)}];`).join("\n");
       await Bun.write(join(temp, "schema.ts"), wrapper);
-      await Bun.write(join(temp, "config.ts"), `export default ${JSON.stringify({ dialect: "sqlite", schema: relative(dir, join(temp, "schema.ts")), out: "./migrations" })};\n`);
+      await Bun.write(join(temp, "config.ts"), `export default ${JSON.stringify({ dialect: "sqlite", schema: relative(dir, join(temp, "schema.ts")).replaceAll("\\", "/"), out: "./migrations" })};\n`);
       let kit: string;
       try {
         let entry: string;

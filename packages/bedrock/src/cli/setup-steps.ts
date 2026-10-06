@@ -33,9 +33,11 @@ async function prereqs(context: StepContext) {
     const instructions = "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/";
     const linuxInstall = "sudo mkdir -p --mode=0755 /usr/share/keyrings && curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null && echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list && sudo apt-get update && sudo apt-get install -y cloudflared";
     if (platform === "darwin") write("Install: brew install cloudflared");
+    else if (platform === "win32") write("Install: winget install --id Cloudflare.cloudflared --exact");
     else write(`Official packages: ${instructions}\nDebian/Ubuntu: ${linuxInstall}`);
     if (!await confirm("--install-cloudflared", "Install cloudflared?")) throw new BedrockError("CLOUDFLARED_MISSING", "cloudflared is required.", `Install it from ${instructions}, or pass --install-cloudflared.`);
     if (platform === "darwin") await io.run(["brew", "install", "cloudflared"], { inherit: true });
+    else if (platform === "win32") await io.run(["winget", "install", "--id", "Cloudflare.cloudflared", "--exact", "--accept-package-agreements", "--accept-source-agreements", ...(interactive ? [] : ["--silent", "--disable-interactivity"])], { inherit: interactive });
     else {
       if (!io.which("apt-get")) throw new BedrockError("CLOUDFLARED_MISSING", "Automatic installation supports Debian/Ubuntu on Linux.", `Install your distribution’s official package from ${instructions}, then rerun setup.`);
       await io.run(["sh", "-c", interactive ? linuxInstall : linuxInstall.replaceAll("sudo ", "sudo -n ")], { inherit: interactive });

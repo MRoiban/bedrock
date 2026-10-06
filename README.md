@@ -18,6 +18,26 @@ git clone https://github.com/MRoiban/bedrock.git ~/.bedrock/src && ~/.bedrock/sr
 bedrock setup
 ```
 
+On Windows 11, use PowerShell (Git and Bun >= 1.2 must be installed):
+
+```powershell
+git clone https://github.com/MRoiban/bedrock.git "$env:USERPROFILE\.bedrock\src"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.bedrock\src\install.ps1"
+bedrock setup
+```
+
+Pass `-InstallBun` to the installer to install Bun if it is missing. Add
+`%USERPROFILE%\.bun\bin` to your user PATH and open a new terminal if needed.
+Windows hosting uses a per-user Scheduled Task that starts at login, restarts
+after failure, and runs while you are logged in. It needs no administrator rights
+or Developer Mode. Keep the computer awake when serving pebbles. Use
+`bedrock service status` to inspect it and `bedrock service uninstall` to remove it.
+`setup --install-cloudflared` uses WinGet on Windows; alternatively install
+`Cloudflare.cloudflared` yourself and restart your terminal before setup.
+Keep Bedrock's home and private credentials on NTFS; Windows uses owner/SYSTEM
+access controls instead of POSIX file modes. Windows 11's built-in `tar.exe`
+handles deployment archives.
+
 The installer checks Bun ≥ 1.2, installs the checkout and puts `bedrock` in Bun's
 bin directory. Add `~/.bun/bin` to PATH if needed. Setup walks through Cloudflare
 browser authorization, your domain and creator email, Google sign-in, backups,
@@ -86,7 +106,7 @@ Choose `--skip-google` and/or `--skip-backups` to defer them. R2 flags are
 `--r2-bucket`, `--r2-access-key-id`, `--r2-secret-access-key`, and optionally
 `--r2-account`; the account is discovered when an API token is available.
 `--install-cloudflared` authorizes package installation (Homebrew on macOS,
-Cloudflare's Debian/Ubuntu repository on Linux). Other Linux distributions should
+Cloudflare's Debian/Ubuntu repository on Linux, WinGet on Windows 11). Other Linux distributions should
 install the [official package](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/) first.
 `--enable-linger` authorizes Linux startup without login. `--skip-sign-in` defers
 only the final browser check; doctor still runs.

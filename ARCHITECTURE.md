@@ -24,6 +24,12 @@ Every dependency must be small and must not own our data model.
 
 No Postgres, no Redis, no Docker, no reverse proxy.
 
+Supported hosts: Windows 11, macOS, and Linux. Native Windows uses PowerShell,
+Task Scheduler, NTFS access controls, directory junctions, and the built-in tar.
+Windows installation uses `install.ps1`; no WSL or Developer Mode is required.
+Windows device names (con, prn, aux, nul, com1–com9, lpt1–lpt9) are rejected
+for pebble and bucket names before filesystem operations.
+
 ## 2. Repository layout
 
 Bun workspace monorepo.
@@ -189,7 +195,7 @@ $BEDROCK_HOME (default ~/.bedrock)
   bedrock.sqlite     users, sessions, pebbles registry, deploy tokens
   pebbles/<name>/
     releases/<ts>/   deployed code (kept: last 3)
-    current -> releases/<ts>
+    current -> releases/<ts>  (directory junction on Windows)
     data/db.sqlite, data/files/
     logs/            stdout/stderr, rotated
 ```
@@ -223,6 +229,14 @@ $BEDROCK_HOME (default ~/.bedrock)
   Units use absolute Bun/CLI paths and BEDROCK_HOME. `install --dry-run` prints the
   file without writing it or invoking the service manager. Linux users can run
   `loginctl enable-linger "$USER"` for startup without login; macOS runs at user login.
+- Windows 11 service commands manage a per-user Scheduled Task with an interactive
+  logon trigger, least privilege, unlimited runtime and restart on failure. Its
+  hidden PowerShell launcher pins Bun/CLI paths and BEDROCK_HOME. It starts at
+  login and runs while the user is logged in; it requires no elevation. Task names
+  are scoped to the user and home. Private files grant access to the owner and
+  SYSTEM through NTFS ACLs. Windows junction swaps stage the previous junction
+  before replacement; live HTTP routing continues through the supervisor's child
+  reference and SQLite registry remains authoritative after a host crash.
 - `bedrock login <domain>` (also `bedrock.<domain>` or an HTTPS URL) opens a browser and a one-shot
   random-port callback on 127.0.0.1. `/cli-login` requires a signed-in creator,
   then explicit confirmation to mint a deploy token. Confirmation is bound to the
@@ -350,11 +364,14 @@ on Bun 1.2). Credentials are saved separately, mode 0600. No external
 backup binaries or runtime dependencies are used.
 
 A live `VACUUM INTO` snapshot is gzipped at
-`pebbles/<name>/db/<ISO timestamp>.sqlite.gz`; `_bedrock_files` metadata selects
+`pebbles/<name>/db/<filename timestamp>.sqlite.gz`; `_bedrock_files` metadata selects
 content-addressed `pebbles/<name>/files/<sha256>` uploads only when absent. A
-manifest at `pebbles/<name>/manifests/<ISO timestamp>.json` records DB key/checksum,
+manifest at `pebbles/<name>/manifests/<filename timestamp>.json` records DB key/checksum,
 file id→sha256, version, and migration names/hashes. Publish it last. The daemon's
 identity DB is snapshotted under `daemon/db/` and `daemon/manifests/` too.
+Filename timestamps replace ISO time colons with hyphens on every platform;
+manifest timestamps and `--at` retain ISO format. Existing backup keys remain
+readable and restore/pruning use the manifest's stored database key.
 
 Retain newest representatives of 24 hourly and 30 daily UTC buckets, prune old
 DBs/manifests, and GC file blobs unreferenced by remaining manifests. Configurable

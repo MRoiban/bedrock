@@ -1,4 +1,5 @@
-import { chmod, copyFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, rm } from "node:fs/promises";
+import { privateFile } from "../private-file";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { atomicWrite, readConfig } from "../daemon/config";
@@ -25,9 +26,9 @@ export async function localTunnelSetup(home: string, options: LocalOptions = {})
     // Login ignores --origincert and writes to ~/.cloudflared; isolate its HOME.
     const loginHome = join(directory, "login-home");
     await mkdir(join(loginHome, ".cloudflared"), { recursive: true, mode: 0o700 });
-    await execute([binary, "tunnel", "login"], { env: { ...process.env, HOME: loginHome }, inherit: true });
+    await execute([binary, "tunnel", "login"], { env: { ...process.env, HOME: loginHome, USERPROFILE: loginHome }, inherit: true });
     await copyFile(join(loginHome, ".cloudflared/cert.pem"), cert);
-    await chmod(cert, 0o600);
+    await privateFile(cert);
     await rm(loginHome, { recursive: true, force: true });
   }
   const prefix = [binary, "tunnel", "--origincert", cert];
@@ -43,7 +44,7 @@ export async function localTunnelSetup(home: string, options: LocalOptions = {})
   const credentials = await Bun.file(credentialsFile).json().catch(() => null);
   const id = matches[0]?.id ?? credentials?.TunnelID;
   if (!id || credentials?.TunnelID !== id) throw new BedrockError("TUNNEL_CREDENTIALS_MISSING", "Local tunnel credentials are missing or do not match.", "Restore cloudflared/credentials.json from this server, or delete the unused tunnel and repeat setup.");
-  await chmod(credentialsFile, 0o600);
+  await privateFile(credentialsFile);
   const configFile = join(directory, "config.yml");
   await atomicWrite(configFile, localConfig(config.domain, config.port, id, credentialsFile));
   config.cloudflare = { mode: "local", tunnelId: id, name, credentialsFile, configFile };

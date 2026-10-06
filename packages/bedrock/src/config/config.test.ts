@@ -1,9 +1,17 @@
 import { expect, test } from "bun:test";
 import * as v from "valibot";
 import { sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { definePebble, query, mutation, bucket, plugin } from "./index";
+import { definePebble, query, mutation, bucket, plugin, validateName } from "./index";
 import type { FunctionArgs, FunctionResult, QueryNames, MutationNames } from "./index";
 import { BedrockError } from "../error";
+
+test.skipIf(process.platform !== "win32")("Windows device names produce repair hints before filesystem writes", () => {
+  for (const name of ["con", "nul", "aux", "prn", "com1", "lpt9"]) {
+    expect(() => validateName(name)).toThrow("reserved Windows device name");
+    expect(() => bucket(name, { maxSize: "1mb", access: "public" })).toThrow("reserved Windows device name");
+  }
+  expect(() => validateName("console")).not.toThrow();
+});
 
 test("validates names, definitions and reserved tables at definition time", () => {
   for (const name of ["", "A", "too_long_name", "a".repeat(33), "auth", "bedrock", "www"]) {

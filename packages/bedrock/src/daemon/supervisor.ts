@@ -17,7 +17,9 @@ export interface Child {
 interface State { child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number }
 
 export async function stopChild(child: Child) {
-  if (child.process.exitCode === null) child.process.kill("SIGTERM");
+  if (child.process.exitCode === null) {
+    try { child.process.send({ op: "stop" }); } catch { child.process.kill("SIGTERM"); }
+  }
   const timer = setTimeout(() => { if (child.process.exitCode === null) child.process.kill("SIGKILL"); }, 3000);
   try { await child.process.exited; await child.reading; } finally { clearTimeout(timer); }
 }

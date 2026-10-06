@@ -2,7 +2,12 @@ import { expect, test } from "bun:test";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tempDirectory } from "../../test/helpers";
-import { loginCallback, logout, readCredentials, remoteUrl, saveCredentials } from "./credentials";
+import { browserCommand, loginCallback, logout, readCredentials, remoteUrl, saveCredentials } from "./credentials";
+
+test("Windows browser launch passes callback URLs as a literal argument", () => {
+  const url = "https://bedrock.example.com/cli-login?state=abc&port=1234";
+  expect(browserCommand(url, "win32")).toEqual(["rundll32.exe", "url.dll,FileProtocolHandler", url]);
+});
 
 const token = `br_${"a".repeat(64)}`;
 test("CLI callback checks state, token, method and consumes success only once", () => {
@@ -21,7 +26,7 @@ test("credentials are private; logout revokes first and retains credentials on n
   const path = join(temp.dir, "config/credentials.json");
   try {
     await saveCredentials({ url: "https://bedrock.example.com", token }, path);
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(path)).mode & 0o777).toBe(0o600);
     expect((await readCredentials(path))?.token).toBe(token);
     await expect(logout(path, (async () => { throw new Error("offline"); }) as unknown as typeof fetch)).rejects.toMatchObject({ code: "LOGOUT_FAILED" });
     expect(await Bun.file(path).exists()).toBe(true);

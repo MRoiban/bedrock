@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { tempDirectory } from "./helpers";
+import { tempDirectory, testExecutable, testCommand } from "./helpers";
 import { startDaemon } from "../src/daemon";
 import { setup } from "../src/daemon/config";
 import { openDaemonDatabase } from "../src/daemon/db";
@@ -8,7 +8,6 @@ import { createSessions } from "../src/auth/sessions";
 import { login, readCredentials } from "../src/cli/credentials";
 import { doctor } from "../src/cli/doctor";
 import { TunnelSupervisor } from "../src/tunnel/supervisor";
-import { chmod } from "node:fs/promises";
 
 async function waitFor(check: () => Promise<boolean> | boolean, timeout = 4000) {
   const end = Date.now() + timeout;
@@ -85,13 +84,11 @@ test("doctor checks the real local daemon and skips offline remote checks", asyn
 });
 test("cloudflared gets its token in env, redacts logs, restarts with backoff and stops", async () => {
   const temp = tempDirectory();
-  const script = join(temp.dir, "cloudflared");
   const capture = join(temp.dir, "capture.json");
   const token = "secret-run-token";
-  await Bun.write(script, `#!${process.execPath}\nawait Bun.write(${JSON.stringify(capture)}, JSON.stringify({args:process.argv.slice(2), token:process.env.TUNNEL_TOKEN, api:process.env.CLOUDFLARE_API_TOKEN}));\nprocess.stdout.write("secret-run-");\nawait Bun.sleep(20);\nprocess.stdout.write("token\\n");\n`);
-  await chmod(script, 0o700);
+  const script = await testExecutable(join(temp.dir, "cloudflared"), `await Bun.write(${JSON.stringify(capture)}, JSON.stringify({args:process.argv.slice(2), token:process.env.TUNNEL_TOKEN, api:process.env.CLOUDFLARE_API_TOKEN}));\nprocess.stdout.write("secret-run-");\nawait Bun.sleep(20);\nprocess.stdout.write("token\\n");\n`);
   let starts = 0;
-  const supervisor = new TunnelSupervisor(temp.dir, token, () => { starts++; return script; });
+  const supervisor = new TunnelSupervisor(temp.dir, token, () => { starts++; return testCommand(script); });
   try {
     supervisor.start();
     await waitFor(async () => await Bun.file(capture).exists());

@@ -1,15 +1,15 @@
-import { chmod, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Cloudflare } from "../src/tunnel/client";
 import { run } from "../src/cli/terminal";
 import type { SetupOptions } from "../src/cli/setup";
+import { testExecutable } from "./helpers";
 
 export async function wizardHarness(directory: string, answers: string[] = []) {
   const home = join(directory, "home");
   const bin = join(directory, "bin");
   await mkdir(bin, { recursive: true });
-  const binary = join(bin, "cloudflared");
-  await Bun.write(binary, `#!${process.execPath}
+  const binary = await testExecutable(join(bin, "cloudflared"), `
 import { mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 const args = process.argv.slice(2);
@@ -27,7 +27,6 @@ else if (args.includes("list")) {
   await Bun.write(join(dirname(cert), "fake-tunnel.json"), JSON.stringify([{ id, name: args.at(-1) }]));
 } else if (args.includes("route") && args.at(-1) !== "*.example.com") process.exit(1);
 `);
-  await chmod(binary, 0o700);
   const output: string[] = [];
   const calls: string[][] = [];
   const urls: string[] = [];
@@ -35,7 +34,7 @@ else if (args.includes("list")) {
   let healthyCalls = 0;
   const options: SetupOptions = {
     home, tty: true, version: "1.2.0", platform: "darwin", portFree: async () => true,
-    binary: () => Bun.which("cloudflared", { PATH: bin })!,
+    binary: () => binary,
     disk: (async () => ({ bavail: 10 * 1024 ** 3, bsize: 1 })) as unknown as NonNullable<SetupOptions["disk"]>,
     installService: async () => { calls.push(["service", "install"]); },
     restart: async () => { calls.push(["service", "restart"]); },
@@ -44,7 +43,7 @@ else if (args.includes("list")) {
     terminal: {
       write: line => output.push(line.replace(/\x1b\[[0-9;]*m/g, "")),
       prompt: async (label, fallback, secret) => { prompts.push({ label, secret: !!secret }); const value = answers.shift() || fallback || ""; output.push(`${label}${fallback ? ` [${fallback}]` : ""}: ${secret ? "[hidden]" : value}`); return value; },
-      run: async (args, opts) => { calls.push(args); if (args[0] === "git") return "creator@example.com"; if (args[0] === "loginctl") return ""; return run(args, { ...opts, env: { ...process.env, ...opts?.env, PATH: bin } }); },
+      run: async (args, opts) => { calls.push(args); if (args[0] === "git") return "creator@example.com"; if (args[0] === "loginctl") return ""; return run(process.platform === "win32" && args[0] === binary ? [process.execPath, ...args] : args, { ...opts, env: { ...process.env, ...opts?.env, PATH: bin } }); },
       open: async url => { urls.push(url); }, clipboard: async () => true, sleep: async () => {},
     },
   };

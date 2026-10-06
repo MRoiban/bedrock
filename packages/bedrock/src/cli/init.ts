@@ -46,8 +46,8 @@ All CLI commands support --json. Never open real ~/.bedrock in tests.
   if (template === "react") Object.assign(files, reactTemplate(name));
   if (checkout) {
     const pkg = JSON.parse(files["package.json"]!);
-    pkg.dependencies.bedrock = `file:${join(checkout, "packages/bedrock")}`;
-    if (pkg.dependencies["@bedrock/ui"]) pkg.dependencies["@bedrock/ui"] = `file:${join(checkout, "packages/ui")}`;
+    pkg.dependencies.bedrock = `file:${join(checkout, "packages/bedrock").replaceAll("\\", "/")}`;
+    if (pkg.dependencies["@bedrock/ui"]) pkg.dependencies["@bedrock/ui"] = `file:${join(checkout, "packages/ui").replaceAll("\\", "/")}`;
     files["package.json"] = JSON.stringify(pkg, null, 2) + "\n";
   }
   let entries: string[];

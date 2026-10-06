@@ -6,7 +6,7 @@ import { syncOnyx } from "./sync-onyx";
 
 async function snapshot(dir: string) {
   const result: Record<string, string> = {};
-  for await (const path of new Bun.Glob("**/*").scan({ cwd: dir, onlyFiles: true })) result[path] = await Bun.file(join(dir, path)).text();
+  for await (const path of new Bun.Glob("**/*").scan({ cwd: dir, onlyFiles: true })) result[path.replaceAll("\\", "/")] = await Bun.file(join(dir, path)).text();
   return result;
 }
 test("registry sync is deterministic, complete, and idempotent", async () => {

@@ -1,5 +1,6 @@
 import { stat, realpath } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { BedrockError } from "../error";
 
 export async function loadWeb(dir: string, entry?: string) {
@@ -7,7 +8,7 @@ export async function loadWeb(dir: string, entry?: string) {
   const path = resolve(dir, entry);
   const info = await stat(path);
   if (info.isFile() && path.endsWith(".html")) {
-    const html = (await import(path)).default as Bun.HTMLBundle;
+    const html = (await import(pathToFileURL(path).href)).default as Bun.HTMLBundle;
     return { html };
   }
   if (!info.isDirectory()) throw new BedrockError("INVALID_WEB", "The web entry must be HTML or a directory.", "Set web to an existing .html entry or static directory.");
@@ -16,6 +17,7 @@ export async function loadWeb(dir: string, entry?: string) {
     async staticResponse(request: Request) {
       let pathname: string;
       try { pathname = decodeURIComponent(new URL(request.url).pathname); } catch { return new Response("Not found", { status: 404 }); }
+      if (process.platform === "win32" && /[\\:]/.test(pathname)) return new Response("Not found", { status: 404 });
       const target = resolve(root, "." + (pathname.endsWith("/") ? pathname + "index.html" : pathname));
       if (!target.startsWith(root + sep)) return new Response("Not found", { status: 404 });
       try {

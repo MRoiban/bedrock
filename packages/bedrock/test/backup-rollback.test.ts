@@ -42,7 +42,7 @@ jobs: { sweep: job("0 0 31 2 *", ctx => { if (ctx.user !== null) throw new Error
     const backup = await command(["backup", "run", "sample"]);
     expect(backup.code).toBe(0);
     expect(backup.body.value).toHaveLength(2);
-    expect(await Bun.file(join(temp.dir, "backups", "daemon", "db", `${backup.body.value[1].timestamp}.sqlite.gz`)).exists()).toBe(true);
+    expect(await Bun.file(join(temp.dir, "backups", "daemon", "db", `${backup.body.value[1].timestamp.replaceAll(":", "-")}.sqlite.gz`)).exists()).toBe(true);
     expect((await command(["backup", "ls", "sample"])).body.value).toHaveLength(1);
     await functionCall("m", "add");
     expect(await functionCall("q", "list")).toHaveLength(2);

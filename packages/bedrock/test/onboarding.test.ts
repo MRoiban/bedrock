@@ -1,7 +1,8 @@
+import { linkDependencies } from "./helpers";
 import { expect, test } from "bun:test";
 import { BedrockError } from "../src/error";
 import { join, resolve } from "node:path";
-import { symlink, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { tempDirectory } from "./helpers";
 import { wizardHarness, fakeCloudflare } from "./onboarding-harness";
 import { setupWizard } from "../src/cli/setup";
@@ -26,8 +27,8 @@ test("scripted full wizard uses fake cloudflared, private local config and real 
     expect(yaml).toContain('hostname: "*.example.com"');
     expect(yaml).toContain("service: http://127.0.0.1:3000");
     expect(yaml).toContain("service: http_status:404");
-    expect(yaml).toContain(`credentials-file: "${fixture.home}/cloudflared/credentials.json"`);
-    expect((await stat(join(fixture.home, "cloudflared/cert.pem"))).mode & 0o777).toBe(0o600);
+    expect(yaml).toContain(`credentials-file: ${JSON.stringify(join(fixture.home, "cloudflared/credentials.json"))}`);
+    if (process.platform !== "win32") expect((await stat(join(fixture.home, "cloudflared/cert.pem"))).mode & 0o777).toBe(0o600);
     expect(await tunnelStatus(fixture.home)).toMatchObject({ tokenStored: true });
     expect(fixture.prompts.find(p => p.label === "Google client secret")?.secret).toBe(true);
     expect(fixture.output.join("\n")).not.toContain("google-secret");
@@ -35,7 +36,7 @@ test("scripted full wizard uses fake cloudflared, private local config and real 
     expect(fixture.urls).toEqual(["https://console.cloud.google.com/auth/clients/create", "https://bedrock.example.com"]);
     const transcript = fixture.output.join("\n").replace(process.execPath, "<bun-path>") + "\n";
     if (process.env.UPDATE_ONBOARDING_TRANSCRIPT) await Bun.write(join(import.meta.dir, "fixtures/wizard-transcript.txt"), transcript);
-    expect(transcript).toBe(await Bun.file(join(import.meta.dir, "fixtures/wizard-transcript.txt")).text());
+    expect(transcript).toBe((await Bun.file(join(import.meta.dir, "fixtures/wizard-transcript.txt")).text()).replaceAll("\r\n", "\n"));
     fixture.calls.length = 0;
     await setupWizard([], false, fixture.options);
     expect(fixture.calls).toHaveLength(0);
@@ -104,7 +105,7 @@ test("R2 setup discovers account and saves secret separately; local teardown use
     await setupWizard(["backups", "--yes", "--r2-bucket", "bedrock-backups", "--r2-access-key-id", "key", "--r2-secret-access-key", "secret"], true, { ...fixture.options, api: cf.api });
     expect((await readConfig(fixture.home)).backup).toMatchObject({ type: "r2", account: cf.account });
     expect(await Bun.file(join(fixture.home, "config.json")).text()).not.toContain('"secret"');
-    expect((await stat(join(fixture.home, "backup-credentials"))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(join(fixture.home, "backup-credentials"))).mode & 0o777).toBe(0o600);
     await tunnelTeardown(fixture.home, cf.api, true);
     expect((await readConfig(fixture.home)).cloudflare).toBeUndefined();
     expect(await Bun.file(join(fixture.home, "cloudflared/config.yml")).exists()).toBe(false);
@@ -137,7 +138,7 @@ test("new React scaffold installs, migrates, commits, builds and deploy prints U
     const created = await newPebble("my-app", "react", { cwd: temp.dir, terminal: {
       write: line => output.push(line),
       run: async (args, options) => {
-        if (args[1] === "install") { await symlink(join(root, "examples/notes/node_modules"), join(options!.cwd!, "node_modules")); return ""; }
+        if (args[1] === "install") { linkDependencies(join(root, "examples/notes/node_modules"), join(options!.cwd!, "node_modules")); return ""; }
         return run(args, options);
       },
     } });
@@ -156,7 +157,7 @@ test("new React scaffold installs, migrates, commits, builds and deploy prints U
     console.log = originalLog;
     const transcript = output.join("\n") + "\n";
     if (process.env.UPDATE_ONBOARDING_TRANSCRIPT) await Bun.write(join(import.meta.dir, "fixtures/creator-transcript.txt"), transcript);
-    expect(transcript).toBe(await Bun.file(join(import.meta.dir, "fixtures/creator-transcript.txt")).text());
+    expect(transcript).toBe((await Bun.file(join(import.meta.dir, "fixtures/creator-transcript.txt")).text()).replaceAll("\r\n", "\n"));
   } finally { console.log = originalLog; await daemon?.stop(true); temp.cleanup(); }
 });
 
@@ -210,11 +211,10 @@ test("local tunnel supervisor uses config argv, clears run token and serves desp
   let supervisor: InstanceType<typeof TunnelSupervisor> | undefined;
   try {
     const { chmod } = await import("node:fs/promises");
-    const binary = join(temp.dir, "connector");
     const output = join(temp.dir, "argv.json");
-    await Bun.write(binary, `#!${process.execPath}\nawait Bun.write(${JSON.stringify(output)}, JSON.stringify({ args: process.argv.slice(2), token: process.env.TUNNEL_TOKEN ?? null })); await Bun.sleep(10000);`);
-    await chmod(binary, 0o700);
-    supervisor = new TunnelSupervisor(temp.dir, "", () => binary, join(temp.dir, "config.yml"));
+    const { testExecutable, testCommand } = await import("./helpers");
+    const binary = await testExecutable(join(temp.dir, "connector"), `await Bun.write(${JSON.stringify(output)}, JSON.stringify({ args: process.argv.slice(2), token: process.env.TUNNEL_TOKEN ?? null })); await Bun.sleep(10000);`);
+    supervisor = new TunnelSupervisor(temp.dir, "", () => testCommand(binary), join(temp.dir, "config.yml"));
     supervisor.start();
     for (let i = 0; i < 50 && !await Bun.file(output).exists(); i++) await Bun.sleep(10);
     expect(await Bun.file(output).json()).toEqual({ args: ["tunnel", "--no-autoupdate", "--config", join(temp.dir, "config.yml"), "run"], token: null });
@@ -289,5 +289,20 @@ test("prerequisites reports the running Bun path and rejects Bun older than 1.2"
     await setupWizard(["prereqs", "--yes"], false, { ...fixture.options, version: "1.2.19" });
     expect(fixture.output).toContain(`✓ Bun 1.2.19 (${process.execPath})`);
     await expect(setupWizard(["prereqs", "--yes"], true, { ...fixture.options, version: "1.1.9" })).rejects.toMatchObject({ code: "BUN_TOO_OLD" });
+  } finally { temp.cleanup(); }
+});
+
+test("Windows prerequisites installs cloudflared through WinGet with explicit unattended consent", async () => {
+  const temp = tempDirectory();
+  try {
+    const fixture = await wizardHarness(temp.dir);
+    let installed = false;
+    const commands: string[][] = [];
+    await setupWizard(["prereqs", "--yes", "--install-cloudflared"], true, { ...fixture.options, platform: "win32",
+      binary: () => { if (!installed) throw new BedrockError("CLOUDFLARED_MISSING", "missing", "install"); return "cloudflared.exe"; },
+      terminal: { ...fixture.options.terminal, run: async args => { commands.push(args); installed = true; return ""; } },
+    });
+    expect(commands).toEqual([["winget", "install", "--id", "Cloudflare.cloudflared", "--exact", "--accept-package-agreements", "--accept-source-agreements", "--silent", "--disable-interactivity"]]);
+    expect(fixture.prompts).toHaveLength(0);
   } finally { temp.cleanup(); }
 });

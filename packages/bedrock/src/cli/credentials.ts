@@ -25,8 +25,12 @@ export async function saveCredentials(value: Credentials, path = credentialsPath
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await atomicWrite(path, JSON.stringify(value) + "\n");
 }
+export function browserCommand(url: string, platform = process.platform) {
+  if (platform === "win32") return ["rundll32.exe", "url.dll,FileProtocolHandler", url];
+  return platform === "darwin" ? ["open", url] : ["xdg-open", url];
+}
 export async function openBrowser(url: string) {
-  const args = process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
+  const args = browserCommand(url);
   try {
     const child = Bun.spawn(args, { stdout: "ignore", stderr: "ignore" });
     if (await child.exited !== 0) throw new Error("browser failed");

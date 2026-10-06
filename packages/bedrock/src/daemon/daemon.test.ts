@@ -48,12 +48,20 @@ test("logs rotate at their size limit and keep three older files", async () => {
 test("deploy extraction rejects archive links before touching release files", async () => {
   const temp = tempDirectory();
   try {
-    const source = join(temp.dir, "source");
-    await Bun.write(join(source, "file"), "safe");
-    const { symlink } = await import("node:fs/promises");
-    await symlink("/etc", join(source, "escape"));
+    // Build a tar link directly; Windows junctions are archived as directories.
+    const header = Buffer.alloc(512);
+    header.write("escape");
+    for (const offset of [100, 108, 116]) header.write("0000777\0", offset);
+    for (const offset of [124, 136]) header.write("00000000000\0", offset);
+    header.fill(32, 148, 156);
+    header.write("2", 156);
+    header.write("/outside", 157);
+    header.write("ustar\0", 257);
+    header.write("00", 263);
+    const checksum = header.reduce((sum, byte) => sum + byte, 0);
+    header.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148);
     const archive = join(temp.dir, "bad.tar.gz");
-    await run(["tar", "-czf", archive, "-C", source, "."]);
+    await Bun.write(archive, Bun.gzipSync(Buffer.concat([header, Buffer.alloc(1024)])));
     await expect(extract(archive, join(temp.dir, "release"))).rejects.toMatchObject({ code: "UNSAFE_ARCHIVE" });
   } finally { temp.cleanup(); }
 });

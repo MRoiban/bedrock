@@ -50,7 +50,7 @@ async function main() {
 }
 
 if (import.meta.main) {
-  main().catch(error => {
+  await main().catch(error => {
     const typed = asBedrockError(error, "CLI_FAILED", "Check the working directory, dependencies, and command arguments.");
     if (process.argv.includes("__dev_worker")) {
       process.send?.({ error: typed.toJSON() });

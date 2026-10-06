@@ -406,7 +406,11 @@ R2 uses --r2-bucket, --r2-access-key-id, --r2-secret-access-key and --r2-account
 verify opens the dashboard and polls creator sign-in. Public pebbles need no Google. Google
 redirect URI: `https://auth.<domain>/callback`. Restart the daemon after tunnel
 setup. Services use launchd on macOS (user login) and systemd user on Linux
-(`loginctl enable-linger "$USER"` for boot without login).
+(`loginctl enable-linger "$USER"` for boot without login). Windows 11 uses a
+per-user Scheduled Task that starts at login and runs while the user is logged in.
+Install with install.ps1; --install-cloudflared uses WinGet. Windows private files
+use owner/SYSTEM NTFS ACLs. Device names such as con, nul, com1, and lpt1 cannot
+be used as pebble or bucket names on Windows.
 
 Remote CLI credentials live in XDG_CONFIG_HOME/bedrock/credentials.json or
 ~/.config/bedrock/credentials.json, mode 0600. Precedence: explicit flags, env
@@ -434,13 +438,15 @@ outside BEDROCK_HOME, on another disk for disk-failure protection.
 Object layout:
 
 ```text
-pebbles/<name>/db/<ISO timestamp>.sqlite.gz
+pebbles/<name>/db/<filename timestamp>.sqlite.gz
 pebbles/<name>/files/<SHA-256>
-pebbles/<name>/manifests/<ISO timestamp>.json
-daemon/db/<ISO timestamp>.sqlite.gz
-daemon/manifests/<ISO timestamp>.json
+pebbles/<name>/manifests/<filename timestamp>.json
+daemon/db/<filename timestamp>.sqlite.gz
+daemon/manifests/<filename timestamp>.json
 ```
 
+Filename timestamps replace ISO time colons with hyphens; manifest timestamps
+and backup restore --at remain ISO. Existing manifests retain their stored keys.
 SQLite is snapshotted consistently with VACUUM INTO while live, then gzipped.
 Files use metadata SHA-256 and upload only if absent. Manifest contains timestamp,
 db key/checksum, file id→SHA-256, package version and migration name/hash list.

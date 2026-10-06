@@ -30,6 +30,8 @@ test("live VACUUM snapshot, gzip, content dedup, metadata and verified restore r
     await snapshot(target, "notes", join(f.data, "db.sqlite"), join(f.data, "files"), new Date("2026-10-06T02:00:00Z"));
     expect(puts.filter(key => key.includes("/files/"))).toHaveLength(1);
     expect(first.migrations).toEqual([{ name: "0000_notes.sql", hash: "hash" }]);
+    expect(first.timestamp).toBe("2026-10-06T01:00:00.000Z");
+    expect(first.db).toBe("pebbles/notes/db/2026-10-06T01-00-00.000Z.sqlite.gz");
     expect(first.version).toBe("0.1.0");
     f.database.sqlite.exec("UPDATE notes SET body='after'; DELETE FROM _bedrock_files");
     f.database.close();
@@ -73,7 +75,7 @@ test("backup setup keeps credentials in a separate private file and validates re
   try {
     await atomicWrite(join(temp.dir, "config.json"), JSON.stringify({ domain: "example.test", creators: [], port: 3000 }));
     await backupSetup(temp.dir, { type: "r2", account: "a".repeat(32), bucket: "backup-bucket" }, { accessKeyId: "id", secretAccessKey: "secret" });
-    expect((await stat(join(temp.dir, "backup-credentials"))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(join(temp.dir, "backup-credentials"))).mode & 0o777).toBe(0o600);
     expect(await Bun.file(join(temp.dir, "config.json")).text()).not.toContain("secret");
     await expect(backupSetup(temp.dir, { type: "fs", directory: temp.dir, hourly: 0, daily: 0 })).rejects.toMatchObject({ code: "INVALID_BACKUP_CONFIG" });
   } finally { temp.cleanup(); }

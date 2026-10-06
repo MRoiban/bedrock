@@ -11,6 +11,7 @@ export function validateBucket(config: Bucket) {
   if (!config || typeof config !== 'object') throw storageError('INVALID_BUCKET', 'Use bucket(name, { maxSize, access, accept? }).');
   const name = config.name;
   if (typeof name !== 'string' || !/^[a-z0-9_-]{1,32}$/.test(name)) throw storageError('INVALID_BUCKET', 'Bucket names need 1–32 lowercase letters, digits, underscores, or hyphens.');
+  if (process.platform === 'win32' && /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(name)) throw storageError('INVALID_BUCKET', `${name} is a reserved Windows device name.`, 'Choose a different bucket name, such as attachments.');
   sizeBytes(config.maxSize);
   if (!['public', 'users', 'owner'].includes(config.access as string) && typeof config.access !== 'function') throw storageError('INVALID_BUCKET', `Invalid access for ${name}; use public, users, owner, or a policy function.`);
   if (config.accept !== undefined && (!Array.isArray(config.accept) || !config.accept.every(m => typeof m === 'string' && /^[\w.+-]+\/(?:[\w.+-]+|\*)$/.test(m)))) throw storageError('INVALID_BUCKET', 'accept must contain MIME patterns such as image/* .');

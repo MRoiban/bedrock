@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { tempDirectory } from "../../test/helpers";
 import { run } from "./terminal";
 
-test("POSIX installer has valid syntax and is idempotent with stubbed bun in an isolated HOME", async () => {
+test.skipIf(process.platform === "win32")("POSIX installer has valid syntax and is idempotent with stubbed bun in an isolated HOME", async () => {
   const temp = tempDirectory();
   try {
     const source = resolve(import.meta.dir, "../../../../install.sh");
@@ -35,3 +35,16 @@ test("self-update fast-forwards checkout, installs dependencies and requests ser
     expect(calls).toEqual([["git", "pull", "--ff-only"], [process.execPath, "install"]]);
   } finally { temp.cleanup(); }
 });
+
+test.skipIf(process.platform !== "win32")("Windows installer repeats safely and creates a working executable launcher", async () => {
+  const temp = tempDirectory();
+  const root = resolve(import.meta.dir, "../../../..");
+  const bin = join(temp.dir, "bun home", "bin");
+  const env = { ...process.env, BUN_INSTALL: join(temp.dir, "bun home"), BEDROCK_HOME: join(temp.dir, "home") };
+  try {
+    for (let i = 0; i < 2; i++) {
+      expect(await run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(root, "install.ps1")], { env })).toContain("Next: bedrock setup");
+    }
+    expect(await run([join(bin, "bedrock.exe"), "--version"], { env })).toBe("0.1.0");
+  } finally { temp.cleanup(); }
+}, 30000);

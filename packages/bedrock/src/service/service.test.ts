@@ -19,7 +19,7 @@ for (const platform of ["darwin", "linux"]) test(`service ${platform}: absolute 
     expect(await Bun.file(options.target).exists()).toBe(false);
     await service("install", options);
     expect(await Bun.file(options.target).text()).toBe(file.content);
-    expect((await stat(options.target)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await stat(options.target)).mode & 0o777).toBe(0o600);
     expect(await service("status", options)).toMatchObject({ installed: true, running: true });
     await service("install", options);
     expect(await restartService(options)).toEqual({ restarted: true });
@@ -36,7 +36,7 @@ for (const platform of ["darwin", "linux"]) test(`service ${platform}: absolute 
 
 test("service validates paths and escapes systemd specifiers", () => {
   expect(() => serviceFile({ home: "relative", platform: "linux" })).toThrow();
-  expect(() => serviceFile({ home: "/tmp/home", platform: "win32" })).toThrow();
+  expect(() => serviceFile({ home: "/tmp/home", platform: "freebsd" })).toThrow();
   const file = serviceFile({ home: "/tmp/100%", platform: "linux", cli: "/tmp/$CLI.ts" });
   expect(file.content).toContain("100%%");
   expect(file.content).toContain("$$CLI");
@@ -44,6 +44,6 @@ test("service validates paths and escapes systemd specifiers", () => {
 
 for (const platform of ["darwin", "linux"]) test(`service ${platform} pins the currently running Bun without consulting PATH`, () => {
   const file = serviceFile({ home: "/tmp/bedrock-test", platform });
-  expect(file.content).toContain(process.execPath);
+  expect(file.content).toContain(platform === "linux" ? process.execPath.replaceAll("\\", "\\\\") : process.execPath);
   expect(file.content).not.toContain(platform === "darwin" ? "<string>bun</string>" : "ExecStart=bun ");
 });

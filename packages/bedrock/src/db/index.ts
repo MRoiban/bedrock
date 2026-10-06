@@ -30,9 +30,10 @@ export function openDatabase(dataDir: string, schema: Record<string, unknown> = 
     const refreshTracking = () => tracker.setEffects(writeEffects(sqlite!));
     refreshTracking();
     const db = drizzle(sqlite, { schema, logger: tracker });
-    return { dataDir, sqlite, db, tracker, tableNames, refreshTracking, close: () => sqlite!.close() };
+    // Finalize cached statements so Windows can move or remove the database after close.
+    return { dataDir, sqlite, db, tracker, tableNames, refreshTracking, close: () => sqlite!.close(true) };
   } catch (error) {
-    sqlite?.close();
+    sqlite?.close(true);
     throw asBedrockError(error, "DATABASE_OPEN_FAILED", "Check that the data directory is writable and the SQLite file is valid.");
   }
 }

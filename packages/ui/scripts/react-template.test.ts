@@ -1,5 +1,6 @@
+import { linkDependencies } from "../../bedrock/test/helpers";
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { init } from "../../bedrock/src/cli/init";
@@ -13,7 +14,7 @@ test("React starter is idempotent, typed, and Bun HTML-bundleable", async () => 
     const pkg = await Bun.file(join(result.dir, "package.json")).json();
     expect(pkg.dependencies["@bedrock/ui"]).toBe("^0.1.0");
     expect(pkg.dependencies).not.toHaveProperty("tailwindcss");
-    await symlink(resolve(import.meta.dir, "../../../examples/notes/node_modules"), join(result.dir, "node_modules"));
+    linkDependencies(resolve(import.meta.dir, "../../../examples/notes/node_modules"), join(result.dir, "node_modules"));
     const build = await Bun.build({ entrypoints: [join(result.dir, "web/index.html")], outdir: join(temp, "build"), target: "browser" });
     expect(build.success).toBe(true);
     expect(build.outputs.some(output => output.path.endsWith(".css"))).toBe(true);

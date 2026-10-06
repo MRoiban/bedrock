@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
-import { mkdir, chmod } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
+import { privateFile } from "../private-file";
 import { join } from "node:path";
 import { applyMigrations } from "../db";
 import { asBedrockError } from "../error";
@@ -33,10 +34,10 @@ export async function openDaemonDatabase(home: string, migrations = join(import.
         db.query("INSERT INTO deploy_tokens (hash, created_at, email) VALUES (?, ?, ?)").run(tokenHash(token), Date.now(), email ?? null);
         return token;
       },
-      close: () => db.close(),
+      close: () => db.close(true),
     };
   } catch (error) {
-    db.close();
+    db.close(true);
     throw asBedrockError(error, "DAEMON_DATABASE_FAILED", "Check the daemon database permissions and migrations.");
   }
 }
@@ -45,7 +46,7 @@ export type DaemonDatabase = Awaited<ReturnType<typeof openDaemonDatabase>>;
 export async function localToken(home: string, db: DaemonDatabase) {
   const path = join(home, "admin-token");
   const existing = await Bun.file(path).text().catch(() => "");
-  if (existing.trim() && db.accepts(existing.trim())) { await chmod(path, 0o600); return existing.trim(); }
+  if (existing.trim() && db.accepts(existing.trim())) { await privateFile(path); return existing.trim(); }
   const token = db.createToken();
   await atomicWrite(path, token + "\n");
   return token;

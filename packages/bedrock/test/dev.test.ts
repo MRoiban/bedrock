@@ -1,11 +1,11 @@
+import { linkDependencies } from "./helpers";
 import { test, expect } from "bun:test";
-import { symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tempDirectory } from "./helpers";
 
 test("dev emits one JSON object, restarts on edits, and retains data", async () => {
   const temp = tempDirectory();
-  symlinkSync(resolve(import.meta.dir, "../../../examples/notes/node_modules"), join(temp.dir, "node_modules"), "dir");
+  linkDependencies(resolve(import.meta.dir, "../../../examples/notes/node_modules"), join(temp.dir, "node_modules"));
   const source = `import { definePebble, query, mutation, sqliteTable, text } from "bedrock";
 const items = sqliteTable("items", { id: text("id").primaryKey() });
 export default definePebble({ name: "devtest", schema: { items },

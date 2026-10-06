@@ -39,7 +39,7 @@ export async function syncOnyx(source = defaultSource, destination = packageDir)
       const candidates = [base, `${base}.ts`, `${base}.tsx`];
       const found = await Promise.all(candidates.map(async candidate => await Bun.file(candidate).exists() ? candidate : undefined));
       const dependency = found.find(Boolean);
-      if (dependency) files.add(dependency.slice(resolve(source).length + 1));
+      if (dependency) files.add(dependency.slice(resolve(source).length + 1).replaceAll("\\", "/"));
     }
   }
   const chosenRegistry = { ...registry, items: registry.items.filter(item => visited.has(item.name)) };

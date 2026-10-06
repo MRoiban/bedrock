@@ -18,6 +18,8 @@ export async function devWorker() {
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
+  process.on("message", message => { if ((message as { op?: string })?.op === "stop") void stop(); });
+  process.on("disconnect", stop);
 }
 
 export async function dev(json: boolean, port: number) {
@@ -27,38 +29,51 @@ export async function dev(json: boolean, port: number) {
   let restarting = false;
   let dirty = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const launch = () => Bun.spawn([process.execPath, join(import.meta.dir, "index.ts"), "__dev_worker"], {
-    cwd: process.cwd(),
-    env: { ...process.env, BEDROCK_DEV_PORT: String(port) },
-    stdin: "inherit", stdout: 2, stderr: "inherit",
-    ipc(message: unknown) {
-      const value = message as { url: string; name: string; error?: { code: string; message: string; hint: string } };
-      if (value.error) {
-        if (json && !printed) console.log(JSON.stringify({ ok: false, error: value.error }));
-        else console.error(`${value.error.code}: ${value.error.message}\nHint: ${value.error.hint}`);
-        return;
-      }
-      if (!printed) {
-        console.log(json ? JSON.stringify({ ok: true, command: "dev", ...value }) : `Bedrock ${value.name}: ${value.url}`);
-        printed = true;
-      } else console.error(`Restarted ${value.name}: ${value.url}`);
-    },
-    onExit(_child, code) {
-      if (!printed && code !== 0 && !stopped && !restarting) {
-        stopped = true;
-        watcher.close();
-        clearTimeout(timer);
-        process.exitCode = 1;
-      }
-    },
-  });
+  const launch = () => {
+    const worker = Bun.spawn([process.execPath, join(import.meta.dir, "index.ts"), "__dev_worker"], {
+      cwd: process.cwd(),
+      env: { ...process.env, BEDROCK_DEV_PORT: String(port) },
+      stdin: "inherit", stdout: "pipe", stderr: "pipe",
+      ipc(message: unknown) {
+        const value = message as { url: string; name: string; error?: { code: string; message: string; hint: string } };
+        if (value.error) {
+          if (json && !printed) console.log(JSON.stringify({ ok: false, error: value.error }));
+          else console.error(`${value.error.code}: ${value.error.message}\nHint: ${value.error.hint}`);
+          return;
+        }
+        if (!printed) {
+          console.log(json ? JSON.stringify({ ok: true, command: "dev", ...value }) : `Bedrock ${value.name}: ${value.url}`);
+          printed = true;
+        } else console.error(`Restarted ${value.name}: ${value.url}`);
+      },
+      onExit(_child, code) {
+        if (!printed && code !== 0 && !stopped && !restarting) {
+          stopped = true;
+          watcher.close();
+          clearTimeout(timer);
+          process.exitCode = 1;
+        }
+      },
+    });
+    const forward = async (stream: ReadableStream<Uint8Array>) => {
+      for await (const chunk of stream) process.stderr.write(chunk);
+    };
+    void Promise.all([forward(worker.stdout), forward(worker.stderr)]).catch(error => console.error(asBedrockError(error).toJSON()));
+    return worker;
+  };
+  const stopWorker = async () => {
+    if (child.exitCode === null) {
+      try { child.send({ op: "stop" }); } catch { child.kill(); }
+    }
+    const timeout = setTimeout(() => { if (child.exitCode === null) child.kill(); }, 5000);
+    try { await child.exited; } finally { clearTimeout(timeout); }
+  };
   const restart = async () => {
     if (restarting || stopped) return;
     restarting = true;
     do {
       dirty = false;
-      child.kill("SIGTERM");
-      await child.exited;
+      await stopWorker();
       if (!stopped) child = launch();
     } while (dirty && !stopped);
     restarting = false;
@@ -75,8 +90,7 @@ export async function dev(json: boolean, port: number) {
     stopped = true;
     watcher.close();
     clearTimeout(timer);
-    child.kill("SIGTERM");
-    await child.exited;
+    await stopWorker();
     process.exit(0);
   };
   process.on("SIGINT", stop);

@@ -1,5 +1,6 @@
+import { linkDependencies } from "./helpers";
 import { test, expect } from "bun:test";
-import { symlinkSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tempDirectory } from "./helpers";
 
@@ -16,7 +17,7 @@ async function command(dir: string, args: string[]) {
 test("CLI generates from pebble.schema and plans/applies migrations idempotently", async () => {
   const temp = tempDirectory();
   try {
-    symlinkSync(resolve(import.meta.dir, "../../../examples/notes/node_modules"), join(temp.dir, "node_modules"), "dir");
+    linkDependencies(resolve(import.meta.dir, "../../../examples/notes/node_modules"), join(temp.dir, "node_modules"));
     await Bun.write(join(temp.dir, "pebble.ts"), `import { definePebble, sqliteTable, text } from "bedrock";
 const table = sqliteTable("records", { id: text("id").primaryKey() });
 export default definePebble({ name: "generated", schema: { table } });
