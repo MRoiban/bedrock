@@ -1,3 +1,4 @@
+import { createBackups } from "../backup";
 import { TunnelSupervisor } from "../tunnel/supervisor";
 import { tunnelTokenPath } from "../tunnel";
 import { createCliLogin } from "../auth/cli-login";
@@ -36,10 +37,11 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const tunnelToken = dev ? "" : (await Bun.file(tunnelTokenPath(home)).text().catch(() => "")).trim();
   const tunnel = config.cloudflare && tunnelToken ? new TunnelSupervisor(home, tunnelToken, options.tunnelBinary) : undefined;
   const releases = new Releases(home, db, supervisor);
+  const backups = createBackups(home, db, releases);
   let server: Bun.Server<Relay> | undefined;
   try {
     await localToken(home, db);
-    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null });
+    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups);
     const notFound = () => new Response("Pebble not found. Deploy it with bedrock deploy, or check its hostname.", { status: 404 });
     server = Bun.serve<Relay>({
       hostname: "127.0.0.1", port: config.port, maxRequestBodySize: 256 * 1024 * 1024,
@@ -105,12 +107,14 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
     } else await supervisor.restore();
     await atomicWrite(join(home, "daemon.json"), JSON.stringify({ port: server.port, domain: config.domain }) + "\n");
     tunnel?.start();
+    if (!dev) backups.start();
     let stopping: Promise<void> | undefined;
     return {
       server, home,
       stop() {
         return stopping ??= (async () => {
           sockets.stop();
+          await backups.stop();
           await releases.shutdown();
           await server!.stop(true);
           await tunnel?.stop();
@@ -121,6 +125,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
     };
   } catch (error) {
     sockets.stop();
+    await backups.stop();
     await server?.stop(true);
     await tunnel?.stop();
     await supervisor.shutdown();

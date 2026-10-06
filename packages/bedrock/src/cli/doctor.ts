@@ -32,6 +32,13 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
     if (!status || !Array.isArray(status.pebbles)) throw new Error("invalid status");
     add("daemon", "pass", "Local daemon is reachable.", "Use bedrock service status to inspect automatic startup.");
   } catch { add("daemon", "fail", "Local daemon is unreachable.", "Run bedrock daemon or bedrock service install."); }
+  if (config?.backup) {
+    const state = await Bun.file(join(home, "backup-state.json")).json().catch(() => null);
+    const successes = [state?.daemon ?? 0, ...(status?.pebbles ?? []).map(pebble => state?.pebbles?.[pebble.name] ?? 0)];
+    const oldest = Math.min(...successes);
+    const age = oldest ? Date.now() - oldest : Infinity;
+    add("backup", age <= 2 * (config.backup.intervalMinutes ?? 60) * 60000 ? "pass" : "warn", Number.isFinite(age) ? `Oldest latest backup: ${Math.floor(age / 60000)} minutes ago.` : "Some data has no successful backup recorded.", "Run bedrock backup run; check the daemon logs and backup target.");
+  } else add("backup", "warn", "Backups are not configured.", "Run bedrock backup setup --dir <path> or configure R2.");
   try { add("cloudflared-installed", "pass", (options.binary ?? cloudflaredBinary)(), "Keep cloudflared updated with your OS package manager."); }
   catch (error) { add("cloudflared-installed", "fail", "cloudflared is missing.", error instanceof BedrockError ? error.hint : "Install cloudflared."); }
   add("cloudflared-running", status?.tunnel.running ? "pass" : "warn", status?.tunnel.running ? "cloudflared is running." : "cloudflared is not running.", "Run tunnel setup, then restart the daemon; inspect logs/cloudflared.log.");

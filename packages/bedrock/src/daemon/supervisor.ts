@@ -1,4 +1,4 @@
-import { deriveIdentitySecret } from "../auth/identity";
+import { signIdentity, deriveIdentitySecret } from "../auth/identity";
 import { join } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 import type { Access } from "../config";
@@ -38,6 +38,16 @@ export class Supervisor {
     let logs = this.loggers.get(name);
     if (!logs) { logs = new PebbleLogs(this.home, name); this.loggers.set(name, logs); }
     return logs;
+  }
+  async jobs(name: string, job?: string) {
+    const child = this.child(name);
+    if (!child) throw new BedrockError("PEBBLE_STOPPED", `${name} is not running.`, "Start the pebble before inspecting or running jobs.");
+    const response = await fetch(`http://127.0.0.1:${child.port}/_bedrock/jobs${job ? `?name=${encodeURIComponent(job)}` : ""}`, {
+      method: job ? "POST" : "GET", headers: signIdentity({ id: "bedrock-daemon", email: "daemon@localhost", name: "Daemon" }, deriveIdentitySecret(this.master, name)),
+    });
+    const body = await response.json();
+    if (!body.ok) throw new BedrockError(body.error.code, body.error.message, body.error.hint);
+    return body.value;
   }
   child(name: string) { return this.states.get(name)?.child; }
   private state(name: string) {

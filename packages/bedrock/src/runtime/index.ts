@@ -1,3 +1,5 @@
+import { createJobs } from "../jobs";
+import { verifyIdentity } from "../auth/identity";
 import { createFileHandler } from "../storage/http";
 import { resolve, join } from "node:path";
 import type { PebbleConfig } from "../config";
@@ -25,6 +27,7 @@ export async function startPebble(options: StartPebbleOptions) {
     await applyMigrations(database.sqlite, join(dir, "migrations"));
     database.refreshTracking();
     const execute = createExecutor(pebble, database);
+    const jobs = createJobs(pebble.jobs ?? {}, (_name, handler) => execute.job(handler));
     const files = createFileHandler(pebble, execute, join(database.dataDir, "uploads"));
     await files.cleanup();
     const sync = pebble.sync === true ? createSync(execute) : undefined;
@@ -36,11 +39,20 @@ export async function startPebble(options: StartPebbleOptions) {
       const path = match[2]!;
       routes[path] ??= {};
       routes[path][match[1]!] = async (request: Request, server: Bun.Server<undefined>) => {
-        try { return await handler(request, server); } catch (error) { return errorResponse(error); }
+        try { return (await execute.route(request, ctx => handler(request, server, ctx))).value as Response; } catch (error) { return errorResponse(error); }
       };
     }
     if (web.html && !Object.hasOwn(routes, "/*")) routes["/*"] = web.html;
     routes["/_bedrock/files/*"] = files.handle;
+    routes["/_bedrock/jobs"] = async (request: Request) => {
+      try {
+        const secret = process.env.BEDROCK_IDENTITY_SECRET;
+        const user = secret ? verifyIdentity(request, secret) : null;
+        if (!secret || user?.id !== "bedrock-daemon") throw new BedrockError("FORBIDDEN", "Jobs require daemon authorization.", "Use bedrock jobs ls/run through the daemon.");
+        const name = new URL(request.url).searchParams.get("name");
+        return Response.json({ ok: true, value: request.method === "POST" && name ? await jobs.run(name) : jobs.list() });
+      } catch (error) { return errorResponse(error); }
+    };
     routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, name: pebble.name, access: pebble.access ?? "public" }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };
@@ -65,15 +77,17 @@ export async function startPebble(options: StartPebbleOptions) {
     });
     const storageCleanup = setInterval(() => { void files.cleanup().catch(error => console.error("Upload cleanup failed", error)); }, 60 * 60 * 1000);
     storageCleanup.unref();
+    jobs.start();
     let stopped = false;
     return {
-      server, pebble, db: database.db, execute,
+      server, pebble, db: database.db, execute, jobs,
       async stop() {
         if (stopped) return;
         stopped = true;
         clearInterval(storageCleanup);
         sync?.close();
         await server.stop(true);
+        await jobs.stop();
         await execute.close();
         database.close();
       },

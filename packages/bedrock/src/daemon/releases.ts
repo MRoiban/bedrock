@@ -1,3 +1,4 @@
+import { assertRollbackSafe } from "./rollback";
 import { mkdir, readdir, rename, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
@@ -66,10 +67,11 @@ export class Releases {
       } finally { await rm(archive, { force: true }); }
     });
   }
-  async rollback(name: string) {
+  async rollback(name: string, force = false) {
     return this.exclusive(name, async () => {
       const record = this.record(name);
       if (!record.previous_release) throw new BedrockError("NO_PREVIOUS_RELEASE", "There is no previous release to roll back to.", "Deploy another release first.");
+      if (!force) await assertRollbackSafe(join(this.home, "pebbles", name, "data", "db.sqlite"), record.previous_release);
       const child = await this.supervisor.launch(name, record.previous_release);
       try { await this.switch(name, child, record); }
       catch (error) { await stopChild(child); throw error; }

@@ -9,11 +9,12 @@ export interface User {
 }
 
 export interface FunctionContext {
-  db: BunSQLiteDatabase<Record<string, unknown>>;
+  db: BunSQLiteDatabase<Record<string, unknown>> & { $client: import("bun:sqlite").Database };
   user: User | null;
   pebble: { readonly name: string };
   storage: import("../storage").Storage;
   request: Request;
+  invalidate: (tables: readonly string[]) => void;
 }
 
 export interface FunctionDefinition<Args = any, Result = any, Input = Args> {
@@ -24,7 +25,7 @@ export interface FunctionDefinition<Args = any, Result = any, Input = Args> {
 
 export type FunctionMap = Record<string, FunctionDefinition>;
 export type Access = "public" | "users" | "creators" | { allow: readonly string[] };
-export type RouteHandler = (request: Request, server: Bun.Server<undefined>) => Response | Promise<Response>;
+export type RouteHandler = (request: Request, server: Bun.Server<undefined>, ctx: FunctionContext) => Response | Promise<Response>;
 
 export interface FileMetadata {
   id: string;
@@ -48,13 +49,15 @@ export interface Bucket<Name extends string = string> extends BucketConfig {
 
 export type BucketNames<P extends PebbleConfig> = NonNullable<P["storage"]>[number]["name"];
 
+export interface JobDefinition { cron: string; run: (ctx: FunctionContext) => unknown }
+
 export interface PluginConfig {
   name: string;
   schema?: Record<string, unknown>;
   routes?: Record<string, RouteHandler>;
   onQuery?: (ctx: FunctionContext, name: string, args: unknown, next: () => Promise<unknown>) => Promise<unknown>;
   onMutation?: PluginConfig["onQuery"];
-  jobs?: Record<string, { cron: string; run: (ctx: FunctionContext) => unknown }>;
+  jobs?: Record<string, JobDefinition>;
 }
 
 export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends FunctionMap = FunctionMap> {
@@ -68,6 +71,7 @@ export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends Fun
   web?: string;
   routes?: Record<string, RouteHandler>;
   plugins?: readonly PluginConfig[];
+  jobs?: Record<string, JobDefinition>;
 }
 
 export type FunctionArgs<F extends FunctionDefinition> = F extends FunctionDefinition<any, any, infer Input> ? Input : never;

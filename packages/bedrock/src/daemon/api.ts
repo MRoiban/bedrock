@@ -15,13 +15,29 @@ export function daemonError(error: unknown) {
     : typed.code === "UPSTREAM_UNAVAILABLE" ? 502 : 500;
   return Response.json({ ok: false, error: typed.toJSON() }, { status });
 }
-export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Supervisor, tunnelStatus = () => ({ running: false, pid: null as number | null })) {
+export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Supervisor, tunnelStatus = () => ({ running: false, pid: null as number | null }), backups?: ReturnType<typeof import("../backup").createBackups>) {
   return async (request: Request) => {
     const token = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
     if (!token || !db.accepts(token)) throw new BedrockError("UNAUTHORIZED", "A valid deploy token is required.", "Run bedrock login for the remote server, pass a valid --token, or restart the local daemon to restore its admin token.");
     const url = new URL(request.url);
     let value: unknown;
-    if (request.method === "GET" && url.pathname === "/api/pebbles") {
+    const backup = /^\/api\/backup\/(run|ls|restore)$/.exec(url.pathname);
+    const jobs = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
+    if (backup && backups) {
+      const name = url.searchParams.get("name") ?? undefined;
+      if (name) validateName(name);
+      if (backup[1] === "run" && request.method === "POST") value = await backups.run(name);
+      else if (backup[1] === "ls" && request.method === "GET" && name) value = await backups.list(name);
+      else if (backup[1] === "restore" && request.method === "POST" && name) {
+        if (url.searchParams.get("confirm") !== "true") throw new BedrockError("CONFIRM_REQUIRED", "Restore replaces the pebble data directory.", "Pass --yes to backup restore.");
+        value = await backups.restore(name, url.searchParams.get("at") ?? undefined);
+      } else throw new BedrockError("INVALID_ARGS", "Invalid backup operation.", "Use backup run [pebble], ls <pebble>, or restore <pebble> --yes.");
+    } else if (jobs && ["GET", "POST"].includes(request.method)) {
+      const name = jobs[1]!; validateName(name); releases.record(name);
+      const job = url.searchParams.get("job") ?? undefined;
+      if (request.method === "POST" && !job) throw new BedrockError("INVALID_ARGS", "A job name is required.", "Use jobs run <pebble> <job>.");
+      value = await supervisor.jobs(name, request.method === "POST" ? job : undefined);
+    } else if (request.method === "GET" && url.pathname === "/api/pebbles") {
       value = db.list().map(record => ({ ...record, port: supervisor.child(record.name)?.port ?? null, pid: supervisor.child(record.name)?.process.pid ?? null }));
     } else if (request.method === "GET" && url.pathname === "/api/status") {
       value = { tunnel: tunnelStatus(), pebbles: await Promise.all(db.list().map(async record => {
@@ -51,7 +67,7 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
       } else if (request.method === "GET" && action === "logs") {
         releases.record(name);
         return supervisor.logs(name).response(url.searchParams.get("follow") === "true", request.signal);
-      } else if (request.method === "POST" && action === "rollback") value = await releases.rollback(name);
+      } else if (request.method === "POST" && action === "rollback") value = await releases.rollback(name, url.searchParams.get("force") === "true");
       else if (request.method === "POST" && action && ["start", "stop", "restart"].includes(action)) value = await releases.control(name, action);
       else throw new BedrockError("NOT_FOUND", "Unknown daemon endpoint or method.", "Use GET logs, POST start/stop/restart/rollback, or DELETE with confirm=true.");
     }

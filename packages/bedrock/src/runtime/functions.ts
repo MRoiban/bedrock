@@ -19,13 +19,17 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
       }
       const definition = handler ? { run: handler, schema: undefined } : definitions![name]!;
       const user = identity ? identity.user : resolveUser(request);
-      checkAccess(pebble, user);
+      if (!handler || name === "storage") checkAccess(pebble, user);
       if (definition.schema && !identity?.validated) {
         const result = await definition.schema["~standard"].validate(args);
         if (result.issues) throw new BedrockError("INVALID_ARGS", result.issues.map(issue => issue.message).join("; "), "Send JSON matching the function's Standard Schema.");
         args = result.value;
       }
-      const ctx: FunctionContext = { db: database.db, user, pebble, storage: null!, request };
+      const invalidated = new Set<string>();
+      const ctx: FunctionContext = { db: database.db, user, pebble, storage: null!, request, invalidate(tables) {
+        if (kind === "query") throw new BedrockError("READ_ONLY", "Queries cannot invalidate tables.", "Call invalidate inside a mutation, route, or job.");
+        for (const table of tables) invalidated.add(table);
+      } };
       const effects: StorageEffects = { rollback: [], commit: [] };
       ctx.storage = createStorage(join(database.dataDir, "files"), pebble.storage ?? [], ctx, kind === "mutation", effects);
       const { sqlite, tracker } = database;
@@ -33,7 +37,12 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
       try {
         if (kind === "query") sqlite.exec("PRAGMA query_only=ON");
         sqlite.exec(kind === "query" ? "BEGIN DEFERRED" : "BEGIN IMMEDIATE");
-        const result = await tracker.capture(() => definition.run(ctx, args));
+        const middleware = handler ? [] : (pebble.plugins ?? []).map(plugin => kind === "query" ? plugin.onQuery : plugin.onMutation).filter(fn => fn !== undefined);
+        const invoke = (index: number): Promise<any> => index < middleware.length
+          ? Promise.resolve(middleware[index]!(ctx, name, args, () => invoke(index + 1)))
+          : Promise.resolve(definition.run(ctx, args));
+        const result = await tracker.capture(() => invoke(0));
+        for (const table of invalidated) result.writes.add(table);
         // Detect unserializable results before committing any writes.
         JSON.stringify({ ok: true, value: result.value ?? null });
         sqlite.exec("COMMIT");
@@ -61,6 +70,12 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
   return Object.assign(execute, {
     storage(kind: "query" | "mutation", request: Request, handler: (ctx: FunctionContext) => unknown) {
       return execute(kind, "storage", null, request, undefined, handler);
+    },
+    job(handler: (ctx: FunctionContext) => unknown) {
+      return execute("mutation", "job", null, new Request("http://localhost/_bedrock/jobs"), { user: null }, handler);
+    },
+    route(request: Request, handler: (ctx: FunctionContext) => unknown) {
+      return execute("mutation", "route", null, request, undefined, handler);
     },
     onCommit(listener: (writes: Set<string>) => void) {
       listeners.add(listener);

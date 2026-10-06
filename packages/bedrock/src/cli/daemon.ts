@@ -13,7 +13,7 @@ function parse(args: string[]) {
   const flags: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (["--yes", "-f"].includes(arg)) flags[arg] = "true";
+    if (["--yes", "--force", "-f"].includes(arg)) flags[arg] = "true";
     else if (arg.startsWith("--")) {
       if (!["--domain", "--creator", "--port", "--url", "--token", "--google-client-id", "--google-client-secret"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, "Provide a value for domain, creator, port, url, or token.");
       flags[arg] = args[++i]!;
@@ -69,7 +69,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
   const { positionals, flags } = parse(args);
   const name = positionals[0];
   const invalid = () => { throw new BedrockError("INVALID_ARGS", `Invalid arguments for ${command}.`, "Use setup --domain <d> [--creator <email>], daemon, deploy [dir], ls, logs <name> [-f], start|stop|restart|rollback <name>, rm <name> --yes, or token create."); };
-  const allowed = command === "setup" ? ["--domain", "--creator", "--port", "--google-client-id", "--google-client-secret"] : command === "daemon" ? ["--port"] : command === "logs" ? ["--url", "--token", "-f"] : command === "rm" ? ["--url", "--token", "--yes"] : ["--url", "--token"];
+  const allowed = command === "rollback" ? ["--url", "--token", "--force"] : command === "setup" ? ["--domain", "--creator", "--port", "--google-client-id", "--google-client-secret"] : command === "daemon" ? ["--port"] : command === "logs" ? ["--url", "--token", "-f"] : command === "rm" ? ["--url", "--token", "--yes"] : ["--url", "--token"];
   if (Object.keys(flags).some(key => !allowed.includes(key))) invalid();
   if (command === "setup") {
     if (positionals.length || !flags["--domain"]) invalid();
@@ -141,5 +141,5 @@ export async function daemonCommand(command: string, args: string[], json: boole
     if (!flags["--yes"]) throw new BedrockError("CONFIRM_REQUIRED", "Deleting a pebble removes all code, data, and logs.", "Run bedrock rm <name> --yes to confirm.");
     return { command, ...(await (await call(flags, `${path}?confirm=true`, { method: "DELETE" })).json()) };
   }
-  return { command, ...(await (await call(flags, `${path}/${command}`, { method: "POST" })).json()) };
+  return { command, ...(await (await call(flags, `${path}/${command}${flags["--force"] ? "?force=true" : ""}`, { method: "POST" })).json()) };
 }

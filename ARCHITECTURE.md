@@ -20,7 +20,7 @@ Every dependency must be small and must not own our data model.
 | Sync           | Our own reactive queries over WebSocket   |
 | Storage        | Local filesystem behind a driver interface |
 | Network        | Cloudflare Tunnel (`cloudflared`), the only external host dependency |
-| Backups        | Litestream (SQLite) + restic (files) → Cloudflare R2 |
+| Backups        | Built-in VACUUM INTO + gzip + content-addressed files → R2 or disk (no Litestream/restic) |
 
 No Postgres, no Redis, no Docker, no reverse proxy.
 
@@ -39,6 +39,8 @@ packages/
       storage/        driver interface + fs driver, upload/download handlers
       auth/           Google OAuth, sessions, access policies (used by daemon)
       daemon/         runs ALL pebbles: host router, process supervisor, deploy API
+      backup/         snapshot/restore, retention/GC, fs and Bun.S3Client targets
+      jobs/           five-field cron parser, process-local scheduler
       tunnel/         Cloudflare API client + cloudflared supervision
       client/         browser SDK (framework-agnostic)
       react/          React hooks over client/
@@ -53,7 +55,7 @@ Public entry points of `bedrock` (package.json `exports`):
 
 | Import            | Contents |
 |-------------------|----------|
-| `bedrock`         | `definePebble`, `query`, `mutation`, `bucket`, `plugin`, types; re-exports `drizzle-orm` operators and `drizzle-orm/sqlite-core` table builders |
+| `bedrock`         | `definePebble`, `query`, `mutation`, `bucket`, `job`, `plugin`, types; re-exports `drizzle-orm` operators and `drizzle-orm/sqlite-core` table builders |
 | `bedrock/client`  | `createClient()` |
 | `bedrock/react`   | `BedrockProvider`, `useQuery`, `useMutation`, `useUser`, `useUpload` |
 | `bedrock/server`  | `startPebble()` (low-level, used by daemon and tests) |
@@ -111,7 +113,7 @@ export default definePebble({
 
 Rules:
 - `query(fn)` / `query(schema, fn)` and `mutation(fn)` / `mutation(schema, fn)`. Args are validated with the Standard Schema if given.
-- Function context: `{ db, user, pebble, storage, request }`. `user` is `null` when anonymous.
+- Function context: `{ db, user, pebble, storage, request, invalidate }`. `user` is `null` when anonymous.
 - Queries are read-only (enforced: run inside a read transaction). Mutations run inside a write transaction.
 - Types flow end-to-end: the client infers query/mutation names, args and results from `typeof pebble`.
 
@@ -141,7 +143,8 @@ authorization is **per pebble**.
 
 ## 6. Sync (reactive queries)
 
-Only when `sync: true`. Writes always go through mutations.
+Only when `sync: true`. Mutations, jobs, and custom routes notify after committed writes.
+Raw SQL writes can explicitly call `ctx.invalidate(["sql_table_name"])`.
 
 1. Client opens one WebSocket to `/_bedrock/ws` and sends `{ op: "sub", id, query, args }`.
 2. The server runs the query and records which tables it read, by capturing every SQL statement executed during the call (Drizzle logger + `AsyncLocalStorage`) and matching identifiers against the known table names.
@@ -173,6 +176,8 @@ Future (do not build yet): row-level diffs, optimistic updates.
 ```
 $BEDROCK_HOME (default ~/.bedrock)
   config.json        { domain, creators: [emails], port, cloudflare: {accountId, zoneId, tunnelId, dnsRecordId, name}, google: {...} }
+  backup-credentials R2 access key/secret (0600); config.json stores only target metadata
+  backup-state.json  last successful full/per-pebble backup times
   tunnel-token       Cloudflare tunnel run token (0600); API token is never persisted
   logs/cloudflared.log  rotated cloudflared output (run token redacted)
   bedrock.sqlite     users, sessions, pebbles registry, deploy tokens
@@ -212,7 +217,7 @@ $BEDROCK_HOME (default ~/.bedrock)
 - `bedrock doctor` checks Bun, local daemon/configuration, domain/creators, OAuth,
   cloudflared installation/process, tunnel ingress/DNS via the API when a transient
   API token is available, wildcard resolution via Cloudflare DoH, available disk,
-  and each pebble's live health. Offline DNS and unavailable API credentials are
+  each pebble's live health, and backup age (warn when > 2× interval). Offline DNS and unavailable API credentials are
   skipped warnings; any failed check sets exit code 1. `doctor --json` emits an
   array of checks `{name, status: pass|warn|fail, message, hint, skipped?}`.
 
@@ -250,15 +255,77 @@ is safe; adding a pebble needs **no** Cloudflare calls.
 ## 10. Extensibility
 
 ```ts
+import { plugin, job } from "bedrock";
+
 plugin({
   name: "audit-log",
-  schema: { ... },                       // extra tables
-  routes: { "GET /admin/audit": handler },
-  onMutation: async (ctx, name, args, next) => next(), // middleware around mutations
+  schema: { /* Drizzle tables */ },
+  routes: { "GET /api/audit": (_request, _server, ctx) => Response.json({ user: ctx.user }) },
+  onMutation: async (ctx, name, args, next) => next(),
   onQuery: async (ctx, name, args, next) => next(),
-  jobs: { prune: { cron: "0 3 * * *", run: (ctx) => {} } },
+  jobs: { prune: job("0 3 * * *", async ctx => {
+    // Raw SQL requires explicit notifications after a successful commit.
+    ctx.invalidate(["audit_log"]);
+  }) },
 })
 ```
+
+- Plugin schema/routes/jobs merge into the pebble. Duplicate plugin names, export
+  keys, SQL table names, route keys, and job names fail with repair hints.
+  Plugin tables are included in the pebble's normal `bedrock db generate` flow.
+- Middleware wraps validated query/mutation arguments inside their transaction,
+  in plugin array order (A before → B before → handler → B after → A after).
+  It can return without next() to short-circuit. Query middleware remains read-only.
+  Hooks do not wrap routes, jobs, or storage HTTP operations.
+- `jobs: { name: job(cron, async ctx => ...) }` is supported on pebbles and plugins.
+  Five numeric cron fields support `*`, lists, ranges, and steps in server-local
+  time. Restricted day-of-month/day-of-week use traditional OR semantics.
+  Jobs execute in the pebble's write queue with `user: null` (bypassing pebble
+  access, retaining bucket policies), invalidate sync after commit, log named
+  failures, and skip overlapping runs of the same job. There is no catch-up or
+  persisted history; overlap protection is process-local.
+- `bedrock jobs ls <pebble>` and `jobs run <pebble> <job>` use the authenticated
+  daemon API and a signed service identity to the child.
+- Route handlers keep `(request, server)` and receive FunctionContext as a third
+  argument, including `{ db, user, storage, invalidate }`. They run inside write
+  transactions. Daemon access gating applies to all routes; direct low-level
+  routes retain existing Bun behavior. Functions and jobs also expose invalidate.
+
+### Built-in backups
+
+The daemon checks scheduling each minute, with default interval 60 minutes.
+`backup setup --dir <path>` selects disk; R2 flags select Bun.S3Client at the
+account endpoint (native listing when available, signed ListObjectsV2 fallback
+on Bun 1.2). Credentials are saved separately, mode 0600. No external
+backup binaries or runtime dependencies are used.
+
+A live `VACUUM INTO` snapshot is gzipped at
+`pebbles/<name>/db/<ISO timestamp>.sqlite.gz`; `_bedrock_files` metadata selects
+content-addressed `pebbles/<name>/files/<sha256>` uploads only when absent. A
+manifest at `pebbles/<name>/manifests/<ISO timestamp>.json` records DB key/checksum,
+file id→sha256, version, and migration names/hashes. Publish it last. The daemon's
+identity DB is snapshotted under `daemon/db/` and `daemon/manifests/` too.
+
+Retain newest representatives of 24 hourly and 30 daily UTC buckets, prune old
+DBs/manifests, and GC file blobs unreferenced by remaining manifests. Configurable
+`backup.intervalMinutes`, `hourly`, and `daily` are stored with target metadata.
+`backup run [pebble]` also snapshots identity; `backup ls <pebble>` lists snapshots.
+`backup restore <pebble> [--at <exact-ts>] --yes` stops the pebble, verifies SQLite
+integrity and DB/file SHA-256, stages and swaps data directories, preserves
+`data.before-restore-<timestamp>-<suffix>`, then starts selected code. Starting
+can apply newer migrations. The two renames occur while stopped; a host crash
+between them requires recovering the preserved directory. Release code, config,
+and secrets need separate backups; daemon identity restore is offline.
+
+Rollback refuses target code missing applied migrations unless `--force`; its
+hint points to backup restore. `bedrock --version` prints package version; `bun
+link` from packages/bedrock registers the CLI on PATH.
+
+### Trust model
+
+Creators are trusted. Pebbles are separate processes with no OS isolation and
+can access server resources as the daemon user. Security boundaries protect
+against end users and the internet, not hostile creators.
 
 ## 11. Agent-friendliness (non-negotiable)
 
@@ -270,10 +337,10 @@ plugin({
 
 ## 12. Phases
 
-1. **Foundation** — monorepo, `config`, `db`, `runtime` (HTTP functions), CLI `init/dev/db`, `examples/notes`.
-2. **Daemon** — host router, process supervisor, local deploy, releases, logs.
-3. **Auth** — Google + dev login, sessions, access modes, signed identity headers.
-4. **Sync** — WS protocol, read/write tracking, invalidation; `client` + `react`.
-5. **Storage** — buckets, fs driver, chunked uploads.
-6. **Tunnel + service + remote ops** — Cloudflare setup/supervision, launchd/systemd user services, doctor, creator CLI login, deploy token management.
-7. **Ops** — remote deploy, backups, jobs, plugins, `@bedrock/ui` (Onyx), docs/llms.txt.
+1. **Foundation — done** — monorepo, `config`, `db`, `runtime` (HTTP functions), CLI `init/dev/db`, `examples/notes`.
+2. **Daemon — done** — host router, process supervisor, local deploy, releases, logs.
+3. **Auth — done** — Google + dev login, sessions, access modes, signed identity headers.
+4. **Sync — done** — WS protocol, read/write tracking, invalidation; `client` + `react`.
+5. **Storage — done** — buckets, fs driver, chunked uploads.
+6. **Tunnel + service + remote ops — done** — Cloudflare setup/supervision, launchd/systemd user services, doctor, creator CLI login, deploy token management.
+7. **Ops — done (7a UI, 7b backups/jobs/plugins/polish)** — remote deploy, backups, jobs, plugins, `@bedrock/ui` (Onyx), docs/llms.txt.

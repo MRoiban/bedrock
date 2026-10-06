@@ -6,16 +6,16 @@ import { service } from "../service";
 import { login, logout } from "./credentials";
 import { doctor } from "./doctor";
 
-async function promptToken() {
-  if (!process.stdin.isTTY || !process.stdin.setRawMode) throw new BedrockError("CLOUDFLARE_TOKEN_MISSING", "No Cloudflare API token was provided.", "Set CLOUDFLARE_API_TOKEN or pass --api-token; noninteractive commands cannot prompt.");
-  process.stderr.write("Cloudflare API token (hidden): ");
+export async function promptSecret(label = "Cloudflare API token") {
+  if (!process.stdin.isTTY || !process.stdin.setRawMode) throw new BedrockError("SECRET_MISSING", `No ${label} was provided.`, "Pass the secret explicitly; noninteractive commands cannot prompt.");
+  process.stderr.write(`${label} (hidden): `);
   return new Promise<string>((resolve, reject) => {
     let token = "";
     const cleanup = () => { process.stdin.setRawMode(false); process.stdin.pause(); process.stdin.off("data", data); process.stderr.write("\n"); };
     const data = (chunk: Buffer) => {
       for (const char of chunk.toString()) {
         if (char === "\r" || char === "\n") { cleanup(); resolve(token.trim()); return; }
-        if (char === "\x03" || char === "\x04") { cleanup(); reject(new BedrockError("CANCELLED", "Token entry cancelled.", "Retry when you have a Cloudflare API token.")); return; }
+        if (char === "\x03" || char === "\x04") { cleanup(); reject(new BedrockError("CANCELLED", "Token entry cancelled.", `Retry when you have the ${label}.`)); return; }
         if (char === "\x7f" || char === "\b") token = token.slice(0, -1);
         else if (char >= " ") token += char;
       }
@@ -67,7 +67,7 @@ export async function opsCommand(command: string, args: string[], json: boolean)
   if (action === "teardown" && !flags["--yes"]) throw new BedrockError("CONFIRM_REQUIRED", "Tunnel teardown disconnects your public server.", "Stop the daemon, then run bedrock tunnel teardown --yes.");
   if (action === "teardown" && !(await readConfig(home)).cloudflare) return { command: "tunnel teardown", ...await tunnelTeardown(home, undefined, true) };
   const token = flags["--api-token"] ?? process.env.CLOUDFLARE_API_TOKEN;
-  const api = token ? new Cloudflare(token) : action === "status" ? undefined : new Cloudflare(await promptToken());
+  const api = token ? new Cloudflare(token) : action === "status" ? undefined : new Cloudflare(await promptSecret());
   const value = action === "setup" ? await tunnelSetup(home, flags["--account-id"]!, flags["--zone-id"]!, api!) : action === "status" ? await tunnelStatus(home, api) : await tunnelTeardown(home, api!, true);
   return { command: `tunnel ${action}`, ...value };
 }

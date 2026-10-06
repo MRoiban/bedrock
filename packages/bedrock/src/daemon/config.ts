@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 
-export interface DaemonConfig { domain: string; creators: string[]; port: number; google?: { clientId: string; clientSecret: string }; cloudflare?: { accountId: string; zoneId: string; tunnelId: string; dnsRecordId: string; name: string } }
+export interface DaemonConfig { backup?: import("../backup").BackupConfig; domain: string; creators: string[]; port: number; google?: { clientId: string; clientSecret: string }; cloudflare?: { accountId: string; zoneId: string; tunnelId: string; dnsRecordId: string; name: string } }
 export const bedrockHome = () => resolve(process.env.BEDROCK_HOME ?? join(homedir(), ".bedrock"));
 
 export function validateConfig(config: DaemonConfig) {
