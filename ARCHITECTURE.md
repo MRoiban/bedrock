@@ -138,7 +138,7 @@ authorization is **per pebble**.
 
 - The daemon owns `$BEDROCK_HOME/bedrock.sqlite`: `users(id, email, name, avatar_url, created_at)`, `sessions(id_hash, user_id, expires_at)`, `pebbles(...)`, `deploy_tokens(...)`.
 - Login flow lives at `https://auth.<domain>` (Google OAuth via arctic, PKCE). Session cookie `bedrock_session` is set on `.<domain>`, HttpOnly, Secure, SameSite=Lax, 30-day sliding expiry. Session ids are stored hashed (SHA-256).
-- The daemon resolves the session and forwards the user to the pebble process as `x-bedrock-user` (JSON) plus `x-bedrock-user-ts` and `x-bedrock-signature` (HMAC-SHA256). Pebble processes reject unsigned identity headers; the daemon strips incoming `x-bedrock-*` headers except upload filename metadata. A random per-boot master stays in daemon memory; each child receives only `HMAC-SHA256(master, "identity:" + pebbleName)` in `BEDROCK_IDENTITY_SECRET`. The daemon signs HTTP and WS identity with the target child’s derived secret. Signatures expire after 60 seconds.
+- The daemon resolves the session and forwards the user to the pebble process as `x-bedrock-user` (JSON) plus `x-bedrock-user-ts` and `x-bedrock-signature` (HMAC-SHA256). Pebble processes reject unsigned identity headers; the daemon strips incoming `x-bedrock-*` headers except `x-bedrock-file-name` and `x-bedrock-file-meta` upload metadata. A random per-boot master stays in daemon memory; each child receives only `HMAC-SHA256(master, "identity:" + pebbleName)` in `BEDROCK_IDENTITY_SECRET`. The daemon signs HTTP and WS identity with the target child’s derived secret. Signatures expire after 60 seconds.
 - `access` modes:
   - `"public"` — anyone; `user` may be null.
   - `"users"` — any signed-in Google account.
@@ -171,15 +171,82 @@ Future (do not build yet): row-level diffs, optimistic updates.
 ## 7. Storage
 
 - Files live in `$BEDROCK_HOME/pebbles/<name>/data/files/<bucket>/<id>`; metadata in the pebble DB table `_bedrock_files(id, bucket, owner_id, name, mime, size, sha256, created_at)`.
-- `bucket(name, { maxSize, access, accept? })`; register with `storage: [attachments]`, `access`: `"public" | "users" | "owner" | (ctx, file) => boolean`.
+- `bucket(name, { maxSize, access, accept?, admit?, onStored? })`; register with `storage: [attachments]`, `access`: `"public" | "users" | "owner" | (ctx, file) => boolean`.
 - Endpoints: `POST /_bedrock/files/<bucket>` (upload), `GET /_bedrock/files/<bucket>/<id>` (download with Range support), `HEAD` and `DELETE` same path.
 - **Chunked uploads** are mandatory for files > 90 MiB (Cloudflare's free plan rejects request bodies > 100 MB): `POST .../uploads` → `PUT .../uploads/<uid>/<n>` → `POST .../uploads/<uid>/complete`. The client SDK chunks transparently.
 - The daemon streams upload bodies and download responses, preserves Range headers, and enforces the pebble Origin on every write. Public-bucket downloads are anonymous only on public pebbles.
-- Server-side API in functions: `storage.put(attachments, blobOrStream, { name, mime? })`, `storage.get(attachments, id)` (Blob), `storage.delete(attachments, id)`, `storage.list(attachments, { ownerId?, limit?, cursor? })` (metadata).
+- Server-side API in functions: `storage.put(attachments, blobOrStream, { name, mime?, meta? })`, `storage.get(attachments, id)` (Blob), `storage.delete(attachments, id)`, `storage.list(attachments, { ownerId?, limit?, cursor? })` (metadata).
 - Bucket names use `[a-z0-9_-]{1,32}`; names must be unique within a pebble. `bucket()` and `definePebble()` validate configuration with repair hints. Passing a bucket object absent from the registered array throws `BedrockError("UNKNOWN_BUCKET", …, hint)`.
 - `ctx.storage` is shared across all handlers; bucket objects supply configuration without pebble-specific context inference. Function signatures remain `query(fn) | query(schema, fn)` and `mutation(fn) | mutation(schema, fn)`.
 - Client APIs take bucket names inferred from `typeof pebble`: `client.upload("attachments", file)`, `client.fileUrl("attachments", id)`, `client.deleteFile("attachments", id)` and `useUpload<typeof pebble>("attachments")`. Client code does not import server bucket configurations.
 - Driver interface `{ put, get, delete, stat }` — `fs` is the only built-in driver; R2 can be added later.
+
+Bucket hooks receive `FunctionContext`. `admit(ctx, candidate)` runs before bytes
+are accepted, with `{ bucket, name, mime, size, ownerId, meta }`; `size` is the
+declared size or `null`. It runs again with the final size inside the commit write
+transaction, before inserting `_bedrock_files`. **The commit-time check is
+authoritative and serialized in the single-writer queue**, so a `SUM(size)` query
+can enforce quotas without races. Keep hooks short; never perform network I/O in
+an executor slot. `onStored(ctx, file, meta)` runs immediately after the file
+metadata insert in that same transaction. Throwing rolls back app rows, metadata,
+and the new blob. `BedrockError` is exported from `bedrock`; its code, message,
+and hint pass through to clients.
+
+For example, with an app-defined `used(db, ownerId)` performing `SUM(size)`,
+`QUOTA`, and a registered `assetRows` table:
+
+```ts
+import { bucket, BedrockError } from "bedrock";
+export const assets = bucket("assets", {
+  maxSize: "2gb", access: "owner",
+  admit: ({ db, user }, file) => {
+    if (file.size !== null && used(db, user!.id) + file.size > QUOTA)
+      throw new BedrockError("QUOTA_EXCEEDED", "Your safe is full.", "Delete files or ask for more space.");
+  },
+  onStored: ({ db }, file, meta) => {
+    db.insert(assetRows).values({ fileId: file.id, ownerId: file.ownerId, size: file.size }).run();
+  },
+});
+```
+
+Upload `meta` is untrusted JSON: apps must validate it in `admit`/`onStored`
+before using it. It is passed to hooks and persisted in chunk manifests, never
+stored in `_bedrock_files`. Single uploads send percent-encoded JSON in
+`x-bedrock-file-meta`; chunk start sends a `meta` JSON field. Both are limited to
+4 KiB after percent encoding. Server puts accept `{ name, mime?, meta? }` and run
+both hooks too. Their Blob/stream work stays inside the caller's transaction;
+server code is trusted to avoid slow network streams there.
+
+HTTP upload bodies stream into `data/uploads/staging/<uuid>` outside executor
+slots. Single uploads use a short read slot for authorization/admission, stream
+with a cap of min(bucket maxSize, 90 MiB), then use a short write slot to re-check
+access/admission, rename the staged file into place, insert metadata, and run
+`onStored`. Chunk assembly and hashing also happen outside slots. Each upload id
+has its own serialization lock; different uploads can stream concurrently.
+Staging is deleted on controlled failures/disconnects and stale staging (>24 h)
+is cleaned at startup and hourly. Sync invalidation fires only after commit.
+
+Chunk protocol: `POST .../uploads` with `{ name, mime?, size, sha256?, meta? }`
+returns `{ uploadId, chunkSize }`. `PUT .../uploads/<uid>/<n>` sends sequential
+32 MiB chunks (last may be shorter); replacement is atomic. `GET .../uploads/<uid>`
+returns `{ uploadId, size, chunkSize, received: number[] }`, listing only complete
+chunks, with the same user/bucket authorization. `POST .../uploads/<uid>/complete`
+accepts no body or `{ sha256 }`. Digests are lowercase hex SHA-256; if declared at
+start or completion, each must match the assembled bytes or completion throws
+`UPLOAD_CHECKSUM_MISMATCH`. Size is always verified. Upload state expires after
+24 hours and survives restarts.
+
+`client.upload(bucket, file, { onProgress?, signal?, meta?, uploadId?, onUploadId? })`
+uses XHR byte-level progress in browsers and fetch transport-boundary progress in
+Bun. Progress is a 0–1 fraction across the file. Chunks remain sequential with up
+to three attempts; FORBIDDEN, UNAUTHENTICATED, INVALID_CHUNK, FILE_TOO_LARGE and
+QUOTA_EXCEEDED are never retried. SHA-256 is incremental: the client reads one
+chunk at a time and sends the digest at completion, without a whole-file memory
+allocation or hashing pre-pass. Cookies and abort signals work on both transports.
+Save `onUploadId(id)` to resume later with `uploadId` and the original local File.
+Resume checks status, hashes received chunks locally without re-sending them,
+and sends missing chunks. An expired handle starts a fresh upload. `useUpload`
+passes all these options through and keeps its existing return shape.
 
 ## 8. Daemon and hosting
 

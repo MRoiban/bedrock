@@ -63,7 +63,7 @@ test("public pebble downloads need no session and sibling child secrets cannot f
       // This route models compromised pebble code reading its own environment and port.
       await Bun.write(join(dir, "pebble.ts"), `import { definePebble, bucket, query } from "bedrock";
 export default definePebble({ name: "${name}", access: "public",
-  storage: [bucket("public", { maxSize: "128mb", access: "public" })],
+  storage: [bucket("public", { maxSize: "128mb", access: "public", admit: (_ctx, file) => { if (file.meta?.tag !== "daemon") throw new Error("metadata was stripped"); } })],
   queries: { who: query(({user}) => user) },
   routes: { "GET /compromised": (_request, server) => Response.json({ secret: process.env.BEDROCK_IDENTITY_SECRET, port: server.port }) }
 });`);
@@ -78,9 +78,17 @@ export default definePebble({ name: "${name}", access: "public",
     const direct = (port: string, headers: HeadersInit) => fetch(`http://127.0.0.1:${port}/_bedrock/q/who`, { method: "POST", body: "null", headers });
     expect((await direct(a.port, forged)).status).toBe(200);
     expect((await direct(b.port, forged)).status).toBe(403);
-    const uploaded = await request("pebble-b", "/_bedrock/files/public", { method: "POST", body: "public download", headers: { "x-bedrock-file-name": "public.txt" } });
+    const uploaded = await request("pebble-b", "/_bedrock/files/public", { method: "POST", body: "public download", headers: { "x-bedrock-file-name": "public.txt", "x-bedrock-file-meta": encodeURIComponent(JSON.stringify({ tag: "daemon" })) } });
     expect(uploaded.status).toBe(201);
     const file = await uploaded.json();
+    const started = await request("pebble-b", "/_bedrock/files/public/uploads", { method: "POST", body: JSON.stringify({ name: "chunk", size: 3, meta: { tag: "daemon" } }) });
+    expect(started.status).toBe(201);
+    const { uploadId } = await started.json();
+    const statusPath = `/_bedrock/files/public/uploads/${uploadId}`;
+    expect((await (await request("pebble-b", statusPath)).json()).received).toEqual([]);
+    expect((await request("pebble-b", `${statusPath}/0`, { method: "PUT", body: "abc" })).status).toBe(204);
+    expect((await (await request("pebble-b", statusPath)).json()).received).toEqual([0]);
+    expect((await request("pebble-b", `${statusPath}/complete`, { method: "POST" })).status).toBe(201);
     const download = await request("pebble-b", `/_bedrock/files/public/${file.id}`);
     expect(download.status).toBe(200); expect(await download.text()).toBe("public download");
     expect(download.headers.get("cache-control")).toBe("public, max-age=3600");

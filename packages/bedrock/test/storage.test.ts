@@ -175,3 +175,25 @@ test('all server storage methods reject unregistered bucket objects with repair 
     }
   } finally { await f.cleanup(); }
 });
+
+test('SDK resumes by hashing received chunks without re-sending and refreshes expired handles', async () => {
+  const f = await fixture();
+  const client = createClient<typeof pebble>({ url: f.server.url.href, sync: false, headers: f.identity.headers('alice') });
+  const nativeFetch = globalThis.fetch;
+  const sent: string[] = [], ids: string[] = [];
+  try {
+    const bytes = new Uint8Array(CHUNK_SIZE + 3); bytes.fill(42);
+    const start = await (await f.call('attachments/uploads', { method: 'POST', body: JSON.stringify({ name: 'resume', size: bytes.length }) })).json();
+    await f.call(`attachments/uploads/${start.uploadId}/0`, { method: 'PUT', body: bytes.slice(0, CHUNK_SIZE) });
+    globalThis.fetch = (async (input: any, init?: RequestInit) => {
+      if (init?.method === 'PUT') sent.push(new URL(input).pathname);
+      return nativeFetch(input, init);
+    }) as typeof fetch;
+    const file = await client.upload('attachments', new File([bytes], 'resume'), { uploadId: start.uploadId, onUploadId: id => ids.push(id) });
+    expect(sent).toEqual([`/_bedrock/files/attachments/uploads/${start.uploadId}/1`]);
+    expect(ids).toEqual([start.uploadId]);
+    expect(file.sha256).toBe(new Bun.CryptoHasher('sha256').update(bytes).digest('hex'));
+    const fresh = await client.upload('attachments', new File(['hello'], 'new'), { uploadId: start.uploadId, onUploadId: id => ids.push(id) });
+    expect(ids[1]).not.toBe(start.uploadId); expect(fresh.size).toBe(5);
+  } finally { globalThis.fetch = nativeFetch; client.close(); await f.cleanup(); }
+});

@@ -257,6 +257,61 @@ content headers. The SDK chunks uploads above 90 MiB transparently. Metadata is
 in `_bedrock_files`; local files are `data/files/<bucket>/<id>`. Synced storage
 list queries rerun after committed upload/delete operations.
 
+Bucket hooks receive `FunctionContext`. `admit(ctx, candidate)` runs before bytes
+are accepted, with `{ bucket, name, mime, size, ownerId, meta }`; `size` is the
+declared size or `null`. It runs again with the final size inside the commit write
+transaction, before inserting `_bedrock_files`. **The commit-time check is
+authoritative and serialized in the single-writer queue**, so a `SUM(size)` query
+can enforce quotas without races. Keep hooks short; never perform network I/O in
+an executor slot. `onStored(ctx, file, meta)` runs immediately after the file
+metadata insert in that same transaction. Throwing rolls back app rows, metadata,
+and the new blob. `BedrockError` is exported from `bedrock`; its code, message,
+and hint pass through to clients.
+
+For example, with an app-defined `used(db, ownerId)` performing `SUM(size)`,
+`QUOTA`, and a registered `assetRows` table:
+
+```ts
+import { bucket, BedrockError } from "bedrock";
+export const assets = bucket("assets", {
+  maxSize: "2gb", access: "owner",
+  admit: ({ db, user }, file) => {
+    if (file.size !== null && used(db, user!.id) + file.size > QUOTA)
+      throw new BedrockError("QUOTA_EXCEEDED", "Your safe is full.", "Delete files or ask for more space.");
+  },
+  onStored: ({ db }, file, meta) => {
+    db.insert(assetRows).values({ fileId: file.id, ownerId: file.ownerId, size: file.size }).run();
+  },
+});
+```
+
+Upload `meta` is untrusted JSON: apps must validate it in `admit`/`onStored`
+before using it. It is passed to hooks and persisted in chunk manifests, never
+stored in `_bedrock_files`. Single uploads send percent-encoded JSON in
+`x-bedrock-file-meta`; chunk start sends a `meta` JSON field. Both are limited to
+4 KiB after percent encoding. Server puts accept `{ name, mime?, meta? }` and run
+both hooks too. Their Blob/stream work stays inside the caller's transaction;
+server code is trusted to avoid slow network streams there.
+
+HTTP upload bodies stream into `data/uploads/staging/<uuid>` outside executor
+slots. Single uploads use a short read slot for authorization/admission, stream
+with a cap of min(bucket maxSize, 90 MiB), then use a short write slot to re-check
+access/admission, rename the staged file into place, insert metadata, and run
+`onStored`. Chunk assembly and hashing also happen outside slots. Each upload id
+has its own serialization lock; different uploads can stream concurrently.
+Staging is deleted on controlled failures/disconnects and stale staging (>24 h)
+is cleaned at startup and hourly. Sync invalidation fires only after commit.
+
+Chunk protocol: `POST .../uploads` with `{ name, mime?, size, sha256?, meta? }`
+returns `{ uploadId, chunkSize }`. `PUT .../uploads/<uid>/<n>` sends sequential
+32 MiB chunks (last may be shorter); replacement is atomic. `GET .../uploads/<uid>`
+returns `{ uploadId, size, chunkSize, received: number[] }`, listing only complete
+chunks, with the same user/bucket authorization. `POST .../uploads/<uid>/complete`
+accepts no body or `{ sha256 }`. Digests are lowercase hex SHA-256; if declared at
+start or completion, each must match the assembled bytes or completion throws
+`UPLOAD_CHECKSUM_MISMATCH`. Size is always verified. Upload state expires after
+24 hours and survives restarts.
+
 ## Jobs
 
 ```ts
@@ -346,7 +401,9 @@ The client accepts `{ url?, sync?, headers? }`; url defaults to browser origin.
 Pass an absolute URL outside the browser. `sync: false` uses HTTP; without server
 sync, subscriptions deliver one HTTP snapshot. Connections reconnect and resubscribe
 with backoff; uncertain mutations are never automatically replayed. Upload options
-include `onProgress` (0–1) and `signal`. Client methods take bucket **names**, not
+include `onProgress` (0–1), `signal`, `meta`, `uploadId`, and `onUploadId`.
+Browsers report byte progress via XHR; Bun uses fetch boundary progress. Chunked
+uploads hash incrementally and resume missing chunks with a saved upload id. Client methods take bucket **names**, not
 server objects. `user()` returns User|null, `loginUrl(returnTo?)` gives a login URL,
 `logout()` signs out. Use ordinary browser cookies, not signed identity headers.
 
@@ -374,7 +431,7 @@ createRoot(document.getElementById("root")!).render(
 All hooks need BedrockProvider. `useQuery` returns `{ data, error, isLoading }`;
 `useMutation` returns `{ mutate, error, isPending }`; `useUser` returns
 `{ user, isLoading }`; `useUpload<typeof pebble>("attachments")` returns
-`{ upload, progress, error, isUploading }`. Args without a schema are `undefined`.
+`{ upload, progress, error, isUploading }` and passes all upload options through. Args without a schema are `undefined`.
 HTML references `./app.tsx` with a module script; Bun bundles it.
 
 `@bedrock/ui` exports Onyx primitives (Button, Input, Textarea, Panel/PanelBody,

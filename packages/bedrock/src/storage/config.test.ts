@@ -4,7 +4,7 @@ import { BedrockError } from '../error';
 import { sizeBytes } from './config';
 test('bucket and definePebble validate sizes, policies, names and MIME patterns with hints', () => {
   expect(sizeBytes('50mb')).toBe(50 * 1024 ** 2); expect(sizeBytes(100)).toBe(100);
-  for (const config of [{ maxSize: 'wat', access: 'owner' }, { maxSize: 0, access: 'public' }, { maxSize: 5, access: 'bad' }, { maxSize: 5, access: 'public', accept: ['image'] }]) {
+  for (const config of [{ maxSize: 5, access: 'public', admit: true }, { maxSize: 5, access: 'public', onStored: {} }, { maxSize: 'wat', access: 'owner' }, { maxSize: 0, access: 'public' }, { maxSize: 5, access: 'bad' }, { maxSize: 5, access: 'public', accept: ['image'] }]) {
     for (const make of [() => bucket('files', config as any), () => definePebble({ name: 'test', storage: [{ name: 'files', ...config } as any] })]) {
       try { make(); throw new Error('Expected invalid bucket'); }
       catch (error) { expect(error).toBeInstanceOf(BedrockError); expect((error as BedrockError).hint.length).toBeGreaterThan(0); }

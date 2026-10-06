@@ -51,10 +51,13 @@ export interface FileMetadata {
   mime: string;
   size: number;
 }
+export interface UploadCandidate { bucket: string; name: string; mime: string; size: number | null; ownerId: string | null; meta: unknown }
 export interface BucketConfig {
   maxSize: string | number;
   access: "public" | "users" | "owner" | ((ctx: FunctionContext, file: FileMetadata) => boolean | Promise<boolean>);
   accept?: readonly string[];
+  admit?: (ctx: FunctionContext, candidate: UploadCandidate) => void | Promise<void>;
+  onStored?: (ctx: FunctionContext, file: FileMetadata, meta: unknown) => void | Promise<void>;
 }
 
 export interface Bucket<Name extends string = string> extends BucketConfig {

@@ -1,25 +1,36 @@
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { FileMetadata, FunctionContext, Bucket, BucketConfig } from '../config/types';
-import { fileInfo, sizeBytes, storageError } from './config';
+import type { FunctionContext, BucketConfig } from '../config/types';
+import { fileInfo, sizeBytes, storageError, uploadMeta } from './config';
 import { fsDriver, measuredStream } from './driver';
-import { allowed } from './index';
+import { authorizeUpload } from './index';
+import { stage, cleanupStaging } from './staging';
 export const CHUNK_SIZE = 32 * 1024 ** 2;
 export const SINGLE_LIMIT = 90 * 1024 ** 2;
-interface Upload { bucket: string; ownerId: string | null; name: string; mime: string; size: number; sha256: string; createdAt: number }
+interface Upload { bucket: string; ownerId: string | null; name: string; mime: string; size: number; sha256?: string; meta?: unknown; createdAt: number }
 export function createUploads(root: string) {
-  let tail: Promise<unknown> = Promise.resolve();
+  const tails = new Map<string, Promise<unknown>>();
   const driver = fsDriver(root);
   const path = (id: string) => {
     if (!/^[0-9a-f-]{36}$/.test(id)) throw storageError('UPLOAD_NOT_FOUND', 'Invalid upload id.');
     return join(root, id);
   };
+  function serial<T>(id: string, run: () => Promise<T>): Promise<T> {
+    const result = (tails.get(id) ?? Promise.resolve()).then(run);
+    const tail = result.catch(() => {});
+    tails.set(id, tail);
+    void tail.then(() => { if (tails.get(id) === tail) tails.delete(id); });
+    return result;
+  }
   async function cleanup(now = Date.now()) {
+    await cleanupStaging(root, now);
     await mkdir(root, { recursive: true });
     for (const id of await readdir(root)) {
-      if (!/^[0-9a-f-]{36}$/.test(id)) continue;
-      const manifest = Bun.file(join(path(id), 'manifest.json'));
-      if (await manifest.exists()) { const upload = await manifest.json() as Upload; if (now - upload.createdAt >= 86400000) await rm(path(id), { recursive: true, force: true }); }
+      if (!/^[0-9a-f-]{36}$/.test(id) || tails.has(id)) continue;
+      await serial(id, async () => {
+        const manifest = Bun.file(join(path(id), 'manifest.json'));
+        if (await manifest.exists()) { const upload = await manifest.json() as Upload; if (now - upload.createdAt >= 86400000) await rm(path(id), { recursive: true, force: true }); }
+      });
     }
   }
   async function load(id: string, bucket: string, ctx: FunctionContext) {
@@ -31,22 +42,20 @@ export function createUploads(root: string) {
   }
   return {
     cleanup,
-    serial<T>(run: () => Promise<T>): Promise<T> { const result = tail.then(run); tail = result.catch(() => {}); return result; },
+    serial,
+    load,
     async start(bucket: string, config: BucketConfig, ctx: FunctionContext, input: any) {
       const info = fileInfo(input?.name, input?.mime);
       if (!Number.isSafeInteger(input?.size) || input.size < 0 || input.size > sizeBytes(config.maxSize)) throw storageError('FILE_TOO_LARGE', 'Upload size exceeds the bucket limit or is invalid.');
-      if (typeof input.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.sha256)) throw storageError('INVALID_FILE', 'Chunked uploads require a lowercase SHA-256 digest.');
-      const upload: Upload = { bucket, ownerId: ctx.user?.id ?? null, ...info, size: input.size, sha256: input.sha256, createdAt: Date.now() };
-      const candidate: FileMetadata = { ...upload, id: '', };
-      if (!await allowed(config, ctx, candidate)) throw storageError('FORBIDDEN', 'This bucket does not permit uploading.');
-      if (config.accept && !config.accept.some(m => m === info.mime || m.endsWith('/*') && info.mime.startsWith(m.slice(0, -1)))) throw storageError('FILE_TYPE_REJECTED', 'The MIME type is not accepted.');
+      if (input.sha256 !== undefined && (typeof input.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.sha256))) throw storageError('INVALID_FILE', 'When supplied, sha256 must be a lowercase SHA-256 digest.');
+      const upload: Upload = { bucket, ownerId: ctx.user?.id ?? null, ...info, size: input.size, sha256: input.sha256, meta: uploadMeta(input.meta), createdAt: Date.now() };
+      await authorizeUpload(config, ctx, { ...upload, meta: upload.meta });
       const uploadId = crypto.randomUUID();
       await mkdir(path(uploadId), { recursive: true });
       await Bun.write(join(path(uploadId), 'manifest.json'), JSON.stringify(upload));
       return { uploadId, chunkSize: CHUNK_SIZE };
     },
-    async chunk(id: string, bucket: string, ctx: FunctionContext, index: string, body: ReadableStream<Uint8Array>) {
-      const upload = await load(id, bucket, ctx);
+    async chunk(id: string, upload: Upload, index: string, body: ReadableStream<Uint8Array>) {
       if (!/^(0|[1-9]\d*)$/.test(index)) throw storageError('INVALID_CHUNK', 'Chunk index must be a nonnegative integer.');
       const n = Number(index), count = Math.ceil(upload.size / CHUNK_SIZE);
       if (!Number.isSafeInteger(n) || n >= count) throw storageError('INVALID_CHUNK', 'Chunk index is outside the declared file.');
@@ -61,8 +70,8 @@ export function createUploads(root: string) {
       });
       await driver.put(`${id}/${n}`, exact);
     },
-    async complete(id: string, bucket: Bucket, ctx: FunctionContext) {
-      const upload = await load(id, bucket.name, ctx);
+    async complete(id: string, upload: Upload, sha256?: string, signal?: AbortSignal) {
+      if (sha256 !== undefined && !/^[a-f0-9]{64}$/.test(sha256)) throw storageError('INVALID_FILE', 'Provide a lowercase SHA-256 digest.');
       const count = Math.ceil(upload.size / CHUNK_SIZE);
       for (let n = 0; n < count; n++) {
         const info = await driver.stat(`${id}/${n}`);
@@ -76,9 +85,20 @@ export function createUploads(root: string) {
         async pull(controller) { try { const next = await iterator.next(); if (next.done) controller.close(); else controller.enqueue(next.value); } catch (error) { controller.error(error); } },
         async cancel() { await iterator.return(undefined); },
       });
-      const file = await ctx.storage.put(bucket, stream, upload);
-      if (file.size !== upload.size || file.sha256 !== upload.sha256) throw storageError('UPLOAD_CHECKSUM_MISMATCH', 'Assembled size or SHA-256 does not match the upload declaration.');
+      const file = await stage(root, stream, upload.size, signal);
+      if (file.size !== upload.size || upload.sha256 && file.sha256 !== upload.sha256 || sha256 && file.sha256 !== sha256) {
+        await rm(file.path, { force: true });
+        throw storageError('UPLOAD_CHECKSUM_MISMATCH', 'Assembled size or SHA-256 does not match the upload declaration.');
+      }
       return file;
+    },
+    async status(id: string, upload: Upload) {
+      const received: number[] = [];
+      for (let n = 0; n < Math.ceil(upload.size / CHUNK_SIZE); n++) {
+        const info = await driver.stat(`${id}/${n}`);
+        if (info?.size === Math.min(CHUNK_SIZE, upload.size - n * CHUNK_SIZE)) received.push(n);
+      }
+      return { uploadId: id, size: upload.size, chunkSize: CHUNK_SIZE, received };
     },
     async remove(id: string) { await rm(path(id), { recursive: true, force: true }); },
   };

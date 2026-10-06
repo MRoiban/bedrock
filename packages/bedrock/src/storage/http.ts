@@ -2,10 +2,12 @@ import { and, eq } from 'drizzle-orm';
 import type { PebbleConfig, FileMetadata } from '../config/types';
 import type { createExecutor } from '../runtime/functions';
 import { errorResponse } from '../runtime/http';
-import { storageError } from './config';
+import { storageError, fileInfo, sizeBytes, headerMeta } from './config';
 import { files } from './schema';
 import { createUploads, SINGLE_LIMIT } from './uploads';
-import { measuredStream } from './driver';
+import { rm } from 'node:fs/promises';
+import { stage, withUploadBody } from './staging';
+import { authorizeUpload, adoptStored } from './index';
 const inlineSafe = (mime: string) => /^(image\/(png|jpeg|gif|webp|avif|bmp)|video\/(mp4|webm|ogg)|audio\/(mpeg|mp4|ogg|wav|webm)|application\/pdf|text\/plain)$/.test(mime);
 export function downloadHeaders(file: FileMetadata, isPublic: boolean) {
   return new Headers({
@@ -26,29 +28,50 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
       const method = request.method;
       if (!id && method === 'POST') {
         if (!request.body) throw storageError('INVALID_FILE', 'Upload body is required.');
-        const result = await execute.storage('mutation', request, ctx => ctx.storage.put(config, measuredStream(request.body!, SINGLE_LIMIT, { size: 0, sha256: '' }), {
-          name: request.headers.get('x-bedrock-file-name') ? decodeURIComponent(request.headers.get('x-bedrock-file-name')!) : 'file', mime: request.headers.get('content-type') ?? 'application/octet-stream',
-        }));
-        return Response.json(result.value, { status: 201 });
+        const info = { ...fileInfo(request.headers.get('x-bedrock-file-name') ? decodeURIComponent(request.headers.get('x-bedrock-file-name')!) : 'file', request.headers.get('content-type') ?? undefined), meta: headerMeta(request.headers.get('x-bedrock-file-meta')) };
+        const declared = request.headers.has('content-length') ? Number(request.headers.get('content-length')) : null;
+        if (declared !== null && (!Number.isSafeInteger(declared) || declared < 0 || declared > SINGLE_LIMIT)) throw storageError('FILE_TOO_LARGE', 'Invalid single upload size.');
+        await execute.storage('query', request, ctx => authorizeUpload(config, ctx, { ...info, bucket, size: declared, ownerId: ctx.user?.id ?? null }));
+        const staged = await stage(root, request.body, Math.min(SINGLE_LIMIT, sizeBytes(config.maxSize)), request.signal);
+        try {
+          const result = await execute.storage('mutation', request, ctx => { request.signal.throwIfAborted(); return adoptStored(ctx.storage, config, staged, info); });
+          return Response.json(result.value, { status: 201 });
+        } finally { await rm(staged.path, { force: true }); }
       }
-      if (id === 'uploads') return await uploads.serial(async () => {
+      if (id === 'uploads') {
         await uploads.cleanup();
         if (!uploadId && method === 'POST') {
           const input = await request.json();
           const result = await execute.storage('query', request, ctx => uploads.start(bucket, config, ctx, input));
           return Response.json(result.value, { status: 201 });
         }
-        if (uploadId && action === 'complete' && method === 'POST' && parts.length === 4) {
-          const result = await execute.storage('mutation', request, ctx => uploads.complete(uploadId, config, ctx));
-          await uploads.remove(uploadId);
-          return Response.json(result.value, { status: 201 });
-        }
-        if (uploadId && action !== undefined && method === 'PUT' && parts.length === 4 && request.body) {
-          await execute.storage('query', request, ctx => uploads.chunk(uploadId, bucket, ctx, action, request.body!));
-          return new Response(null, { status: 204 });
-        }
+        if (uploadId) return await uploads.serial(uploadId, async () => {
+          const result = await execute.storage('query', request, async ctx => {
+            const upload = await uploads.load(uploadId, bucket, ctx);
+            const { admit: _admit, ...policy } = config;
+            await authorizeUpload(policy, ctx, { ...upload, meta: upload.meta });
+            return upload;
+          });
+          const upload = result.value as Awaited<ReturnType<typeof uploads.load>>;
+          if (method === 'GET' && parts.length === 3) return Response.json(await uploads.status(uploadId, upload));
+          if (action === 'complete' && method === 'POST' && parts.length === 4) {
+            const input = request.body ? await request.json() : {};
+            const staged = await uploads.complete(uploadId, upload, input?.sha256, request.signal);
+            try {
+              const committed = await execute.storage('mutation', request, ctx => { request.signal.throwIfAborted(); return adoptStored(ctx.storage, config, staged, upload); });
+              await uploads.remove(uploadId);
+              return Response.json(committed.value, { status: 201 });
+            } catch (error) { await uploads.remove(uploadId); throw error; }
+            finally { await rm(staged.path, { force: true }); }
+          }
+          if (action !== undefined && method === 'PUT' && parts.length === 4 && request.body) {
+            await withUploadBody(request.body, request.signal, stream => uploads.chunk(uploadId, upload, action, stream));
+            return new Response(null, { status: 204 });
+          }
+          throw storageError('UPLOAD_NOT_FOUND', 'Unknown chunk upload endpoint.');
+        });
         throw storageError('UPLOAD_NOT_FOUND', 'Unknown chunk upload endpoint.');
-      });
+      }
       if (id && parts.length === 2 && method === 'DELETE') {
         await execute.storage('mutation', request, ctx => ctx.storage.delete(config, id));
         return new Response(null, { status: 204 });
@@ -78,5 +101,5 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
       throw storageError('FILE_NOT_FOUND', 'Unknown file endpoint.');
     } catch (error) { return errorResponse(error); }
   }
-  return { handle, cleanup: () => uploads.serial(() => uploads.cleanup()) };
+  return { handle, cleanup: () => uploads.cleanup() };
 }

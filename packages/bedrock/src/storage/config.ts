@@ -9,6 +9,7 @@ export function sizeBytes(value: string | number): number {
 }
 export function validateBucket(config: Bucket) {
   if (!config || typeof config !== 'object') throw storageError('INVALID_BUCKET', 'Use bucket(name, { maxSize, access, accept? }).');
+  for (const hook of ['admit', 'onStored'] as const) if (config[hook] !== undefined && typeof config[hook] !== 'function') throw storageError('INVALID_BUCKET', `${hook} must be a function.`);
   const name = config.name;
   if (typeof name !== 'string' || !/^[a-z0-9_-]{1,32}$/.test(name)) throw storageError('INVALID_BUCKET', 'Bucket names need 1–32 lowercase letters, digits, underscores, or hyphens.');
   if (process.platform === 'win32' && /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(name)) throw storageError('INVALID_BUCKET', `${name} is a reserved Windows device name.`, 'Choose a different bucket name, such as attachments.');
@@ -27,7 +28,25 @@ export function validateBuckets(buckets: readonly Bucket[] = []) {
 }
 export function fileInfo(name: string, mime = 'application/octet-stream') {
   if (typeof name !== 'string' || !name || name.length > 255 || /[\x00-\x1f\x7f]/.test(name)) throw storageError('INVALID_FILE', 'Provide a filename of 1–255 characters without control characters.');
+  if (typeof mime !== 'string') throw storageError('INVALID_FILE', 'Provide a valid MIME type.');
   mime = mime.split(';')[0]!.trim().toLowerCase();
   if (!/^[\w.+-]+\/[\w.+-]+$/.test(mime)) throw storageError('INVALID_FILE', 'Provide a valid MIME type.');
   return { name, mime };
+}
+
+export function uploadMeta(meta: unknown): unknown {
+  try {
+    if (meta !== undefined) {
+      const json = JSON.stringify(meta);
+      if (json === undefined) throw storageError('INVALID_FILE', 'Upload metadata must be JSON serializable.');
+      if (encodeURIComponent(json).length > 4096) throw storageError('INVALID_FILE', 'Upload metadata exceeds 4 KiB encoded.');
+    }
+    return meta;
+  } catch (error) { if (error instanceof BedrockError) throw error; throw storageError('INVALID_FILE', 'Upload metadata must be JSON serializable.'); }
+}
+export function headerMeta(value: string | null): unknown {
+  if (value === null) return undefined;
+  if (value.length > 4096) throw storageError('INVALID_FILE', 'Upload metadata exceeds 4 KiB encoded.');
+  try { return uploadMeta(JSON.parse(decodeURIComponent(value))); }
+  catch (error) { if (error instanceof BedrockError) throw error; throw storageError('INVALID_FILE', 'Upload metadata must be percent-encoded JSON.'); }
 }
