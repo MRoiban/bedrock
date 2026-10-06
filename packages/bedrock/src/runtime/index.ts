@@ -3,6 +3,9 @@ import type { PebbleConfig } from "../config";
 import { definePebble } from "../config";
 import { openDatabase, defaultDataDir, applyMigrations } from "../db";
 import { BedrockError, asBedrockError } from "../error";
+import { createSync, type SocketData } from "../sync";
+import { resolveUser } from "./identity";
+import { checkAccess } from "./access";
 import { createExecutor } from "./functions";
 import { loadWeb } from "./web";
 import { errorResponse, functionHandler } from "./http";
@@ -19,7 +22,9 @@ export async function startPebble(options: StartPebbleOptions) {
   const database = openDatabase(options.dataDir ?? defaultDataDir(pebble.name), pebble.schema);
   try {
     await applyMigrations(database.sqlite, join(dir, "migrations"));
+    database.refreshTracking();
     const execute = createExecutor(pebble, database);
+    const sync = pebble.sync === true ? createSync(execute) : undefined;
     const web = await loadWeb(dir, pebble.web);
     const routes: Record<string, any> = {};
     for (const [key, handler] of Object.entries(pebble.routes ?? {})) {
@@ -36,7 +41,24 @@ export async function startPebble(options: StartPebbleOptions) {
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };
     routes["/_bedrock/*"] = () => Response.json({ ok: false, error: new BedrockError("NOT_FOUND", "Unknown Bedrock endpoint.", "Use POST /_bedrock/q/<name> or /_bedrock/m/<name>.").toJSON() }, { status: 404 });
-    const server = Bun.serve({
+    if (sync) routes["/_bedrock/ws"] = (request: Request, server: Bun.Server<SocketData>) => {
+      try {
+        // Browsers cannot set WS headers; this bridge is strictly local dev only.
+        let identityRequest = request;
+        const devUser = new URL(request.url).searchParams.get("devUser");
+        if (devUser && process.env.BEDROCK_INSECURE_DEV_USER === "1") {
+          const headers = new Headers(request.headers);
+          headers.set("x-bedrock-user", devUser);
+          identityRequest = new Request(request, { headers });
+        }
+        const user = resolveUser(identityRequest);
+        checkAccess(pebble, user);
+        if (server.upgrade(request, { data: { user, request } })) return;
+        return Response.json({ ok: false, error: new BedrockError("WEBSOCKET_REQUIRED", "WebSocket upgrade required.", "Open this endpoint with a WebSocket client.").toJSON() }, { status: 426 });
+      } catch (error) { return errorResponse(error); }
+    };
+    const server = Bun.serve<SocketData>({
+      ...(sync ? { websocket: sync.websocket } : {}),
       hostname: "127.0.0.1", port: options.port ?? 3000, routes,
       async fetch(request) {
         if (web.staticResponse && ["GET", "HEAD"].includes(request.method)) return web.staticResponse(request);
@@ -50,6 +72,7 @@ export async function startPebble(options: StartPebbleOptions) {
       async stop() {
         if (stopped) return;
         stopped = true;
+        sync?.close();
         await server.stop(true);
         await execute.close();
         database.close();

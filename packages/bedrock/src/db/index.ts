@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { getTableName, is, Table } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { asBedrockError } from "../error";
+import { writeEffects } from "./effects";
 import { TableTracker } from "./tracker";
 
 export { TableTracker } from "./tracker";
@@ -22,8 +23,10 @@ export function openDatabase(dataDir: string, schema: Record<string, unknown> = 
     sqlite = new Database(join(dataDir, "db.sqlite"), { create: true, strict: true });
     sqlite.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     const tracker = new TableTracker(Object.values(schema).filter(t => is(t, Table)).map(t => getTableName(t as Table)));
+    const refreshTracking = () => tracker.setEffects(writeEffects(sqlite!));
+    refreshTracking();
     const db = drizzle(sqlite, { schema, logger: tracker });
-    return { sqlite, db, tracker, close: () => sqlite!.close() };
+    return { sqlite, db, tracker, refreshTracking, close: () => sqlite!.close() };
   } catch (error) {
     sqlite?.close();
     throw asBedrockError(error, "DATABASE_OPEN_FAILED", "Check that the data directory is writable and the SQLite file is valid.");
