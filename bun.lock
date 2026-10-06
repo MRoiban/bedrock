@@ -14,8 +14,6 @@
       "name": "@bedrock-example/notes",
       "dependencies": {
         "bedrock": "workspace:*",
-      },
-      "devDependencies": {
         "valibot": "^1.5.0",
       },
     },

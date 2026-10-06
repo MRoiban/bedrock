@@ -3,9 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "bedrock": "workspace:*"
-  },
-  "devDependencies": {
+    "bedrock": "workspace:*",
     "valibot": "^1.5.0"
   }
 }

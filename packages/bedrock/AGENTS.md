@@ -46,11 +46,46 @@ export default definePebble({
   (BEDROCK_HOME defaults to ~/.bedrock). Tests must always use temporary data.
 - routes: { "GET /api/health": () => new Response("ok") } uses Bun route matching.
   /_bedrock/ is reserved. HTML web entries are bundled by Bun; directories serve static files.
-- Phase 1 only: storage and plugins are config helpers, with no implementation.
-  No signed identity, login redirects, daemon, sync, client SDK, or OAuth yet.
+- Storage and plugins are config helpers, with no implementation.
+  No signed identity, login redirects, sync, client SDK, or OAuth yet.
   Function APIs enforce users/email allow lists; web and escape-hatch routes are public.
-  Creator access requires the future daemon.
+  Creator access requires Phase 3 authentication.
 
 Table tracking matches known schema table identifiers in executed Drizzle SQL and
 conservatively over-records reads. It does not observe direct db.$client calls,
 implicit trigger writes, or foreign-key cascades; these need handling before sync.
+
+## Daemon (Phase 2)
+
+```sh
+bedrock setup --domain localhost --creator you@example.com
+bedrock daemon
+bedrock deploy ./hello
+bedrock ls --json
+bedrock logs hello -f
+bedrock rollback hello
+bedrock rm hello --yes
+```
+
+- startDaemon({ home, port, domain }) from bedrock/daemon returns { server, home, stop }.
+  Run setup first. It listens on 127.0.0.1; each pebble is a separate Bun subprocess.
+- Hosts: <name>.<domain> and <name>.localhost route to pebbles. bedrock hosts route
+  to the daemon API; auth and www are reserved. HTTP and generic WebSockets proxy.
+- Runtime dependencies must be in dependencies, not devDependencies. The daemon
+  installs production deps and symlinks its own bedrock package into every release.
+  Archives must contain regular files/directories only, with pebble.ts at the root.
+- setup is idempotent and preserves existing config. daemon writes admin-token
+  (0600) and daemon.json in BEDROCK_HOME. Tokens are SHA-256 hashed in SQLite.
+- CLI connection precedence: --url/--token, BEDROCK_URL/BEDROCK_TOKEN, local home.
+  token create prints a fresh deploy token once. start/stop/restart manage processes.
+- API (Bearer deploy token required): GET /api/pebbles; POST /api/tokens;
+  POST /api/deploy?name=<name> (tar.gz body); GET /api/pebbles/<name>/logs[?follow=true];
+  POST /api/pebbles/<name>/start|stop|restart|rollback;
+  DELETE /api/pebbles/<name>?confirm=true (removes releases, data, and logs).
+- Deploy health-checks a candidate before swapping current and routing; keeps three
+  releases. Rollback switches code, not data: migrations must remain compatible with
+  the previous version. Runtime GET /_bedrock/health is reserved for readiness.
+- Logs rotate at 10 MB, keeping three older files. --json logs -f streams one JSON
+  object which completes when interrupted; parse it after the stream ends.
+- Daemon children disable insecure development identity. Incoming x-bedrock-*
+  headers are stripped. Auth/user pebbles require Phase 3; use public pebbles now.

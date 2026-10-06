@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./server": "./src/runtime/index.ts"
+    "./server": "./src/runtime/index.ts",
+    "./daemon": "./src/daemon/index.ts"
   },
   "bin": {
     "bedrock": "./src/cli/index.ts"

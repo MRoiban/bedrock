@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { BedrockError, asBedrockError } from "../error";
+import { daemonCommand, daemonCommands } from "./daemon";
 import { init } from "./init";
 import { dbCommand } from "./db";
 import { dev, devWorker } from "./dev";
@@ -18,9 +19,13 @@ async function main() {
     return;
   }
   let result: unknown;
-  if (command === "init" && args.length === 1) result = { command: "init", ...await init(args[0]!) };
+  if (command && daemonCommands.includes(command)) {
+    result = await daemonCommand(command, args, json);
+    if (result === undefined) return;
+  }
+  else if (command === "init" && args.length === 1) result = { command: "init", ...await init(args[0]!) };
   else if (command === "db" && args.length === 1 && ["generate", "plan", "migrate"].includes(args[0]!)) result = await dbCommand(args[0]!);
-  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name>, dev [--port n], or db generate|plan|migrate; add --json for machine-readable output.");
+  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name>, dev [--port n], db generate|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, or token create; add --json for machine-readable output.");
   console.log(json ? JSON.stringify({ ok: true, ...(result as object) }) : JSON.stringify(result, null, 2));
 }
 
