@@ -2,8 +2,8 @@ import { mkdir, readdir, rm, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { BedrockError } from "../error";
 
-export async function run(command: string[], cwd?: string) {
-  const child = Bun.spawn(command, { ...(cwd ? { cwd } : {}), stdout: "pipe", stderr: "pipe" });
+export async function run(command: string[], cwd?: string, env?: Record<string, string>) {
+  const child = Bun.spawn(command, { ...(cwd ? { cwd } : {}), ...(env ? { env: { ...process.env, ...env } } : {}), stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => child.kill("SIGKILL"), 120000);
   try {
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
@@ -89,5 +89,6 @@ export async function installRelease(release: string) {
 }
 
 export async function createArchive(dir: string, archive: string) {
-  await run(["tar", "--exclude=node_modules", "--exclude=.bedrock", "--exclude=.git", "-czf", archive, "-C", resolve(dir), "."]);
+  // macOS tar synthesizes ._* AppleDouble entries from extended attributes unless COPYFILE_DISABLE is set.
+  await run(["tar", "--exclude=node_modules", "--exclude=.bedrock", "--exclude=.git", "--exclude=._*", "--exclude=.DS_Store", "-czf", archive, "-C", resolve(dir), "."], undefined, { COPYFILE_DISABLE: "1" });
 }

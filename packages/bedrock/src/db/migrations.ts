@@ -13,7 +13,7 @@ export async function migrationPlan(sqlite: Database, dir: string): Promise<Migr
     : []);
   const pending: Migration[] = [];
   if (!existsSync(dir)) return pending;
-  for (const name of readdirSync(dir).filter(name => name.endsWith(".sql")).sort()) {
+  for (const name of readdirSync(dir).filter(name => name.endsWith(".sql") && !name.startsWith(".")).sort()) {
     const sql = await Bun.file(join(dir, name)).text();
     const hash = new Bun.CryptoHasher("sha256").update(sql).digest("hex");
     if (applied.has(name)) {

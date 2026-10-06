@@ -50,3 +50,14 @@ test("migration-owned transactions are rejected, CASE and triggers are accepted"
     expect(database.sqlite.query("SELECT * FROM log").all()).toEqual([{ id: "b" }]);
   } finally { database.close(); temp.cleanup(); }
 });
+
+test("hidden files such as macOS AppleDouble ._*.sql are not migrations", async () => {
+  const temp = tempDirectory();
+  const database = openDatabase(temp.dir);
+  try {
+    const dir = join(temp.dir, "migrations");
+    await Bun.write(join(dir, "0001_create.sql"), "CREATE TABLE items (id TEXT);");
+    await Bun.write(join(dir, "._0001_create.sql"), "\0\u0005\u0016\u0007 binary resource fork");
+    expect((await migrationPlan(database.sqlite, dir)).map(m => m.name)).toEqual(["0001_create.sql"]);
+  } finally { database.close(); temp.cleanup(); }
+});
