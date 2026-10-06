@@ -11,10 +11,11 @@ export function storageClient(base: URL, options: ClientOptions, isClosed: () =>
     if (isClosed()) throw new BedrockError('CLIENT_CLOSED', 'The client is closed.', 'Create a new client.');
     signal?.throwIfAborted();
     const headers = new Headers(options.headers);
+    if (options.token) { headers.set("authorization", `Bearer ${options.token}`); headers.delete("cookie"); }
     headers.set('origin', base.origin);
     new Headers(extra).forEach((value, key) => headers.set(key, value));
     try {
-      const response = typeof XMLHttpRequest !== 'undefined' && body instanceof Blob ? await xhr(new URL(path, base), method, headers, body, signal, progress) : await fetch(new URL(path, base), { method, headers, credentials: 'include', ...(body === undefined ? {} : { body }), ...(signal ? { signal } : {}) });
+      const response = typeof XMLHttpRequest !== 'undefined' && body instanceof Blob ? await xhr(new URL(path, base), method, headers, body, !options.token, signal, progress) : await fetch(new URL(path, base), { method, headers, credentials: options.token ? 'omit' : 'include', ...(body === undefined ? {} : { body }), ...(signal ? { signal } : {}) });
       if (response.status === 204) return;
       const result = await response.json();
       if (!response.ok) throw new BedrockError(result.error?.code ?? 'UPLOAD_FAILED', result.error?.message ?? 'File request failed.', result.error?.hint ?? 'Retry the upload.');
@@ -75,13 +76,13 @@ export function storageClient(base: URL, options: ClientOptions, isClosed: () =>
     },
   };
 }
-function xhr(url: URL, method: string, headers: Headers, body: Blob, signal?: AbortSignal, progress?: (bytes: number) => void): Promise<Response> {
+function xhr(url: URL, method: string, headers: Headers, body: Blob, withCredentials: boolean, signal?: AbortSignal, progress?: (bytes: number) => void): Promise<Response> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     const abort = () => request.abort();
     const cleanup = () => signal?.removeEventListener('abort', abort);
     request.open(method, url.href);
-    request.withCredentials = true;
+    request.withCredentials = withCredentials;
     // Browsers supply Origin themselves and forbid setting it explicitly.
     headers.forEach((value, key) => { if (key !== 'origin') request.setRequestHeader(key, value); });
     request.upload.onprogress = event => progress?.(event.loaded);

@@ -119,7 +119,8 @@ export default definePebble({
 
 Rules:
 - `query(fn)` / `query(schema, fn)` and `mutation(fn)` / `mutation(schema, fn)`. Args are validated with the Standard Schema if given.
-- Function context: `{ db, user, pebble, storage, request, invalidate }`. `user` is `null` when anonymous.
+- `tokens: true` opts into per-user bearer tokens; disabled by default.
+- Function context: `{ db, user, token, tokens, pebble, storage, request, invalidate }`. `user` is `null` when anonymous.
 - Queries are read-only (enforced: run inside a read transaction). Mutations run inside a write transaction.
 - Types flow end-to-end: the client infers query/mutation names, args and results from `typeof pebble`.
 
@@ -146,6 +147,55 @@ authorization is **per pebble**.
   - `"creators"` — only the bedrock creators list (from daemon config).
 - Unauthenticated page requests to a protected pebble redirect to `auth.<domain>/login?return=...`; API/WS requests get 401.
 - **Dev mode** (`bedrock dev`): no Google. A local login page lets you pick any email. Agents must be able to test auth flows without credentials.
+
+### Pebble tokens
+
+Opt in with `definePebble({ tokens: true, ... })`. Pebble tokens are per-user,
+per-pebble credentials for native and scripted clients, separate from creator
+deploy tokens. The pebble DB owns reserved `_bedrock_tokens(id, hash, user_id,
+user_json, name, permissions, created_at, last_used_at, expires_at, revoked_at)`,
+created through the same internal startup migration mechanism as `_bedrock_files`.
+Backups and restores include it. Tokens are `brk_` plus 32 random bytes encoded as
+base64url; only their SHA-256 hash is stored. Creation returns the raw token once.
+
+`ctx.tokens.create({ name, permissions, expiresAt? })` requires a user and a
+mutation slot, returns `{ id, token, name, permissions, createdAt, expiresAt }`,
+and refuses token-authenticated callers. `ctx.tokens.list()` returns the current
+user's non-revoked metadata (`id, name, permissions, createdAt, lastUsedAt,
+expiresAt`). `ctx.tokens.revoke(id)` requires a mutation slot, only permits owned
+tokens, and is idempotent. Creation/revocation participate in the caller's
+transaction. Disabled methods throw `TOKENS_DISABLED`. Timestamps are Unix
+milliseconds; absent expiry and unused timestamps are null.
+
+`ctx.token` is `{ id, name, permissions }` for token authentication, otherwise
+null. Detached contexts also expose it, and read/write callbacks retain it.
+Jobs always have `token: null`. A valid signed daemon identity wins over bearer
+authentication. Otherwise enabled pebbles resolve `Authorization: Bearer brk_…`
+from the stored user snapshot; unknown, revoked, or expired credentials yield
+JSON 401 `UNAUTHENTICATED`. Current pebble access policies still apply, including
+allow lists and `BEDROCK_CREATORS`, on functions, routes, storage, and WS.
+
+Permissions default to deny, and creation validates registered targets:
+
+- `*`: everything the user could do, including WS sync.
+- `query:<name>` / `mutation:<name>`: that HTTP function.
+- `route:<METHOD> <path-pattern>`: the exact registered route key, including
+  detached routes and plugin routes.
+- `files:<bucket>:upload|read|delete`: built-in storage endpoints; all chunk
+  operations, including status, require upload.
+
+Missing grants yield 403 `FORBIDDEN` with a hint naming the needed permission.
+WS upgrades require `*`; token validity and access are checked again for WS
+function operations. Token permissions supplement handler and bucket policies.
+Usage timestamps accumulate in memory and flush at most once per minute per
+token, on a mutation or periodic internal mutation slot. SQLite writes never
+happen outside the executor queue. Authentication reads also use the queue so
+that they cannot observe another slot's uncommitted changes.
+
+`createClient({ url, token })` sends the bearer on HTTP function and storage
+requests with `credentials: "omit"`. Bun supports bearer WS headers; browser
+WebSockets cannot supply them, so token clients in browsers use HTTP snapshots.
+CORS for cross-origin browser extensions is a follow-up.
 
 ## 6. Sync (reactive queries)
 
@@ -174,7 +224,7 @@ Future (do not build yet): row-level diffs, optimistic updates.
 - `bucket(name, { maxSize, access, accept?, admit?, onStored? })`; register with `storage: [attachments]`, `access`: `"public" | "users" | "owner" | (ctx, file) => boolean`.
 - Endpoints: `POST /_bedrock/files/<bucket>` (upload), `GET /_bedrock/files/<bucket>/<id>` (download with Range support), `HEAD` and `DELETE` same path.
 - **Chunked uploads** are mandatory for files > 90 MiB (Cloudflare's free plan rejects request bodies > 100 MB): `POST .../uploads` → `PUT .../uploads/<uid>/<n>` → `POST .../uploads/<uid>/complete`. The client SDK chunks transparently.
-- The daemon streams upload bodies and download responses, preserves Range headers, and enforces the pebble Origin on every write. Public-bucket downloads are anonymous only on public pebbles.
+- The daemon streams upload bodies and download responses, preserves Range headers, and enforces the pebble Origin on session/browser writes. Public-bucket downloads are anonymous only on public pebbles.
 - Server-side API in functions: `storage.put(attachments, blobOrStream, { name, mime?, meta? })`, `storage.get(attachments, id)` (Blob), `storage.delete(attachments, id)`, `storage.list(attachments, { ownerId?, limit?, cursor? })` (metadata).
 - Bucket names use `[a-z0-9_-]{1,32}`; names must be unique within a pebble. `bucket()` and `definePebble()` validate configuration with repair hints. Passing a bucket object absent from the registered array throws `BedrockError("UNKNOWN_BUCKET", …, hint)`.
 - `ctx.storage` is shared across all handlers; bucket objects supply configuration without pebble-specific context inference. Function signatures remain `query(fn) | query(schema, fn)` and `mutation(fn) | mutation(schema, fn)`.
@@ -287,6 +337,13 @@ $BEDROCK_HOME (default ~/.bedrock)
   includes domain, creator session presence and the current token's creator email
   (older/manual tokens have no recorded identity). It never returns session tokens.
 - One daemon process (`bedrock daemon`) listens on `127.0.0.1:<port>`.
+- Pebble bearer requests (`Authorization: Bearer brk_…`) without any
+  `bedrock_session` cookie bypass daemon Origin/access checks and identity signing;
+  Authorization is forwarded unchanged and the runtime enforces token access.
+  They never redirect to login. This is safe from CSRF because bearer credentials
+  are explicit rather than ambient browser identity. If any session cookie is
+  present (even empty or invalid), existing Origin/session rules apply and the
+  bearer is ignored. Incoming identity headers are still stripped.
 - Each pebble runs as **its own Bun subprocess** (`startPebble`) on a private localhost port. The daemon routes by `Host` header, proxies HTTP and WebSockets, restarts crashed pebbles with backoff, and does zero-downtime swaps on deploy (start new, health-check, switch, stop old).
 - Reserved subdomains: `auth`, `bedrock` (daemon API/dashboard), `www`.
 - **Deploy**: `bedrock deploy` in a pebble directory. Local: copies to a new release. Remote: tars the directory and uploads to `https://bedrock.<domain>/api/deploy` with a creator deploy token (`bedrock login` stores it). Daemon then installs deps (`bun install --production`), migrates, swaps.
@@ -420,7 +477,8 @@ ctx.invalidate([auditLog]);
 - Route handlers keep `(request, server)` and receive FunctionContext as a third
   argument, including `{ db, user, storage, invalidate }`. By default they run inside write
   transactions. Daemon access gating applies to all routes; direct low-level
-  routes retain existing Bun behavior. Functions and jobs also expose invalidate.
+  routes retain existing Bun behavior for signed/anonymous identity; token users
+  are also gated by the runtime. Functions and jobs also expose invalidate.
 
 Routes and jobs can opt out of the outer queue/transaction for slow network I/O:
 
@@ -438,7 +496,7 @@ jobs: { refresh: job("0 * * * *", async ctx => {
 }, { transaction: false }) },
 ```
 
-`DetachedContext` exposes `{ user, pebble, request, read, write }`, without direct
+`DetachedContext` exposes `{ user, token, pebble, request, read, write }`, without direct
 `db`, `storage`, or `invalidate`; accessing those throws a repair-hinted
 `BedrockError`. `read(fn)` and `write(fn)` resolve the callback's value in short
 queued slots with the same FunctionContext and transaction/storage/tracking

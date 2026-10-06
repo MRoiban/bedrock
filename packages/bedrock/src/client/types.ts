@@ -24,6 +24,7 @@ export interface Client<P extends PebbleConfig = PebbleConfig> {
 }
 export interface ClientOptions {
   url?: string;
+  token?: string;
   sync?: boolean;
   /** Extra HTTP headers. WebSocket identity normally comes from session cookies. */
   headers?: HeadersInit;

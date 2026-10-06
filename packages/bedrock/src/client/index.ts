@@ -44,17 +44,18 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
   let timer: ReturnType<typeof setTimeout> | undefined;
   let attempt = 0;
   let probing = false;
-  let unavailable = options.sync === false || typeof WebSocket === "undefined";
+  let unavailable = (!!options.token && typeof Bun === "undefined") || options.sync === false || typeof WebSocket === "undefined";
   let closed = false;
 
   async function http(kind: "q" | "m", name: string, args: unknown) {
     if (closed) throw new BedrockError("CLIENT_CLOSED", "The client is closed.", "Create a new client.");
     try {
       const headers = new Headers(options.headers);
+      if (options.token) { headers.set("authorization", `Bearer ${options.token}`); headers.delete("cookie"); }
       headers.set("Content-Type", "application/json");
       headers.set("origin", base.origin);
       const response = await fetch(new URL(`/_bedrock/${kind}/${encodeURIComponent(name)}`, base), {
-        method: "POST", headers, credentials: "include", signal: AbortSignal.timeout(30_000), body: JSON.stringify(wireArgs(args)),
+        method: "POST", headers, credentials: options.token ? "omit" : "include", signal: AbortSignal.timeout(30_000), body: JSON.stringify(wireArgs(args)),
       });
       const result = await response.json();
       if (!result.ok) throw remoteError(result.error);
@@ -88,8 +89,9 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     probing = true;
     try {
       const headers = new Headers(options.headers);
+      if (options.token) { headers.set("authorization", `Bearer ${options.token}`); headers.delete("cookie"); }
       headers.set("origin", base.origin);
-      const response = await fetch(new URL("/_bedrock/ws", base), { headers, credentials: "include", signal: AbortSignal.timeout(5000) });
+      const response = await fetch(new URL("/_bedrock/ws", base), { headers, credentials: options.token ? "omit" : "include", signal: AbortSignal.timeout(5000) });
       if (closed) return;
       // A plain request gets 426 only when sync is enabled and access permits it.
       if (response.status !== 426) { fallback(); return; }
@@ -108,6 +110,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       if (typeof Bun !== "undefined") {
         const Constructor = WebSocket as unknown as new (url: URL, options: Bun.WebSocketOptions) => WebSocket;
         const headers = new Headers(options.headers);
+        if (options.token) { headers.set("authorization", `Bearer ${options.token}`); headers.delete("cookie"); }
         headers.set("origin", base.origin);
         ws = new Constructor(url, { headers: Object.fromEntries(headers) });
       } else ws = new WebSocket(url);
@@ -157,8 +160,9 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     if (closed) throw new BedrockError("CLIENT_CLOSED", "The client is closed.", "Create a new client.");
     try {
       const headers = new Headers(options.headers);
+      if (options.token) { headers.set("authorization", `Bearer ${options.token}`); headers.delete("cookie"); }
       headers.set("origin", base.origin);
-      const response = await fetch(new URL(path, base), { method, headers, credentials: "include", signal: AbortSignal.timeout(30_000) });
+      const response = await fetch(new URL(path, base), { method, headers, credentials: options.token ? "omit" : "include", signal: AbortSignal.timeout(30_000) });
       const result = await response.json();
       if (!response.ok) throw remoteError(result.error);
       return result;

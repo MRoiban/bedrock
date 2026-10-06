@@ -6,7 +6,7 @@ export function errorResponse(error: unknown) {
   const status = ["FUNCTION_NOT_FOUND", "FILE_NOT_FOUND", "BUCKET_NOT_FOUND", "UPLOAD_NOT_FOUND"].includes(typed.code) ? 404
     : typed.code === "UNAUTHENTICATED" ? 401 : ["FORBIDDEN", "INVALID_IDENTITY"].includes(typed.code) ? 403
     : typed.code === "FILE_TOO_LARGE" ? 413
-    : ["QUOTA_EXCEEDED", "INVALID_FILE", "INVALID_CHUNK", "FILE_TYPE_REJECTED", "UPLOAD_CHECKSUM_MISMATCH", "INVALID_ARGS", "INVALID_JSON", "INVALID_USER"].includes(typed.code) ? 400 : 500;
+    : ["QUOTA_EXCEEDED", "INVALID_FILE", "INVALID_CHUNK", "FILE_TYPE_REJECTED", "UPLOAD_CHECKSUM_MISMATCH", "INVALID_ARGS", "INVALID_TOKEN_PERMISSION", "INVALID_JSON", "INVALID_USER"].includes(typed.code) ? 400 : 500;
   return Response.json({ ok: false, error: typed.toJSON() }, { status });
 }
 
