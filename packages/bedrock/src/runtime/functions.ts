@@ -1,3 +1,4 @@
+import { getTableName } from "drizzle-orm";
 import { join } from "node:path";
 import { createStorage, type StorageEffects } from "../storage";
 import type { FunctionContext, PebbleConfig, User } from "../config";
@@ -28,7 +29,11 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
       const invalidated = new Set<string>();
       const ctx: FunctionContext = { db: database.db, user, pebble, storage: null!, request, invalidate(tables) {
         if (kind === "query") throw new BedrockError("READ_ONLY", "Queries cannot invalidate tables.", "Call invalidate inside a mutation, route, or job.");
-        for (const table of tables) invalidated.add(table);
+        for (const table of tables) {
+          const name = typeof table === "string" ? table : getTableName(table);
+          if (!database.tableNames.has(name)) throw new BedrockError("UNKNOWN_TABLE", `Unknown table: ${name}`, "Pass a registered Drizzle table object or its SQL table name; register tables in schema or a plugin.");
+          invalidated.add(name);
+        }
       } };
       const effects: StorageEffects = { rollback: [], commit: [] };
       ctx.storage = createStorage(join(database.dataDir, "files"), pebble.storage ?? [], ctx, kind === "mutation", effects);

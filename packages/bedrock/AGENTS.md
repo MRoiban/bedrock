@@ -13,7 +13,7 @@ Install `bedrock` and `valibot` (or another Standard Schema validator); install
 ```ts
 import {
   definePebble, query, mutation, bucket, job, BedrockError,
-  sqliteTable, text, integer, eq, desc,
+  sqliteTable, text, integer, eq, desc, lt,
 } from "bedrock";
 import * as v from "valibot";
 
@@ -98,8 +98,10 @@ Handlers receive `FunctionContext`:
 `db` is Drizzle over `bun:sqlite`; builders/operators are re-exported from
 `bedrock`. `user` is `{ id, email?, name?, avatarUrl? } | null`. `pebble.name` is
 read-only metadata. `request` is the incoming Request (jobs use a synthetic one).
-`invalidate(tables: readonly string[]): void` adds explicit SQL table names to
-post-commit sync notifications.
+`invalidate(tables: readonly (string | SQLiteTable)[]): void` adds registered
+Drizzle table objects or SQL table names to post-commit sync notifications. Prefer
+`ctx.invalidate([notes])` over `ctx.invalidate(["notes"])`; unknown names throw
+`BedrockError("UNKNOWN_TABLE", message, hint)`.
 
 Queries run inside read-only transactions. Mutations, jobs, and custom routes run
 inside write transactions, serialized within a process. Throwing rolls back SQL
@@ -160,23 +162,31 @@ With `sync: true`, tracked Drizzle reads establish table read-sets. Committed wr
 invalidate matching subscriptions; reruns use each subscriber's own user, debounce
 for ~16 ms, and suppress identical results. Trigger/cascade effects are tracked
 conservatively. Reads through `db.$client` bypass tracking; prefer Drizzle queries.
-Raw writes need `ctx.invalidate(["sql_table_name"])`, including affected tables
-for triggers/cascades. Invalidation is emitted only on successful commit.
+Writes through `ctx.db` in mutations, jobs, and routes are tracked automatically.
+Explicit invalidation is only needed for raw SQL via `$client` or writes outside
+bedrock; include affected tables for triggers/cascades. For external writes,
+notify from a mutation, route, or job. Invalidation is emitted only on successful
+commit.
 
 ```ts
 routes: {
-  "POST /api/rebuild": (_request, _server, ctx) => {
-    ctx.db.$client.exec("UPDATE notes SET body = trim(body)");
-    ctx.invalidate(["notes"]);
+  "POST /api/prune": (_request, _server, ctx) => {
+    ctx.db.delete(notes).where(lt(notes.createdAt, Date.now() - 30 * 86400000)).run();
     return Response.json({ ok: true });
   },
 },
 jobs: {
-  trim: job("0 3 * * *", ctx => {
-    ctx.db.$client.exec("UPDATE notes SET body = trim(body)");
-    ctx.invalidate(["notes"]);
+  prune: job("0 3 * * *", ctx => {
+    ctx.db.delete(notes).where(lt(notes.createdAt, Date.now() - 30 * 86400000)).run();
   }),
 },
+```
+
+The raw SQL escape hatch still needs explicit invalidation:
+
+```ts
+ctx.db.$client.exec("UPDATE notes SET body = trim(body)");
+ctx.invalidate([notes]);
 ```
 
 Custom routes keep `(request, server)` working and add context as the third
@@ -221,11 +231,10 @@ list queries rerun after committed upload/delete operations.
 ## Jobs
 
 ```ts
-import { job } from "bedrock";
+import { job, lt } from "bedrock";
 // inside definePebble or plugin:
 jobs: { prune: job("0 3 * * *", async ctx => {
-  ctx.db.$client.exec("DELETE FROM notes WHERE created_at < " + (Date.now() - 30 * 86400000));
-  ctx.invalidate(["notes"]);
+  ctx.db.delete(notes).where(lt(notes.createdAt, Date.now() - 30 * 86400000)).run();
 }) },
 ```
 
@@ -238,7 +247,8 @@ once per observed minute; skipped minutes are not replayed. DST follows the loca
 clock: missing local minutes are skipped and repeated local minutes can run twice.
 
 A job executes inside a write transaction with `user: null`, logs failures with
-its name, and notifies sync after commit. Overlapping runs of the same job are
+its name, and automatically tracks Drizzle writes for sync after commit. No
+`invalidate()` call is needed for these writes. Overlapping runs of the same job are
 skipped (manual or scheduled); different jobs queue through the executor.
 
 ```sh
@@ -252,7 +262,7 @@ the daemon's signed service identity; it is not an end-user mutation API.
 ## Plugins
 
 ```ts
-import { plugin, sqliteTable, text, integer, job } from "bedrock";
+import { plugin, sqliteTable, text, integer, job, lt } from "bedrock";
 const audit = sqliteTable("audit_log", {
   id: text("id").primaryKey(), action: text("action").notNull(),
   createdAt: integer("created_at").notNull(),
@@ -261,8 +271,7 @@ export const auditLog = plugin({
   name: "audit-log", schema: { audit },
   routes: { "GET /api/audit": (_request, _server, ctx) => Response.json(ctx.db.select().from(audit).all()) },
   jobs: { pruneAudit: job("0 3 * * *", ctx => {
-    ctx.db.$client.exec("DELETE FROM audit_log WHERE created_at < 0");
-    ctx.invalidate(["audit_log"]);
+    ctx.db.delete(audit).where(lt(audit.createdAt, Date.now() - 30 * 86400000)).run();
   }) },
   async onQuery(ctx, name, args, next) { return next(); },
   async onMutation(ctx, name, args, next) {
@@ -463,7 +472,8 @@ returns value/read/write sets. `startDaemon({ home: temporaryHome })` comes from
   a plugin route is no exception.
 - Assuming a job has a user. It runs with `null`; choose storage policies accordingly.
 - Raw SQL writes without invalidation, or raw SQL query reads without tracking.
-  Prefer Drizzle; use SQL table names in invalidate, not schema export keys.
+  Prefer Drizzle; pass table objects to invalidate, or SQL table names rather
+  than schema export keys.
 - Returning BigInt or executing transaction-control SQL in a handler/migration.
   Return JSON-compatible values and let Bedrock own transaction boundaries.
 - Editing applied migrations, skipping generation for plugin tables, or putting

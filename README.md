@@ -54,6 +54,30 @@ For the React notes starter, register the UI package too with
 `bedrock db generate`, and `bedrock dev`. Commit `migrations/`, including `meta/`.
 The starter includes live queries, owner-only attachments, and Onyx UI components.
 
+## Jobs and live queries
+
+Use Drizzle for job and route writes. With an `items` table whose `expiresAt`
+column stores epoch milliseconds, a cleanup job looks like:
+
+```ts
+import { job, lt } from "bedrock";
+
+// Inside definePebble({ schema: { items }, sync: true, ... }):
+jobs: {
+  prune: job("0 3 * * *", ctx => {
+    ctx.db.delete(items).where(lt(items.expiresAt, Date.now())).run();
+  }),
+},
+```
+
+Writes through `ctx.db` in jobs, mutations, and custom routes are tracked
+and notify live queries automatically after commit. `invalidate()` is only
+needed for raw SQL via `$client` or writes outside bedrock; notify external
+writes from a mutation, job, or route. Prefer registered Drizzle table objects
+(`ctx.invalidate([items])`); SQL names (`ctx.invalidate(["items"])`) also work.
+See the [author reference](packages/bedrock/AGENTS.md#live-queries-and-explicit-invalidation)
+for the raw SQL escape hatch.
+
 ## Home-server go-live checklist
 
 Use a stable checkout and a domain whose DNS is managed by Cloudflare. Install Bun

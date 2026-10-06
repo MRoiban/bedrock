@@ -65,3 +65,61 @@ test("async Standard Schema transforms arguments and serializable results are ch
     expect(database.sqlite.query("SELECT * FROM numbers").all()).toEqual([]);
   } finally { database.close(); temp.cleanup(); }
 });
+
+for (const useName of [false, true]) {
+  test(`explicit invalidation accepts ${useName ? "SQL names" : "Drizzle tables"} and notifies only after commit`, async () => {
+    const temp = tempDirectory();
+    const items = sqliteTable("sql_items", { id: text("id").primaryKey() });
+    const database = openDatabase(temp.dir, { items });
+    database.sqlite.exec("CREATE TABLE sql_items (id TEXT PRIMARY KEY)");
+    const tables = useName ? ["sql_items"] : [items];
+    const execute = createExecutor(definePebble({
+      name: "invalidate", schema: { items },
+      queries: { bad: query(ctx => ctx.invalidate(tables)) },
+      mutations: {
+        add: mutation(ctx => {
+          ctx.db.$client.exec("INSERT INTO sql_items VALUES ('raw')");
+          ctx.invalidate(tables);
+        }),
+        fail: mutation(ctx => {
+          ctx.db.$client.exec("INSERT INTO sql_items VALUES ('rollback')");
+          ctx.invalidate(tables);
+          throw new Error("rollback");
+        }),
+      },
+    }), database);
+    const notifications: Set<string>[] = [];
+    execute.onCommit(writes => notifications.push(writes));
+    const request = new Request("http://localhost");
+    try {
+      await expect(execute("query", "bad", null, request)).rejects.toMatchObject({ code: "READ_ONLY" });
+      const result = await execute("mutation", "add", null, request);
+      expect([...result.writes]).toEqual(["sql_items"]);
+      expect(notifications.map(writes => [...writes])).toEqual([["sql_items"]]);
+      await expect(execute("mutation", "fail", null, request)).rejects.toThrow("rollback");
+      expect(notifications).toHaveLength(1);
+      expect(database.sqlite.query("SELECT * FROM sql_items").all()).toEqual([{ id: "raw" }]);
+    } finally { await execute.close(); database.close(); temp.cleanup(); }
+  });
+}
+
+test("unknown invalidation names and unregistered tables throw repair hints and roll back writes", async () => {
+  const temp = tempDirectory();
+  const items = sqliteTable("sql_items", { id: text("id").primaryKey() });
+  const unknown = sqliteTable("unknown", { id: text("id").primaryKey() });
+  const database = openDatabase(temp.dir, { items });
+  database.sqlite.exec("CREATE TABLE sql_items (id TEXT PRIMARY KEY)");
+  const execute = createExecutor(definePebble({ name: "invalidate", schema: { items } }), database);
+  const notifications: Set<string>[] = [];
+  execute.onCommit(writes => notifications.push(writes));
+  try {
+    for (const table of ["unknown", "items", unknown]) {
+      await expect(execute.job(ctx => {
+        ctx.db.insert(items).values({ id: "rollback" }).run();
+        ctx.invalidate([items, table]);
+      })).rejects.toMatchObject({ code: "UNKNOWN_TABLE", hint: expect.stringContaining("registered Drizzle table") });
+    }
+    expect(database.sqlite.query("SELECT * FROM sql_items").all()).toEqual([]);
+    expect(notifications).toEqual([]);
+  } finally { await execute.close(); database.close(); temp.cleanup(); }
+});

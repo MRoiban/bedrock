@@ -25,11 +25,12 @@ export function openDatabase(dataDir: string, schema: Record<string, unknown> = 
     sqlite.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     sqlite.exec(storageMigration);
     schema = { ...schema, _bedrockFiles: files };
-    const tracker = new TableTracker(Object.values(schema).filter(t => is(t, Table)).map(t => getTableName(t as Table)));
+    const tableNames = new Set(Object.values(schema).filter(t => is(t, Table)).map(t => getTableName(t as Table)));
+    const tracker = new TableTracker(tableNames);
     const refreshTracking = () => tracker.setEffects(writeEffects(sqlite!));
     refreshTracking();
     const db = drizzle(sqlite, { schema, logger: tracker });
-    return { dataDir, sqlite, db, tracker, refreshTracking, close: () => sqlite!.close() };
+    return { dataDir, sqlite, db, tracker, tableNames, refreshTracking, close: () => sqlite!.close() };
   } catch (error) {
     sqlite?.close();
     throw asBedrockError(error, "DATABASE_OPEN_FAILED", "Check that the data directory is writable and the SQLite file is valid.");

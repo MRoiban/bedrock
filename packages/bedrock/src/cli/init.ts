@@ -30,6 +30,10 @@ document.querySelector("#message").textContent = result.ok ? result.value.messag
 
 pebble.ts is the source of truth. Use bedrock query/mutation and Standard Schema for arguments.
 Functions receive { db, user, pebble, storage, request, invalidate }. Queries are read-only.
+For a registered items table with epoch-millisecond expiresAt, use ctx.db.delete(items).where(lt(items.expiresAt, Date.now())).run() (import lt from bedrock).
+Writes through ctx.db in mutations, jobs, and routes are tracked automatically for sync after commit.
+invalidate is only needed for raw SQL via $client or writes outside bedrock; notify from a mutation, job, or route.
+Prefer ctx.invalidate([items]) with registered Drizzle tables; SQL names like ctx.invalidate(["items"]) also work.
 Export Drizzle tables from pebble.ts. Run bedrock db generate after schema changes.
 Run bedrock db plan to inspect pending SQL; bedrock db migrate applies it.
 Run bun install, then bun run dev. Data lives in .bedrock/; never commit it.
@@ -126,6 +130,10 @@ createRoot(document.getElementById("root")!).render(<BedrockProvider client={cli
     "AGENTS.md": `# ${name}
 
 pebble.ts owns the schema, auth, queries, mutations, and attachment bucket.
+Use Drizzle for writes: ctx.db.delete(notes).where(lt(notes.createdAt, new Date(Date.now() - 30 * 86400000))).run() (import lt from bedrock).
+Writes through ctx.db in mutations, jobs, and routes are tracked automatically for sync after commit.
+invalidate is only needed for raw SQL via $client or writes outside bedrock; notify from a mutation, job, or route.
+Prefer ctx.invalidate([notes]) with registered Drizzle tables; SQL names like ctx.invalidate(["notes"]) also work.
 web/app.tsx is a Bun HTML-bundled React app. Import @bedrock/ui/styles.css once.
 Run bun install, bunx bedrock db generate, then bun run dev. Dev login needs no Google credentials.
 Hooks run inside BedrockProvider. useQuery subscribes live; writes use useMutation.

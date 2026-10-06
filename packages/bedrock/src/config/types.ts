@@ -1,4 +1,5 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
+import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 
 export interface User {
@@ -14,7 +15,7 @@ export interface FunctionContext {
   pebble: { readonly name: string };
   storage: import("../storage").Storage;
   request: Request;
-  invalidate: (tables: readonly string[]) => void;
+  invalidate: (tables: readonly (string | SQLiteTable)[]) => void;
 }
 
 export interface FunctionDefinition<Args = any, Result = any, Input = Args> {

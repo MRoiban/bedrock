@@ -46,7 +46,7 @@ packages/
       react/          React hooks over client/
       cli/            the `bedrock` binary
     test/
-  ui/                 "@bedrock/ui" — Onyx-based components (later phase, React only)
+  ui/                 "@bedrock/ui" — Onyx-based components (React only)
 examples/
   notes/              reference pebble, used by e2e tests
 ```
@@ -144,11 +144,15 @@ authorization is **per pebble**.
 ## 6. Sync (reactive queries)
 
 Only when `sync: true`. Mutations, jobs, and custom routes notify after committed writes.
-Raw SQL writes can explicitly call `ctx.invalidate(["sql_table_name"])`.
+Drizzle writes through `ctx.db` are tracked automatically in mutations, jobs,
+and routes. `invalidate()` is only needed for raw SQL via `$client` or writes
+outside bedrock, notified from a mutation, job, or route. Prefer registered table
+objects (`ctx.invalidate([items])`); SQL names (`ctx.invalidate(["items"])`) also
+work. Unknown names throw `BedrockError("UNKNOWN_TABLE", message, hint)`.
 
 1. Client opens one WebSocket to `/_bedrock/ws` and sends `{ op: "sub", id, query, args }`.
 2. The server runs the query and records which tables it read, by capturing every SQL statement executed during the call (Drizzle logger + `AsyncLocalStorage`) and matching identifiers against the known table names.
-3. Each mutation records the tables it wrote the same way.
+3. Each mutation, job, and route records the tables it wrote the same way.
 4. After a mutation commits, every subscription whose read-set intersects the write-set is re-run **for its own user** (permissions are just the query's `where` clause). If the result hash changed, the server pushes `{ op: "data", id, result }`.
 5. Re-runs are debounced/coalesced per subscription (~16 ms) so bursts of writes cause one push.
 6. Clients reconnect with exponential backoff and resubscribe automatically. Mutations over WS return `{ op: "result", id, ok, value | error }`.
@@ -255,19 +259,30 @@ is safe; adding a pebble needs **no** Cloudflare calls.
 ## 10. Extensibility
 
 ```ts
-import { plugin, job } from "bedrock";
+import { plugin, job, sqliteTable, text, integer, lt } from "bedrock";
+
+const auditLog = sqliteTable("audit_log", {
+  id: text("id").primaryKey(),
+  createdAt: integer("created_at").notNull(),
+});
 
 plugin({
   name: "audit-log",
-  schema: { /* Drizzle tables */ },
-  routes: { "GET /api/audit": (_request, _server, ctx) => Response.json({ user: ctx.user }) },
+  schema: { auditLog },
+  routes: { "GET /api/audit": (_request, _server, ctx) => Response.json(ctx.db.select().from(auditLog).all()) },
   onMutation: async (ctx, name, args, next) => next(),
   onQuery: async (ctx, name, args, next) => next(),
   jobs: { prune: job("0 3 * * *", async ctx => {
-    // Raw SQL requires explicit notifications after a successful commit.
-    ctx.invalidate(["audit_log"]);
+    ctx.db.delete(auditLog).where(lt(auditLog.createdAt, Date.now() - 30 * 86400000)).run();
   }) },
 })
+```
+
+Drizzle job and route writes notify sync automatically after commit. For raw SQL:
+
+```ts
+ctx.db.$client.exec("DELETE FROM audit_log WHERE created_at < 0");
+ctx.invalidate([auditLog]);
 ```
 
 - Plugin schema/routes/jobs merge into the pebble. Duplicate plugin names, export

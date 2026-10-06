@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-import { phase7Command } from "./phase7";
+import { backupCommand } from "./backup";
+import { jobsCommand } from "./jobs";
 import { version } from "../../package.json";
 import { opsCommand, opsCommands } from "./ops";
 import { BedrockError, asBedrockError } from "../error";
@@ -23,7 +24,8 @@ async function main() {
     return;
   }
   let result: unknown;
-  if (command === "backup" || command === "jobs") result = await phase7Command(command, args);
+  if (command === "backup") result = await backupCommand(args);
+  else if (command === "jobs") result = await jobsCommand(args);
   else if (command && opsCommands.includes(command)) {
     result = await opsCommand(command, args, json);
     if (result === undefined) return;
