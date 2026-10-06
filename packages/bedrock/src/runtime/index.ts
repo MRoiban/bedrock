@@ -1,3 +1,4 @@
+import { createFileHandler } from "../storage/http";
 import { resolve, join } from "node:path";
 import type { PebbleConfig } from "../config";
 import { definePebble } from "../config";
@@ -24,6 +25,8 @@ export async function startPebble(options: StartPebbleOptions) {
     await applyMigrations(database.sqlite, join(dir, "migrations"));
     database.refreshTracking();
     const execute = createExecutor(pebble, database);
+    const files = createFileHandler(pebble, execute, join(database.dataDir, "uploads"));
+    await files.cleanup();
     const sync = pebble.sync === true ? createSync(execute) : undefined;
     const web = await loadWeb(dir, pebble.web);
     const routes: Record<string, any> = {};
@@ -37,6 +40,7 @@ export async function startPebble(options: StartPebbleOptions) {
       };
     }
     if (web.html && !Object.hasOwn(routes, "/*")) routes["/*"] = web.html;
+    routes["/_bedrock/files/*"] = files.handle;
     routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, name: pebble.name }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };
@@ -59,6 +63,7 @@ export async function startPebble(options: StartPebbleOptions) {
     };
     const server = Bun.serve<SocketData>({
       ...(sync ? { websocket: sync.websocket } : {}),
+      maxRequestBodySize: 90 * 1024 ** 2,
       hostname: "127.0.0.1", port: options.port ?? 3000, routes,
       async fetch(request) {
         if (web.staticResponse && ["GET", "HEAD"].includes(request.method)) return web.staticResponse(request);
@@ -66,12 +71,15 @@ export async function startPebble(options: StartPebbleOptions) {
       },
       error: errorResponse,
     });
+    const storageCleanup = setInterval(() => { void files.cleanup().catch(error => console.error("Upload cleanup failed", error)); }, 60 * 60 * 1000);
+    storageCleanup.unref();
     let stopped = false;
     return {
       server, pebble, db: database.db, execute,
       async stop() {
         if (stopped) return;
         stopped = true;
+        clearInterval(storageCleanup);
         sync?.close();
         await server.stop(true);
         await execute.close();

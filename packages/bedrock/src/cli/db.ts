@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, relative } from "node:path";
 import { is, Table } from "drizzle-orm";
 import { openDatabase, migrationPlan, applyMigrations } from "../db";
 import { loadPebble } from "../runtime/load";
@@ -15,7 +15,7 @@ export async function dbCommand(command: string, dir = process.cwd()) {
       const wrapper = `import pebble from ${JSON.stringify(resolve(dir, "pebble.ts"))};\n` +
         tables.map(([key], i) => `export const table${i} = pebble.schema![${JSON.stringify(key)}];`).join("\n");
       await Bun.write(join(temp, "schema.ts"), wrapper);
-      await Bun.write(join(temp, "config.ts"), `export default ${JSON.stringify({ dialect: "sqlite", schema: join(temp, "schema.ts"), out: join(dir, "migrations") })};\n`);
+      await Bun.write(join(temp, "config.ts"), `export default ${JSON.stringify({ dialect: "sqlite", schema: relative(dir, join(temp, "schema.ts")), out: "./migrations" })};\n`);
       let kit: string;
       try {
         let entry: string;

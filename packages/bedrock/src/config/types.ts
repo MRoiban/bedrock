@@ -8,11 +8,11 @@ export interface User {
   avatarUrl?: string;
 }
 
-export interface FunctionContext {
+export interface FunctionContext<S = Record<string, BucketConfig>> {
   db: BunSQLiteDatabase<Record<string, unknown>>;
   user: User | null;
   pebble: { readonly name: string };
-  storage: Record<string, never>;
+  storage: import("../storage").StorageFor<S>;
   request: Request;
 }
 
@@ -28,6 +28,9 @@ export type RouteHandler = (request: Request, server: Bun.Server<undefined>) => 
 
 export interface FileMetadata {
   id: string;
+  bucket: string;
+  sha256: string;
+  createdAt: number;
   ownerId: string | null;
   name: string;
   mime: string;

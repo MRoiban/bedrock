@@ -58,3 +58,17 @@ export function useMutation<P extends PebbleConfig, N extends MutationNames<P> =
   }
   return { mutate, isPending: count > 0, error };
 }
+
+export function useUpload<P extends PebbleConfig>(bucket: keyof NonNullable<P["storage"]> & string) {
+  const client = useClient();
+  const [progress, setProgress] = useState(0);
+  const [count, setCount] = useState(0);
+  const [error, setError] = useState<BedrockError>();
+  async function upload(file: File, options: import("../client").UploadOptions = {}) {
+    setCount(n => n + 1); setProgress(0); setError(undefined);
+    try { return await client.upload(bucket, file, { ...options, onProgress(value) { setProgress(value); options.onProgress?.(value); } }); }
+    catch (cause) { const typed = asBedrockError(cause); setError(typed); throw typed; }
+    finally { setCount(n => n - 1); }
+  }
+  return { upload, progress, isUploading: count > 0, error };
+}

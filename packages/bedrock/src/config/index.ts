@@ -1,3 +1,4 @@
+import { validateBuckets } from "../storage/config";
 import { is, Table, getTableName } from "drizzle-orm";
 import { BedrockError } from "../error";
 import type { BucketConfig, PebbleConfig, PluginConfig } from "./types";
@@ -16,6 +17,7 @@ export function definePebble<const P extends PebbleConfig>(config: P): P {
     throw new BedrockError("INVALID_CONFIG", "Expected a pebble configuration object.", "Default-export definePebble({ name, queries, mutations, ... }) from pebble.ts.");
   }
   validateName(config.name);
+  validateBuckets(config.storage);
   for (const [kind, functions] of [["query", config.queries], ["mutation", config.mutations]] as const) {
     for (const [name, definition] of Object.entries(functions ?? {})) {
       if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name) || ["constructor", "prototype", "__proto__"].includes(name)) {

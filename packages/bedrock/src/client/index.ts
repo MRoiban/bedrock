@@ -1,3 +1,5 @@
+import { storageClient } from "./storage";
+export type { UploadOptions } from "./storage";
 import type { PebbleConfig } from "../config/types";
 import { BedrockError, asBedrockError } from "../error";
 import type { Client, ClientOptions } from "./types";
@@ -144,6 +146,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     };
   }
   return {
+    ...storageClient(base, options, () => closed),
     query: (name, args) => http("q", name, args),
     mutate(name, args) {
       if (closed) return Promise.reject(new BedrockError("CLIENT_CLOSED", "The client is closed.", "Create a new client."));
