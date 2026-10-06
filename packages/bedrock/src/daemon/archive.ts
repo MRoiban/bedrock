@@ -1,4 +1,4 @@
-import { mkdir, rm, symlink } from "node:fs/promises";
+import { mkdir, readdir, rm, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { BedrockError } from "../error";
 
@@ -27,13 +27,50 @@ export async function extract(archive: string, release: string) {
   await run(["tar", "-xzf", archive, "--no-same-owner", "--no-same-permissions", "-C", release]);
 }
 
+async function firstPartyPackages() {
+  const bedrockDir = resolve(import.meta.dir, "../..");
+  const parent = resolve(bedrockDir, "..");
+  const directories = (await readdir(parent, { withFileTypes: true }))
+    .filter(entry => (entry.isDirectory() || entry.isSymbolicLink()) && !entry.name.startsWith("."))
+    .map(entry => join(parent, entry.name));
+  // Published installations put sibling first-party packages under the npm scope.
+  const scoped = join(parent, "@bedrock");
+  const scopedEntries = await readdir(scoped, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+    return [];
+  });
+  directories.push(...scopedEntries.filter(entry => entry.isDirectory() || entry.isSymbolicLink()).map(entry => join(scoped, entry.name)));
+  const packages = [{ name: "bedrock", dir: bedrockDir }];
+  for (const dir of directories) {
+    const file = Bun.file(join(dir, "package.json"));
+    if (!await file.exists()) continue;
+    const pkg = await file.json();
+    if (typeof pkg.name === "string" && /^@bedrock\/[a-z0-9_-]+$/.test(pkg.name)) packages.push({ name: pkg.name, dir });
+  }
+  // Source-linked packages and their consumers must share peer singletons such as React.
+  for (const { dir } of [...packages]) {
+    const pkg = await Bun.file(join(dir, "package.json")).json();
+    for (const name of Object.keys(pkg.peerDependencies ?? {})) {
+      if (packages.some(item => item.name === name)) continue;
+      try {
+        const peer = resolve(Bun.resolveSync(`${name}/package.json`, dir), "..");
+        packages.push({ name, dir: peer });
+      } catch (error) {
+        if (!pkg.peerDependenciesMeta?.[name]?.optional) throw new BedrockError("DAEMON_PEER_MISSING", `Daemon package ${pkg.name} needs peer ${name}.`, `Install ${name} alongside the daemon's first-party packages.`);
+      }
+    }
+  }
+  return packages;
+}
+
 export async function installRelease(release: string) {
+  const packages = await firstPartyPackages();
   const path = join(release, "package.json");
   if (await Bun.file(path).exists()) {
     const pkg = await Bun.file(path).json();
-    // Bedrock is owned by the daemon, never fetched from a registry or workspace.
+    // First-party packages are owned by the daemon, never fetched from a release manifest.
     for (const section of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
-      if (pkg[section]) delete pkg[section].bedrock;
+      if (pkg[section]) for (const { name } of packages) delete pkg[section][name];
     }
     await Bun.write(path, JSON.stringify(pkg, null, 2) + "\n");
     // A workspace lockfile can still refer to unpublished bedrock or unrelated workspaces.
@@ -43,8 +80,12 @@ export async function installRelease(release: string) {
     }
   }
   await mkdir(join(release, "node_modules"), { recursive: true });
-  await rm(join(release, "node_modules/bedrock"), { recursive: true, force: true });
-  await symlink(resolve(import.meta.dir, "../.."), join(release, "node_modules/bedrock"), "dir");
+  for (const { name, dir } of packages) {
+    const target = join(release, "node_modules", name);
+    await mkdir(resolve(target, ".."), { recursive: true });
+    await rm(target, { recursive: true, force: true });
+    await symlink(dir, target, "dir");
+  }
 }
 
 export async function createArchive(dir: string, archive: string) {
