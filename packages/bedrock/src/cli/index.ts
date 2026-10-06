@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+import { setupWizard } from "./setup";
+import { newPebble } from "./new";
+import { selfUpdate } from "./update";
 import { backupCommand } from "./backup";
 import { jobsCommand } from "./jobs";
 import { version } from "../../package.json";
@@ -24,7 +27,10 @@ async function main() {
     return;
   }
   let result: unknown;
-  if (command === "backup") result = await backupCommand(args);
+  if (command === "setup") { result = await setupWizard(args, json); if (!json) return; }
+  else if (command === "self-update" && !args.length) { const update = await selfUpdate(); result = update; if (!json) { console.log(`✓ Updated bedrock${update.restarted ? " · service restarted" : ""}`); return; } }
+  else if (command === "new" && (args.length === 1 || args.length === 3 && args[1] === "--template")) { result = await newPebble(args[0]!, args[2] ?? "react", { json }); if (!json) return; }
+  else if (command === "backup") result = await backupCommand(args);
   else if (command === "jobs") result = await jobsCommand(args);
   else if (command && opsCommands.includes(command)) {
     result = await opsCommand(command, args, json);
@@ -33,9 +39,9 @@ async function main() {
     result = await daemonCommand(command, args, json);
     if (result === undefined) return;
   }
-  else if (command === "init" && (args.length === 1 || args.length === 3 && args[1] === "--template")) result = { command: "init", ...await init(args[0]!, process.cwd(), args[2]) };
+  else if (command === "init" && (args.length === 1 || args.length === 3 && args[1] === "--template")) result = { command: "init", ...await init(args[0]!, process.cwd(), args[2], true) };
   else if (command === "db" && args.length === 1 && ["generate", "plan", "migrate"].includes(args[0]!)) result = await dbCommand(args[0]!);
-  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], db generate|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, tunnel setup|status|teardown, service install|uninstall|status, doctor, login --url <url>, logout, backup setup|run|ls|restore, jobs ls|run, or --version; add --json for machine-readable output.");
+  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], db generate|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, tunnel setup|status|teardown, service install|uninstall|status, doctor, login <domain>, logout, new <name>, self-update, whoami, status, backup setup|run|ls|restore, jobs ls|run, or --version; add --json for machine-readable output.");
   console.log(json ? JSON.stringify({ ok: true, ...(result as object) }) : JSON.stringify(result, null, 2));
 }
 

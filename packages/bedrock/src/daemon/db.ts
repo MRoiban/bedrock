@@ -27,9 +27,10 @@ export async function openDaemonDatabase(home: string, migrations = join(import.
       accepts: (token: string) => !!db.query("SELECT hash FROM deploy_tokens WHERE hash=?").get(tokenHash(token)),
       tokens: () => db.query("SELECT hash AS id, created_at AS createdAt FROM deploy_tokens ORDER BY created_at").all(),
       revokeToken: (id: string) => db.query("DELETE FROM deploy_tokens WHERE hash=?").run(id).changes > 0,
-      createToken() {
+      tokenEmail: (token: string) => (db.query("SELECT email FROM deploy_tokens WHERE hash=?").get(tokenHash(token)) as { email: string | null } | null)?.email,
+      createToken(email?: string) {
         const token = `br_${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
-        db.query("INSERT INTO deploy_tokens VALUES (?, ?)").run(tokenHash(token), Date.now());
+        db.query("INSERT INTO deploy_tokens (hash, created_at, email) VALUES (?, ?, ?)").run(tokenHash(token), Date.now(), email ?? null);
         return token;
       },
       close: () => db.close(),

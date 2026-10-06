@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { join, resolve } from "node:path";
+import { setup } from "../src/daemon/config";
 import { startDaemon } from "../src/daemon";
 import { tempDirectory } from "./helpers";
 
@@ -17,11 +18,13 @@ test("daemon CLI uses local credentials, honors explicit flags, and reports one 
   };
   let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
   try {
-    expect((await command(["setup", "--domain", "localhost", "--port", "0"])).value.created).toBe(true);
-    expect((await command(["setup", "--domain", "other.test"])).value.created).toBe(false);
+    expect((await setup(home, "localhost", undefined, 0)).created).toBe(true);
+    expect((await setup(home, "other.test")).created).toBe(false);
     daemon = await startDaemon({ home });
     expect((await command(["deploy", "examples/notes"])).code).toBe(0);
     expect((await command(["ls"])).value.value[0].name).toBe("notes");
+    expect((await command(["status"])).value.pebbles[0].url).toStartWith("http://notes.localhost:");
+    expect((await command(["whoami"])).value.user).toBe("server creator token");
     const token = (await Bun.file(join(home, "admin-token")).text()).trim();
     const url = `http://bedrock.localhost:${daemon.server.port}`;
     expect((await command(["ls", "--url", url, "--token", token], { BEDROCK_URL: "http://127.0.0.1:1", BEDROCK_TOKEN: "bad" })).code).toBe(0);

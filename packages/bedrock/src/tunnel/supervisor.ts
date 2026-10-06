@@ -14,7 +14,7 @@ export class TunnelSupervisor {
   private failures = 0;
   private readers = new Set<Promise<unknown>>();
   private logs: PebbleLogs;
-  constructor(home: string, private token: string, private binary = cloudflaredBinary) {
+  constructor(home: string, private token: string, private binary = cloudflaredBinary, private configFile?: string) {
     this.logs = new PebbleLogs(home, "", 10 * 1024 * 1024, join(home, "logs"), "cloudflared.log");
   }
   status() { return { running: this.child?.exitCode === null, pid: this.child?.exitCode === null ? this.child.pid : null }; }
@@ -22,7 +22,7 @@ export class TunnelSupervisor {
     if (this.stopping || this.child?.exitCode === null) return;
     const started = Date.now();
     try {
-      const child = Bun.spawn([this.binary(), "tunnel", "--no-autoupdate", "run"], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, CLOUDFLARE_API_TOKEN: undefined, TUNNEL_TOKEN: this.token } });
+      const child = Bun.spawn([this.binary(), "tunnel", "--no-autoupdate", ...(this.configFile ? ["--config", this.configFile] : []), "run"], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, CLOUDFLARE_API_TOKEN: undefined, TUNNEL_TOKEN: this.configFile ? undefined : this.token } });
       this.child = child;
       const redact = async (stream: ReadableStream<Uint8Array>) => {
         // Redact across pipe chunks as well as complete log lines.
@@ -30,12 +30,12 @@ export class TunnelSupervisor {
         let pending = "";
         for await (const chunk of stream) {
           pending += decoder.decode(chunk, { stream: true });
-          pending = pending.replaceAll(this.token, "[redacted]");
-          const keep = Math.min(pending.length, this.token.length - 1);
+          if (this.token) pending = pending.replaceAll(this.token, "[redacted]");
+          const keep = Math.min(pending.length, Math.max(0, this.token.length - 1));
           this.logs.write(new TextEncoder().encode(pending.slice(0, pending.length - keep)));
           pending = pending.slice(pending.length - keep);
         }
-        this.logs.write(new TextEncoder().encode((pending + decoder.decode()).replaceAll(this.token, "[redacted]")));
+        this.logs.write(new TextEncoder().encode(this.token ? (pending + decoder.decode()).replaceAll(this.token, "[redacted]") : pending + decoder.decode()));
       };
       const reading = Promise.all([redact(child.stdout), redact(child.stderr)]);
       this.readers.add(reading);

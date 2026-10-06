@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { init } from "../../bedrock/src/cli/init";
@@ -24,7 +24,8 @@ test("React starter is idempotent, typed, and Bun HTML-bundleable", async () => 
     await expect(init("notebook", temp)).rejects.toMatchObject({ code: "DIRECTORY_EXISTS" });
     await expect(init("other", temp, "vue")).rejects.toMatchObject({ code: "INVALID_TEMPLATE" });
     const cli = resolve(import.meta.dir, "../../bedrock/src/cli/index.ts");
-    const command = Bun.spawn([process.execPath, cli, "init", "cli-notes", "--template", "react", "--json"], { cwd: temp, stdout: "pipe", stderr: "pipe", env: { ...process.env, BEDROCK_HOME: join(temp, "home") } });
+    await mkdir(join(temp, "cli-notes"), { recursive: true });
+    const command = Bun.spawn([process.execPath, cli, "init", "cli-notes", "--template", "react", "--json"], { cwd: join(temp, "cli-notes"), stdout: "pipe", stderr: "pipe", env: { ...process.env, BEDROCK_HOME: join(temp, "home") } });
     const output = JSON.parse(await new Response(command.stdout).text());
     expect(await command.exited).toBe(0);
     expect(output).toMatchObject({ ok: true, name: "cli-notes", created: true });

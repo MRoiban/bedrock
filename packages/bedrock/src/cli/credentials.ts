@@ -45,8 +45,20 @@ export function loginCallback(state: string, complete: (token: string) => void) 
     return new Response("CLI authorized. You can close this tab.", { headers: { "cache-control": "no-store", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'", "content-type": "text/plain" } });
   };
 }
+export function loginUrl(value: string) {
+  if (!value.includes("://")) {
+    if (!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9-]+$/i.test(value)) throw new BedrockError("INVALID_REMOTE_URL", "Invalid daemon domain.", "Use example.com, bedrock.example.com or an HTTPS URL.");
+    value = value.toLowerCase();
+    value = `https://${value.startsWith("bedrock.") ? value : `bedrock.${value}`}`;
+  } else {
+    const parsed = new URL(remoteUrl(value));
+    if (!parsed.hostname.startsWith("bedrock.")) parsed.hostname = `bedrock.${parsed.hostname}`;
+    value = parsed.origin;
+  }
+  return remoteUrl(value);
+}
 export async function login(url: string, options: { path?: string; open?: (url: string) => Promise<void>; timeout?: number; fetch?: typeof fetch } = {}) {
-  url = remoteUrl(url);
+  url = loginUrl(url);
   const existing = await readCredentials(options.path);
   if (existing && existing.url !== url) throw new BedrockError("LOGIN_CONFLICT", "The CLI is already signed in to another server.", "Run bedrock logout before logging in to a different server.");
   if (existing) {

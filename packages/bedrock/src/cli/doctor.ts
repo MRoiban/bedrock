@@ -19,7 +19,7 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
     add("config", "pass", "Configuration is valid.", "Use bedrock setup to update configuration.");
     add("domain", config.domain !== "localhost" && config.domain.includes(".") ? "pass" : "fail", `Domain: ${config.domain}`, "Set a public domain before tunnel setup.");
     add("creators", config.creators.length ? "pass" : "fail", `${config.creators.length} creator(s).`, "Set at least one creator email in config.json.");
-    add("google", config.google ? "pass" : "warn", config.google ? "Google OAuth configured." : "Google OAuth is not configured.", "Run setup with --google-client-id and --google-client-secret.");
+    add("google", config.google ? "pass" : "warn", config.google ? "Google OAuth configured." : "Google OAuth is not configured.", "Run bedrock setup google.");
   } else for (const name of ["domain", "creators", "google"]) add(name, "warn", "Skipped: configuration unavailable.", "Repair config.json and retry doctor.", true);
   let status: { tunnel: { running: boolean }; pebbles: { name: string; status: string; healthy: boolean }[] } | null = null;
   try {
@@ -43,9 +43,9 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
   catch (error) { add("cloudflared-installed", "fail", "cloudflared is missing.", error instanceof BedrockError ? error.hint : "Install cloudflared."); }
   add("cloudflared-running", status?.tunnel.running ? "pass" : "warn", status?.tunnel.running ? "cloudflared is running." : "cloudflared is not running.", "Run tunnel setup, then restart the daemon; inspect logs/cloudflared.log.");
   const apiToken = options.apiToken ?? process.env.CLOUDFLARE_API_TOKEN;
-  if (config && (apiToken || options.cloudflare)) {
+  if (config && (config.cloudflare?.mode === "local" || apiToken || options.cloudflare)) {
     try {
-      const tunnel = await tunnelStatus(home, options.cloudflare ?? new Cloudflare(apiToken!));
+      const tunnel = await tunnelStatus(home, options.cloudflare ?? (apiToken ? new Cloudflare(apiToken) : undefined));
       add("tunnel", "matches" in tunnel && tunnel.matches && tunnel.tokenStored ? "pass" : "fail", "matches" in tunnel && tunnel.matches ? "Remote tunnel configuration matches." : "Remote tunnel configuration is missing or differs.", "Repeat bedrock tunnel setup with the correct account and zone IDs.");
     } catch (error) { add("tunnel", error instanceof BedrockError && error.code === "CLOUDFLARE_OFFLINE" ? "warn" : "fail", "Could not verify remote tunnel configuration.", error instanceof BedrockError ? error.hint : "Check your API token and internet connection."); }
   } else add("tunnel", "warn", "Skipped: no Cloudflare API token or valid configuration.", "Set CLOUDFLARE_API_TOKEN to verify remote configuration.", true);

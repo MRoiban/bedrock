@@ -1,30 +1,14 @@
+import { promptSecret } from "./terminal";
 import { bedrockHome, readConfig } from "../daemon/config";
 import { BedrockError } from "../error";
 import { Cloudflare } from "../tunnel/client";
 import { tunnelSetup, tunnelStatus, tunnelTeardown } from "../tunnel";
 import { service } from "../service";
-import { login, logout } from "./credentials";
+import { connection } from "./daemon";
+import { loginUrl, login, logout } from "./credentials";
 import { doctor } from "./doctor";
 
-export async function promptSecret(label = "Cloudflare API token") {
-  if (!process.stdin.isTTY || !process.stdin.setRawMode) throw new BedrockError("SECRET_MISSING", `No ${label} was provided.`, "Pass the secret explicitly; noninteractive commands cannot prompt.");
-  process.stderr.write(`${label} (hidden): `);
-  return new Promise<string>((resolve, reject) => {
-    let token = "";
-    const cleanup = () => { process.stdin.setRawMode(false); process.stdin.pause(); process.stdin.off("data", data); process.stderr.write("\n"); };
-    const data = (chunk: Buffer) => {
-      for (const char of chunk.toString()) {
-        if (char === "\r" || char === "\n") { cleanup(); resolve(token.trim()); return; }
-        if (char === "\x03" || char === "\x04") { cleanup(); reject(new BedrockError("CANCELLED", "Token entry cancelled.", `Retry when you have the ${label}.`)); return; }
-        if (char === "\x7f" || char === "\b") token = token.slice(0, -1);
-        else if (char >= " ") token += char;
-      }
-    };
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.on("data", data);
-  });
-}
+export { promptSecret } from "./terminal";
 export const opsCommands = ["tunnel", "service", "doctor", "login", "logout"];
 export async function opsCommand(command: string, args: string[], json: boolean) {
   const flags: Record<string, string> = {};
@@ -50,7 +34,17 @@ export async function opsCommand(command: string, args: string[], json: boolean)
     console.log(json ? JSON.stringify(checks) : checks.map(check => `${check.status.toUpperCase()} ${check.name}: ${check.message}\n  Hint: ${check.hint}`).join("\n"));
     return undefined;
   }
-  if (command === "login") { if (positions.length || !flags["--url"]) invalid(); return login(flags["--url"]!); }
+  if (command === "login") { if (positions.length > 1 || positions.length && flags["--url"] || !positions[0] && !flags["--url"]) invalid();
+    const url = loginUrl(positions[0] ?? flags["--url"]!);
+    const local = await connection({}, { credentials: async () => null }).catch(() => null);
+    const config = local ? await readConfig(home).catch(() => null) : null;
+    if (local && config && url === `https://bedrock.${config.domain}`) {
+      if (!json) { console.log("✓ You're on the server; no login is needed."); return; }
+      return { command: "login", url: local.url, authenticated: true, hint: "You're on the server; no login is needed." };
+    }
+    const result = await login(url);
+    if (!json) { console.log(`✓ Signed in to ${url}`); return; }
+    return result; }
   if (command === "logout") { if (positions.length) invalid(); return logout(); }
   const action = positions[0];
   if (positions.length !== 1) invalid();
@@ -62,12 +56,14 @@ export async function opsCommand(command: string, args: string[], json: boolean)
   }
   if (!["setup", "status", "teardown"].includes(action!)) invalid();
   const keys = Object.keys(flags);
-  if (action === "setup" && (!flags["--account-id"] || !flags["--zone-id"] || keys.includes("--yes"))) invalid();
+  if (action === "setup" && keys.includes("--yes")) invalid();
   if (action !== "setup" && keys.some(key => ["--account-id", "--zone-id"].includes(key)) || action === "status" && flags["--yes"]) invalid();
   if (action === "teardown" && !flags["--yes"]) throw new BedrockError("CONFIRM_REQUIRED", "Tunnel teardown disconnects your public server.", "Stop the daemon, then run bedrock tunnel teardown --yes.");
   if (action === "teardown" && !(await readConfig(home)).cloudflare) return { command: "tunnel teardown", ...await tunnelTeardown(home, undefined, true) };
   const token = flags["--api-token"] ?? process.env.CLOUDFLARE_API_TOKEN;
+  if (!token && action !== "status" && json) throw new BedrockError("CLOUDFLARE_TOKEN_MISSING", "A Cloudflare API token is required.", "Pass --api-token <token> or set CLOUDFLARE_API_TOKEN.");
   const api = token ? new Cloudflare(token) : action === "status" ? undefined : new Cloudflare(await promptSecret());
-  const value = action === "setup" ? await tunnelSetup(home, flags["--account-id"]!, flags["--zone-id"]!, api!) : action === "status" ? await tunnelStatus(home, api) : await tunnelTeardown(home, api!, true);
+  const discovered = action === "setup" && (!flags["--account-id"] || !flags["--zone-id"]) ? await api!.discover((await readConfig(home)).domain) : undefined;
+  const value = action === "setup" ? await tunnelSetup(home, flags["--account-id"] ?? discovered!.accountId, flags["--zone-id"] ?? discovered!.zoneId, api!) : action === "status" ? await tunnelStatus(home, api) : await tunnelTeardown(home, api!, true);
   return { command: `tunnel ${action}`, ...value };
 }

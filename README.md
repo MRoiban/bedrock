@@ -9,50 +9,76 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) for the contract and
 Creators are trusted: separate processes provide no OS sandbox. Access policies,
 signed identity, and Origin checks protect against end users and the internet.
 
-## Five-minute quickstart (from this checkout)
+## Getting started
 
-Install Bun ≥ 1.2, then run from the repository root:
+Use a domain whose DNS is managed by Cloudflare. On your home server:
 
 ```sh
-bun install
-(cd packages/bedrock && bun link)
-bedrock --version
-bedrock init hello
-cd hello
-bun link bedrock
-bun install
+git clone <repo> ~/.bedrock/src && ~/.bedrock/src/install.sh
+bedrock setup
+```
+
+The installer checks Bun ≥ 1.2, installs the checkout and puts `bedrock` in Bun's
+bin directory. Add `~/.bun/bin` to PATH if needed. Setup walks through Cloudflare
+browser authorization, your domain and creator email, Google sign-in, backups,
+and automatic startup. It finishes by checking the server and your creator login.
+Google and backups can be deferred; public pebbles work without Google.
+
+Install the CLI on your laptop with the same checkout installer, then:
+
+```sh
+bedrock login example.com
+bedrock new my-app && cd my-app
 bedrock dev
-```
-
-`bun link` in `packages/bedrock` registers its `bedrock` bin globally. Put Bun's
-bin directory (`~/.bun/bin` by default) on PATH. `bun link bedrock` in the generated
-project uses this checkout instead of a registry release. Once packages are
-published, `bun add --global bedrock` and a normal `bun install` suffice.
-
-Open `http://hello.localhost:3000`. Edit `pebble.ts` or `web/index.html`; dev restarts
-on edits and keeps data in `.bedrock/`. Protected pebbles offer a local email-picker
-login with no Google credentials. Stop dev with Ctrl-C.
-
-Deploy locally, using a second terminal for the daemon:
-
-```sh
-bedrock setup --domain localhost --creator you@example.com
-bedrock daemon
-```
-
-From `hello/` in another terminal:
-
-```sh
 bedrock deploy
-bedrock ls --json
 ```
 
-For the React notes starter, register the UI package too with
-`(cd packages/ui && bun link)` from the repository root. Run
-`bedrock init notes --template react`, then in `notes/` run `bun link bedrock`,
-`bun link @bedrock/ui`, `bun install`, `bun add --dev drizzle-kit`,
-`bedrock db generate`, and `bedrock dev`. Commit `migrations/`, including `meta/`.
-The starter includes live queries, owner-only attachments, and Onyx UI components.
+`new` defaults to the React notes starter. It installs dependencies, generates
+migrations, and creates the first Git commit. Open `http://my-app.localhost:3000`;
+dev offers an email-picker login without Google credentials. Edit `pebble.ts` or
+`web/app.tsx`, then stop dev with Ctrl-C and deploy. Deploy prints and opens
+`https://my-app.example.com`. The React starter permits anyone signed in with
+Google; use `access: "creators"` to limit it to server creators.
+
+Use `bedrock new hello --template minimal` for a public HTML starter, or
+`bedrock init hello` to scaffold in the current empty directory. Source installs
+use local `file:` dependencies for the workspace packages until they are published.
+The daemon replaces these first-party dependencies with its own installed packages
+on deployment. Commit `migrations/`, including `meta/`.
+
+Setup saves its checklist in `$BEDROCK_HOME/setup.json`. Rerun `bedrock setup`
+to resume after a failure. Use `bedrock setup --status`, or redo a single step:
+`bedrock setup google`, `bedrock setup backups`, `bedrock setup identity`.
+Configuration changes invalidate service/verification; identity changes also
+invalidate tunnel configuration. Rerun the full setup to apply those changes.
+
+## Non-interactive setup (agents)
+
+Every prompt has a flag. With redirected stdin, `--yes`, or `--json`, setup never
+prompts. Missing choices produce a `BedrockError` listing the missing flags before
+setup changes anything. For an unattended server, use an API token with Zone: Read,
+DNS: Edit and Cloudflare Tunnel: Edit permissions. Account and zone IDs are discovered:
+
+```sh
+CLOUDFLARE_API_TOKEN=YOUR_TOKEN bedrock setup --yes --json \
+  --domain example.com --creator you@example.com --port 3000 \
+  --google-client-id YOUR_ID.apps.googleusercontent.com \
+  --google-client-secret YOUR_SECRET --dir /mnt/backup/bedrock --skip-sign-in
+bedrock setup --status --json
+bedrock setup verify  # complete creator browser sign-in later
+```
+
+Choose `--skip-google` and/or `--skip-backups` to defer them. R2 flags are
+`--r2-bucket`, `--r2-access-key-id`, `--r2-secret-access-key`, and optionally
+`--r2-account`; the account is discovered when an API token is available.
+`--install-cloudflared` authorizes package installation (Homebrew on macOS,
+Cloudflare's Debian/Ubuntu repository on Linux). Other Linux distributions should
+install the [official package](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/) first.
+`--enable-linger` authorizes Linux startup without login. `--skip-sign-in` defers
+only the final browser check; doctor still runs.
+
+`bedrock self-update` pulls the checkout with `git pull --ff-only`, installs updated
+dependencies, and restarts an installed service. Keep the checkout in place.
 
 ## Jobs and live queries
 
@@ -78,50 +104,11 @@ writes from a mutation, job, or route. Prefer registered Drizzle table objects
 See the [author reference](packages/bedrock/AGENTS.md#live-queries-and-explicit-invalidation)
 for the raw SQL escape hatch.
 
-## Home-server go-live checklist
-
-Use a stable checkout and a domain whose DNS is managed by Cloudflare. Install Bun
-and `cloudflared` on the server; no backup binary, container, or reverse proxy is
-needed. Register the CLI with `bun link` from `packages/bedrock` after `bun install`.
-Stop any manually running daemon before installing its service.
-
-1. Set a public domain, fixed port, creators, and Google OAuth credentials. Configure
-   Google's redirect URI as `https://auth.example.com/callback`.
-2. Set up the tunnel with a transient Cloudflare API token granting Cloudflare
-   Tunnel: Edit and DNS: Edit. Only its run token is saved.
-3. Configure backups to an external disk or R2. Keep backup credentials private;
-   R2 credentials live in a separate mode-0600 file.
-4. Install the service, deploy a pebble, run a full backup and doctor, and test a
-   restore on a disposable pebble before relying on backups.
-
-```sh
-bedrock setup --domain example.com --creator you@example.com --port 3000 \
-  --google-client-id YOUR_CLIENT_ID --google-client-secret YOUR_CLIENT_SECRET
-bedrock tunnel setup --account-id ACCOUNT_ID --zone-id ZONE_ID
-bedrock backup setup --dir /Volumes/backup/bedrock
-# Alternative (the secret is prompted without echo):
-# bedrock backup setup --r2-account ACCOUNT_ID --r2-bucket BUCKET --r2-access-key-id KEY_ID
-bedrock service install --dry-run
-bedrock service install
-bedrock service status --json
-bedrock deploy ./hello
-bedrock backup run
-bedrock doctor --json
-```
-
-Linux uses a systemd user service; `loginctl enable-linger "$USER"` allows startup
-without login. macOS uses a LaunchAgent and starts at user login. Services use
-absolute Bun/CLI paths, so keep that checkout in place. Restart the service after
-tunnel configuration changes. No Cloudflare changes are needed for new pebbles.
-
-From your development machine, `bedrock login --url https://bedrock.example.com`
-opens creator approval in the browser. Then `bedrock deploy` uploads the current
-project. `bedrock logout` revokes that credential. Deploy tokens grant full daemon
-management access. All commands accept `--json`; errors include repair hints.
-
 ## Operations
 
 ```sh
+bedrock whoami
+bedrock status
 bedrock logs hello -f
 bedrock jobs ls hello --json
 bedrock jobs run hello prune

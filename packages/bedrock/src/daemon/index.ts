@@ -1,4 +1,5 @@
 import { createBackups } from "../backup";
+import { dashboard } from "./dashboard";
 import { TunnelSupervisor } from "../tunnel/supervisor";
 import { tunnelTokenPath } from "../tunnel";
 import { createCliLogin } from "../auth/cli-login";
@@ -35,13 +36,13 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);
   const cliLogin = createCliLogin(config, sessions, db, dev);
   const tunnelToken = dev ? "" : (await Bun.file(tunnelTokenPath(home)).text().catch(() => "")).trim();
-  const tunnel = config.cloudflare && tunnelToken ? new TunnelSupervisor(home, tunnelToken, options.tunnelBinary) : undefined;
+  const tunnel = config.cloudflare && (config.cloudflare.mode === "local" || tunnelToken) ? new TunnelSupervisor(home, tunnelToken, options.tunnelBinary, config.cloudflare.mode === "local" ? config.cloudflare.configFile : undefined) : undefined;
   const releases = new Releases(home, db, supervisor);
   const backups = createBackups(home, db, releases);
   let server: Bun.Server<Relay> | undefined;
   try {
     await localToken(home, db);
-    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups);
+    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups, config);
     const notFound = () => new Response("Pebble not found. Deploy it with bedrock deploy, or check its hostname.", { status: 404 });
     server = Bun.serve<Relay>({
       hostname: "127.0.0.1", port: config.port, maxRequestBodySize: 256 * 1024 * 1024,
@@ -53,6 +54,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           const url = new URL(request.url);
           const origin = `${dev || host.split(":")[0]!.endsWith(".localhost") ? "http" : "https"}://${host}`;
           if (target === "bedrock") {
+            if (request.method === "GET" && url.pathname === "/") return dashboard(request, origin, config, db, sessions, dev);
             if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
             if (url.pathname === "/cli-login") return await cliLogin(request, origin);
             return await api(request);

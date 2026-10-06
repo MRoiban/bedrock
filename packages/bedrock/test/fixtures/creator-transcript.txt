@@ -1,0 +1,7 @@
+✓ Created my-app (react)
+cd my-app
+bedrock dev
+bedrock deploy
+✓ Deployed my-app
+https://my-app.example.com
+Access: anyone signed in with Google.

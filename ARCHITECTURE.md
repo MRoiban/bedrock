@@ -179,7 +179,9 @@ Future (do not build yet): row-level diffs, optimistic updates.
 
 ```
 $BEDROCK_HOME (default ~/.bedrock)
-  config.json        { domain, creators: [emails], port, cloudflare: {accountId, zoneId, tunnelId, dnsRecordId, name}, google: {...} }
+  config.json        { domain, creators: [emails], port, cloudflare: local or remote tunnel metadata, google: {...} }
+  setup.json         versioned checklist with completion timestamps and deferred steps
+  cloudflared/       local mode: cert.pem, credentials.json (0600), config.yml
   backup-credentials R2 access key/secret (0600); config.json stores only target metadata
   backup-state.json  last successful full/per-pebble backup times
   tunnel-token       Cloudflare tunnel run token (0600); API token is never persisted
@@ -192,6 +194,25 @@ $BEDROCK_HOME (default ~/.bedrock)
     logs/            stdout/stderr, rotated
 ```
 
+- `bedrock setup` is a guided, resumable CLI wizard: prereqs, identity, cloudflare,
+  google, backups, service, verify. It marks a step complete only after success in
+  `$BEDROCK_HOME/setup.json`; failures resume at the first incomplete step.
+  `setup <step>` redoes one step; `setup --status [--json]` prints the checklist.
+  Identity changes invalidate tunnel/service/verification; other configuration
+  steps invalidate service/verification. Explicit skip choices are recorded.
+  Each prompt has a flag; non-TTY, `--yes`, and `--json` never prompt. Missing
+  choices yield `SETUP_FLAGS_MISSING` with flag hints before any setup mutations.
+  Setup checks daemon health after service installation/restart, runs doctor,
+  and polls creator session presence through the authenticated status API.
+- `bedrock new <name> [--template react|minimal]` defaults to React, installs
+  dependencies, generates schema migrations and makes a first Git commit when
+  Git exists. `init <name>` scaffolds in the current empty directory. Dev needs
+  no host configuration. Source installs use checkout-relative first-party
+  `file:` dependencies; daemon deployment substitutes its own first-party packages.
+- The creator dashboard at `bedrock.<domain>/` uses Google session authorization;
+  it redirects to sign-in and lists pebble links for creators only. CLI status
+  includes domain, creator session presence and the current token's creator email
+  (older/manual tokens have no recorded identity). It never returns session tokens.
 - One daemon process (`bedrock daemon`) listens on `127.0.0.1:<port>`.
 - Each pebble runs as **its own Bun subprocess** (`startPebble`) on a private localhost port. The daemon routes by `Host` header, proxies HTTP and WebSockets, restarts crashed pebbles with backoff, and does zero-downtime swaps on deploy (start new, health-check, switch, stop old).
 - Reserved subdomains: `auth`, `bedrock` (daemon API/dashboard), `www`.
@@ -202,7 +223,7 @@ $BEDROCK_HOME (default ~/.bedrock)
   Units use absolute Bun/CLI paths and BEDROCK_HOME. `install --dry-run` prints the
   file without writing it or invoking the service manager. Linux users can run
   `loginctl enable-linger "$USER"` for startup without login; macOS runs at user login.
-- `bedrock login --url https://bedrock.<domain>` opens a browser and a one-shot
+- `bedrock login <domain>` (also `bedrock.<domain>` or an HTTPS URL) opens a browser and a one-shot
   random-port callback on 127.0.0.1. `/cli-login` requires a signed-in creator,
   then explicit confirmation to mint a deploy token. Confirmation is bound to the
   session, single-use, expires after five minutes, and requires the exact Origin.
@@ -227,34 +248,48 @@ $BEDROCK_HOME (default ~/.bedrock)
 
 ## 9. Cloudflare Tunnel
 
-`bedrock tunnel setup --account-id <id> --zone-id <id>` uses a Cloudflare API
-client built on fetch. The API token comes from `--api-token`,
-`CLOUDFLARE_API_TOKEN`, or a hidden interactive prompt, and is never written to
-configuration or logs. It needs *Cloudflare Tunnel: Edit* on the account and
-*DNS: Edit* on the zone.
+Default setup uses a **locally managed tunnel**; no API token or account/zone IDs
+are requested. `cloudflared tunnel login` opens browser authorization. Because
+login writes to `~/.cloudflared` regardless of `--origincert`, Bedrock isolates
+its HOME during login and moves the certificate to `$BEDROCK_HOME/cloudflared/`.
+Commands thereafter pass `--origincert` explicitly. Setup finds or creates
+`bedrock-<hostname>` and runs `cloudflared tunnel route dns <id> "*.<domain>"`.
+It runs `route dns --help` as a compatibility check; Cloudflare's
+[route implementation](https://github.com/cloudflare/cloudflared/blob/master/cmd/cloudflared/tunnel/subcommands.go)
+validates DNS hostnames with wildcard support. Existing routes are reused;
+conflicts are reported. If CLI DNS routing fails, repeating the step with
+`--api-token` uses the DNS API after zone discovery without migrating the tunnel.
 
-1. Find the existing non-deleted tunnel named `bedrock-<hostname>` or create one
-   (`POST /accounts/:id/cfd_tunnel`, `config_src: "cloudflare"`). A conflicting
-   locally managed tunnel is an error rather than an implicit migration.
-2. Re-PUT ingress config: `*.<domain>` → `http://127.0.0.1:<daemon port>`,
-   catch-all `http_status:404`. The public domain and a fixed daemon port are required.
-3. Upsert proxied DNS `CNAME *.<domain> → <tunnel-id>.cfargotunnel.com`.
-   Conflicting wildcard DNS records require explicit repair.
-4. Retrieve the tunnel run token and store it in `$BEDROCK_HOME/tunnel-token`
-   (0600), with only non-secret tunnel metadata in config.json. Restart the daemon
-   after setup. The daemon supervises `cloudflared tunnel --no-autoupdate run`
-   with `TUNNEL_TOKEN` in the child environment, never in argv. The run token is
-   redacted from rotated `$BEDROCK_HOME/logs/cloudflared.log` output.
+Local metadata is `{mode: "local", tunnelId, name, credentialsFile, configFile}`.
+The mode-0600 YAML has tunnel ID, credentials path, ingress `*.<domain>` to
+`http://127.0.0.1:<port>` and `http_status:404` catch-all. The daemon supervises
+`cloudflared tunnel --no-autoupdate --config <file> run` with no run token.
+
+For unattended setup, `--api-token` or `CLOUDFLARE_API_TOKEN` selects the existing
+**remotely managed tunnel** implementation. `GET /zones?name=<domain>` discovers
+zone/account IDs; the token needs Zone: Read, Cloudflare Tunnel: Edit and DNS: Edit.
+`bedrock tunnel setup --api-token <token>` also discovers IDs; legacy explicit
+`--account-id`/`--zone-id` flags remain supported.
+
+1. Find or create a non-deleted `bedrock-<hostname>` tunnel with
+   `config_src: "cloudflare"`. Mode conflicts are errors, never implicit migrations.
+2. Re-PUT wildcard ingress and the 404 catch-all.
+3. Upsert the proxied wildcard CNAME to `<id>.cfargotunnel.com`; conflicting DNS
+   records require explicit repair.
+4. Save only the run token in `$BEDROCK_HOME/tunnel-token` (0600), and remote
+   metadata `{mode?: "remote", accountId, zoneId, tunnelId, dnsRecordId, name}`.
+   The API token is never persisted. The daemon passes `TUNNEL_TOKEN` in the
+   child's environment, never argv, and redacts it in rotated logs.
 
 cloudflared is the only external host dependency. Missing binary/startup/connection
-failures do not stop local serving; restart backoff caps at 30 seconds. Install it
-via Homebrew on macOS or the Cloudflare package for the Linux distribution.
-
-`bedrock tunnel status` shows saved metadata; with an API token it checks remote
-ingress and DNS for drift. `bedrock tunnel teardown --yes` removes only the
-wildcard CNAME pointing at this tunnel, deletes the tunnel, and removes local
-metadata/run token. Stop the daemon before teardown. Repeating setup or teardown
-is safe; adding a pebble needs **no** Cloudflare calls.
+failures do not stop local serving; restart backoff caps at 30 seconds.
+`tunnel status`/doctor check local credentials and YAML for local mode, plus DNS
+when a transient API token is available; remote mode checks ingress/DNS via API.
+Both also use doctor's independent wildcard DoH check.
+`tunnel teardown --yes --api-token <token>` safely deletes only matching DNS and
+the saved tunnel in either mode. Local mode discovers its account/zone first,
+then removes its credentials and YAML. Stop the daemon before teardown.
+Repeating setup/teardown is safe; adding pebbles needs no Cloudflare calls.
 
 ## 10. Extensibility
 

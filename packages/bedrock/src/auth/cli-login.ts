@@ -34,7 +34,7 @@ export function createCliLogin(config: DaemonConfig, sessions: Sessions, db: Dae
     pending.delete(nonce);
     const callback = new URL(`http://127.0.0.1:${item.port}/callback`);
     callback.searchParams.set("state", item.state);
-    callback.searchParams.set("token", db.createToken());
+    callback.searchParams.set("token", db.createToken(session.user.email));
     return new Response(null, { status: 302, headers: { location: callback.toString(), "cache-control": "no-store", "referrer-policy": "no-referrer" } });
   };
 }

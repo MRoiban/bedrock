@@ -1,10 +1,10 @@
-import { readCredentials, type Credentials } from "./credentials";
+import { openBrowser, readCredentials, type Credentials } from "./credentials";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { BedrockError } from "../error";
 import { startDaemon } from "../daemon";
-import { bedrockHome, readConfig, setup } from "../daemon/config";
+import { bedrockHome, readConfig } from "../daemon/config";
 import { createArchive } from "../daemon/archive";
 import { loadPebble } from "../runtime/load";
 
@@ -13,9 +13,9 @@ function parse(args: string[]) {
   const flags: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (["--yes", "--force", "-f"].includes(arg)) flags[arg] = "true";
+    if (["--yes", "--force", "--no-open", "-f"].includes(arg)) flags[arg] = "true";
     else if (arg.startsWith("--")) {
-      if (!["--domain", "--creator", "--port", "--url", "--token", "--google-client-id", "--google-client-secret"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, "Provide a value for domain, creator, port, url, or token.");
+      if (!["--port", "--url", "--token"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, "Provide a value for port, url or token.");
       flags[arg] = args[++i]!;
     } else positionals.push(arg);
   }
@@ -64,19 +64,13 @@ export async function call(flags: Record<string, string>, path: string, init: Re
   return response;
 }
 
-export const daemonCommands = ["setup", "daemon", "deploy", "ls", "logs", "start", "stop", "restart", "rollback", "rm", "token"];
-export async function daemonCommand(command: string, args: string[], json: boolean): Promise<unknown> {
+export const daemonCommands = ["daemon", "deploy", "ls", "logs", "start", "stop", "restart", "rollback", "rm", "token", "whoami", "status"];
+export async function daemonCommand(command: string, args: string[], json: boolean, options: { open?: typeof openBrowser; tty?: boolean } = {}): Promise<unknown> {
   const { positionals, flags } = parse(args);
   const name = positionals[0];
   const invalid = () => { throw new BedrockError("INVALID_ARGS", `Invalid arguments for ${command}.`, "Use setup --domain <d> [--creator <email>], daemon, deploy [dir], ls, logs <name> [-f], start|stop|restart|rollback <name>, rm <name> --yes, or token create."); };
-  const allowed = command === "rollback" ? ["--url", "--token", "--force"] : command === "setup" ? ["--domain", "--creator", "--port", "--google-client-id", "--google-client-secret"] : command === "daemon" ? ["--port"] : command === "logs" ? ["--url", "--token", "-f"] : command === "rm" ? ["--url", "--token", "--yes"] : ["--url", "--token"];
+  const allowed = command === "rollback" ? ["--url", "--token", "--force"] : command === "daemon" ? ["--port"] : command === "deploy" ? ["--url", "--token", "--no-open"] : command === "logs" ? ["--url", "--token", "-f"] : command === "rm" ? ["--url", "--token", "--yes"] : ["--url", "--token"];
   if (Object.keys(flags).some(key => !allowed.includes(key))) invalid();
-  if (command === "setup") {
-    if (positionals.length || !flags["--domain"]) invalid();
-    if (!!flags["--google-client-id"] !== !!flags["--google-client-secret"]) invalid();
-    const result = await setup(bedrockHome(), flags["--domain"]!, flags["--creator"], Number(flags["--port"] ?? 3000), flags["--google-client-id"] ? { clientId: flags["--google-client-id"]!, clientSecret: flags["--google-client-secret"]! } : undefined);
-    return { command, ...result, config: { ...result.config, google: result.config.google ? { clientId: result.config.google.clientId, clientSecret: "[redacted]" } : undefined } };
-  }
   if (command === "daemon") {
     if (positionals.length) invalid();
     const running = await startDaemon({ ...(flags["--port"] ? { port: Number(flags["--port"]) } : {}) });
@@ -87,6 +81,14 @@ export async function daemonCommand(command: string, args: string[], json: boole
     process.on("SIGTERM", stop);
     return undefined;
   }
+  if (command === "whoami" || command === "status") {
+    if (positionals.length) invalid();
+    const daemon = await connection(flags);
+    const value = (await (await call(flags, "/api/status")).json()).value;
+    const pebbles = value.pebbles.map((pebble: { name: string }) => ({ ...pebble, url: value.domain === "localhost" ? `http://${pebble.name}.localhost:${new URL(daemon.url).port}` : `https://${pebble.name}.${value.domain}` }));
+    if (!json) { console.log(`Daemon: ${daemon.url}\nUser: ${value.user ?? "creator deploy token"}\n${pebbles.map((pebble: { name: string; url: string }) => `${pebble.name}  ${pebble.url}`).join("\n") || "No pebbles yet. Run bedrock new my-app."}`); return; }
+    return { command, daemon: daemon.url, user: value.user, pebbles };
+  }
   if (command === "deploy") {
     if (positionals.length > 1) invalid();
     const dir = resolve(name ?? process.cwd());
@@ -95,7 +97,18 @@ export async function daemonCommand(command: string, args: string[], json: boole
     try {
       const archive = join(temp, "pebble.tar.gz");
       await createArchive(dir, archive);
-      return { command, ...(await (await call(flags, `/api/deploy?name=${pebble.name}`, { method: "POST", body: Bun.file(archive), headers: { "content-type": "application/gzip" } })).json()) };
+      const status = (await (await call(flags, "/api/status")).json()).value;
+      const first = !status.pebbles.some((record: { name: string }) => record.name === pebble.name);
+      const result = await (await call(flags, `/api/deploy?name=${pebble.name}`, { method: "POST", body: Bun.file(archive), headers: { "content-type": "application/gzip" } })).json();
+      const domain = status.domain ?? new URL((await connection(flags)).url).hostname.replace(/^bedrock\./, "");
+      const url = domain === "localhost" ? `http://${pebble.name}.localhost:${new URL((await connection(flags)).url).port}` : `https://${pebble.name}.${domain}`;
+      if (!json) {
+        console.log(`✓ Deployed ${pebble.name}\n${url}`);
+        if (first && pebble.access && pebble.access !== "public") console.log(`Access: ${pebble.access === "users" ? "anyone signed in with Google" : pebble.access === "creators" ? "server creators" : pebble.access.allow.join(", ")}.`);
+        if ((options.tty ?? process.stdin.isTTY) && !flags["--no-open"]) await (options.open ?? openBrowser)(url);
+        return;
+      }
+      return { command, ...result, url };
     } finally { await rm(temp, { recursive: true, force: true }); }
   }
   if (command === "ls") {

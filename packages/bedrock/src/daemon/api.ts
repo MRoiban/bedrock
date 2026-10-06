@@ -15,7 +15,7 @@ export function daemonError(error: unknown) {
     : typed.code === "UPSTREAM_UNAVAILABLE" ? 502 : 500;
   return Response.json({ ok: false, error: typed.toJSON() }, { status });
 }
-export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Supervisor, tunnelStatus = () => ({ running: false, pid: null as number | null }), backups?: ReturnType<typeof import("../backup").createBackups>) {
+export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Supervisor, tunnelStatus = () => ({ running: false, pid: null as number | null }), backups?: ReturnType<typeof import("../backup").createBackups>, config?: import("./config").DaemonConfig) {
   return async (request: Request) => {
     const token = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
     if (!token || !db.accepts(token)) throw new BedrockError("UNAUTHORIZED", "A valid deploy token is required.", "Run bedrock login for the remote server, pass a valid --token, or restart the local daemon to restore its admin token.");
@@ -40,7 +40,7 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
     } else if (request.method === "GET" && url.pathname === "/api/pebbles") {
       value = db.list().map(record => ({ ...record, port: supervisor.child(record.name)?.port ?? null, pid: supervisor.child(record.name)?.process.pid ?? null }));
     } else if (request.method === "GET" && url.pathname === "/api/status") {
-      value = { tunnel: tunnelStatus(), pebbles: await Promise.all(db.list().map(async record => {
+      value = { domain: config?.domain, user: db.tokenEmail(token) ?? "server creator token", creatorSignedIn: !!config?.creators.some(email => db.db.query("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.email=? AND s.expires_at>? LIMIT 1").get(email, Date.now())), tunnel: tunnelStatus(), pebbles: await Promise.all(db.list().map(async record => {
         const child = supervisor.child(record.name);
         let healthy = false;
         if (child) try { healthy = (await fetch(`http://127.0.0.1:${child.port}/_bedrock/health`, { signal: AbortSignal.timeout(2000) })).ok; } catch {}

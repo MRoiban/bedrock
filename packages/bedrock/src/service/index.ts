@@ -71,3 +71,12 @@ export async function service(action: string, options: ServiceOptions, dryRun = 
   }
   return { action, installed: action === "install", path: file.path, hint };
 }
+
+export async function restartService(options: ServiceOptions) {
+  const file = serviceFile(options);
+  if (!await Bun.file(file.path).exists()) return { restarted: false };
+  await (options.run ?? run)(file.platform === "darwin"
+    ? ["launchctl", "kickstart", "-k", `gui/${options.uid ?? process.getuid?.() ?? 0}/dev.bedrock.daemon`]
+    : ["systemctl", "--user", "restart", "bedrock.service"]);
+  return { restarted: true };
+}

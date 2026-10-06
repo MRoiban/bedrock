@@ -3,7 +3,9 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 
-export interface DaemonConfig { backup?: import("../backup").BackupConfig; domain: string; creators: string[]; port: number; google?: { clientId: string; clientSecret: string }; cloudflare?: { accountId: string; zoneId: string; tunnelId: string; dnsRecordId: string; name: string } }
+export interface LocalTunnel { mode: "local"; tunnelId: string; name: string; credentialsFile: string; configFile: string }
+export interface RemoteTunnel { mode?: "remote"; accountId: string; zoneId: string; tunnelId: string; dnsRecordId: string; name: string }
+export interface DaemonConfig { backup?: import("../backup").BackupConfig; domain: string; creators: string[]; port: number; google?: { clientId: string; clientSecret: string }; cloudflare?: LocalTunnel | RemoteTunnel }
 export const bedrockHome = () => resolve(process.env.BEDROCK_HOME ?? join(homedir(), ".bedrock"));
 
 export function validateConfig(config: DaemonConfig) {
@@ -13,7 +15,7 @@ export function validateConfig(config: DaemonConfig) {
     throw new BedrockError("INVALID_DAEMON_CONFIG", "Invalid daemon domain, creators, or port.", "Use a lowercase hostname, creator emails, and a port from 0 to 65535.");
   }
   if (config.google && (typeof config.google.clientId !== "string" || !config.google.clientId || typeof config.google.clientSecret !== "string" || !config.google.clientSecret)) throw new BedrockError("INVALID_DAEMON_CONFIG", "Both Google credentials are required.", "Pass --google-client-id and --google-client-secret together.");
-  if (config.cloudflare && [config.cloudflare.accountId, config.cloudflare.zoneId, config.cloudflare.tunnelId, config.cloudflare.dnsRecordId, config.cloudflare.name].some(value => typeof value !== "string" || !value)) throw new BedrockError("INVALID_DAEMON_CONFIG", "Invalid Cloudflare configuration.", "Run bedrock tunnel setup again.");
+  if (config.cloudflare && (config.cloudflare.mode === "local" ? [config.cloudflare.tunnelId, config.cloudflare.name, config.cloudflare.credentialsFile, config.cloudflare.configFile] : [config.cloudflare.accountId, config.cloudflare.zoneId, config.cloudflare.tunnelId, config.cloudflare.dnsRecordId, config.cloudflare.name]).some(value => typeof value !== "string" || !value)) throw new BedrockError("INVALID_DAEMON_CONFIG", "Invalid Cloudflare configuration.", "Run bedrock tunnel setup again.");
   return config;
 }
 

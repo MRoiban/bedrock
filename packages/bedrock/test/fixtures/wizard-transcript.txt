@@ -1,0 +1,44 @@
+1. · prereqs
+2. · identity
+3. · cloudflare
+4. · google
+5. · backups
+6. · service
+7. · verify
+✓ Bun 1.2.0
+✓ cloudflared installed
+Cloudflare domain: example.com
+Your creator email [creator@example.com]: creator@example.com
+Daemon port [3000]: 3000
+✓ Identity: example.com · creator@example.com · port 3000
+Authorize Cloudflare in your browser; select your domain's zone.
+✓ Tunnel: *.example.com → localhost:3000
+Google sign-in identifies your users and creators.
+Create a Web application OAuth client.
+Public pebbles work without Google; you can set it up later.
+https://console.cloud.google.com/auth/clients/create
+Application type: Web application
+Authorized redirect URI: https://auth.example.com/callback
+✓ Redirect URI copied
+Consent screen: External; add yourself as a test user, or publish.
+https://console.cloud.google.com/auth/audience
+Google client ID (or skip) [skip]: 123-test.apps.googleusercontent.com
+Google client secret: [hidden]
+✓ Google sign-in configured
+Backups: disk / r2 / skip [skip]: disk
+External disk backup path: /mnt/backup/bedrock
+✓ Backups configured
+✓ Service started · daemon healthy
+✓ Doctor passed
+Sign in once as creator@example.com: https://bedrock.example.com
+Type skip to defer sign-in; setup checks automatically: 
+✓ Creator sign-in verified
+
+┌ You're live
+│ https://bedrock.example.com
+│ https://<pebble>.example.com
+│ On your laptop:
+│ bedrock login example.com
+│ bedrock new my-app && cd my-app && bedrock dev
+│ bedrock deploy
+└

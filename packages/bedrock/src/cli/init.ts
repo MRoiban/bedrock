@@ -3,10 +3,10 @@ import { join, resolve } from "node:path";
 import { validateName } from "../config";
 import { BedrockError } from "../error";
 
-export async function init(name: string, cwd = process.cwd(), template = "default") {
-  if (!["default", "react"].includes(template)) throw new BedrockError("INVALID_TEMPLATE", `Unknown template: ${template}`, "Use --template react, or omit --template for the default.");
+export async function init(name: string, cwd = process.cwd(), template = "default", inPlace = false, checkout?: string) {
+  if (!["default", "minimal", "react"].includes(template)) throw new BedrockError("INVALID_TEMPLATE", `Unknown template: ${template}`, "Use --template react, or omit --template for the default.");
   validateName(name);
-  const dir = resolve(cwd, name);
+  const dir = inPlace ? resolve(cwd) : resolve(cwd, name);
   const files: Record<string, string> = {
     "pebble.ts": `import { definePebble, query } from "bedrock";
 
@@ -43,6 +43,12 @@ All CLI commands support --json. Never open real ~/.bedrock in tests.
     ".gitignore": "node_modules/\n.bedrock/\n",
   };
   if (template === "react") Object.assign(files, reactTemplate(name));
+  if (checkout) {
+    const pkg = JSON.parse(files["package.json"]!);
+    pkg.dependencies.bedrock = `file:${join(checkout, "packages/bedrock")}`;
+    if (pkg.dependencies["@bedrock/ui"]) pkg.dependencies["@bedrock/ui"] = `file:${join(checkout, "packages/ui")}`;
+    files["package.json"] = JSON.stringify(pkg, null, 2) + "\n";
+  }
   let entries: string[];
   try { entries = await readdir(dir); } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -125,7 +131,7 @@ function Notes() {
 }
 createRoot(document.getElementById("root")!).render(<BedrockProvider client={client}><AppShell name="${name}" userMenu={<UserMenu client={client} />}><SignInGate client={client}><Notes /></SignInGate></AppShell></BedrockProvider>);
 `,
-    "package.json": JSON.stringify({ name, private: true, type: "module", scripts: { dev: "bedrock dev", typecheck: "tsc --noEmit" }, dependencies: { bedrock: "^0.1.0", "@bedrock/ui": "^0.1.0", react: "^19.0.0", "react-dom": "^19.0.0", valibot: "^1.5.0" }, devDependencies: { "@types/react": "^19.0.0", "@types/react-dom": "^19.0.0", "@types/bun": "^1.3.10", typescript: "^5.9.3" } }, null, 2) + "\n",
+    "package.json": JSON.stringify({ name, private: true, type: "module", scripts: { dev: "bedrock dev", typecheck: "tsc --noEmit" }, dependencies: { bedrock: "^0.1.0", "@bedrock/ui": "^0.1.0", react: "^19.0.0", "react-dom": "^19.0.0", valibot: "^1.5.0" }, devDependencies: { "drizzle-kit": "^0.31.9", "@types/react": "^19.0.0", "@types/react-dom": "^19.0.0", "@types/bun": "^1.3.10", typescript: "^5.9.3" } }, null, 2) + "\n",
     "tsconfig.json": JSON.stringify({ compilerOptions: { target: "ESNext", module: "Preserve", moduleResolution: "Bundler", jsx: "react-jsx", strict: true, noEmit: true, skipLibCheck: true, types: ["bun"] } }, null, 2) + "\n",
     "AGENTS.md": `# ${name}
 

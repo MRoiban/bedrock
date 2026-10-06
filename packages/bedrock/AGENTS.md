@@ -62,9 +62,9 @@ Run `bedrock db generate`, commit `migrations/` (including `meta/`), then
 `bedrock dev`. Data lives in `.bedrock/db.sqlite` and `.bedrock/files/`.
 Dev uses a localhost daemon and a private child; the printed URL is
 `http://notes.localhost:3000`. Protected pages use an email-picker login.
-The generated React template (`bedrock init notes --template react`) includes a
-complete frontend. Outside a published install, link the workspace packages as
-shown in the repository README.
+The default `bedrock new notes` React template includes a complete frontend, installs
+dependencies, generates migrations and commits. `new --template minimal` is public
+HTML; `init <name> [--template react]` scaffolds in the current empty directory.
 
 ## Configuration and functions
 
@@ -366,28 +366,44 @@ All commands support `--json` (one object; doctor returns a checks array).
 Errors carry `code`, `message`, `hint`; failures set exit code 1.
 
 ```sh
-bedrock setup --domain example.com --creator you@example.com --port 3000 \
-  --google-client-id ID --google-client-secret SECRET
-bedrock tunnel setup --account-id ACCOUNT --zone-id ZONE
-bedrock backup setup --dir /mnt/external/bedrock
-# Or: bedrock backup setup --r2-account ACCOUNT --r2-bucket BUCKET --r2-access-key-id KEY
-bedrock service install --dry-run
-bedrock service install
-bedrock deploy
+# Home server (after checkout/install.sh):
+bedrock setup
+bedrock setup --status --json
+bedrock setup google       # redo a step; then setup to restart and verify
+# Unattended alternative (Cloudflare token discovers zone/account):
+bedrock setup --yes --json --domain example.com --creator you@example.com \
+  --api-token TOKEN --google-client-id ID.apps.googleusercontent.com \
+  --google-client-secret SECRET --dir /mnt/backup/bedrock --skip-sign-in
+# Laptop:
+bedrock login example.com
+bedrock new notes && cd notes
+bedrock dev
+bedrock deploy             # prints/opens URL; --no-open disables opening
+bedrock whoami
+bedrock status --json
+bedrock self-update        # git pull --ff-only, bun install, service restart
 bedrock backup run
 bedrock backup ls notes --json
 bedrock backup restore notes --at 2026-10-06T03:00:00.000Z --yes
 bedrock doctor --json
-bedrock login --url https://bedrock.example.com
 bedrock token ls --json
-bedrock token revoke HASH_ID
 bedrock logout
 ```
 
 The daemon runs all pebbles on private localhost ports, proxies hostnames, enforces
 access/Origin and supervises crashes. `$BEDROCK_HOME` defaults to `~/.bedrock`.
 Only Bun and `cloudflared` need installing (OS service managers are built in).
-Tunnel API tokens are transient; tunnel run token is saved mode 0600. Google
+Setup defaults to Cloudflare browser authorization and a locally managed tunnel:
+origin certificate, credentials and ingress YAML live under cloudflared/ in
+BEDROCK_HOME. API-token setup uses a remote tunnel and saves only its run token
+mode 0600. API tokens are transient. Both modes share wildcard ingress and DNS.
+setup.json records completed/deferred steps; setup resumes failures. Every wizard
+prompt has a flag. Non-TTY, --yes and --json never prompt; missing flag errors list
+required choices. Use --skip-google, --skip-backups, --skip-sign-in to defer optional
+setup, --install-cloudflared to authorize OS packages and --enable-linger on Linux.
+R2 uses --r2-bucket, --r2-access-key-id, --r2-secret-access-key and --r2-account
+(optional when an API token can discover it). Google setup opens console guidance;
+verify opens the dashboard and polls creator sign-in. Public pebbles need no Google. Google
 redirect URI: `https://auth.<domain>/callback`. Restart the daemon after tunnel
 setup. Services use launchd on macOS (user login) and systemd user on Linux
 (`loginctl enable-linger "$USER"` for boot without login).

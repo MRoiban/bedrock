@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import { tempDirectory } from "../../test/helpers";
-import { service, serviceFile } from "./index";
+import { service, serviceFile, restartService } from "./index";
 
 for (const platform of ["darwin", "linux"]) test(`service ${platform}: absolute paths, escaping, dry run, install/status/uninstall`, async () => {
   const temp = tempDirectory();
@@ -22,7 +22,10 @@ for (const platform of ["darwin", "linux"]) test(`service ${platform}: absolute 
     expect((await stat(options.target)).mode & 0o777).toBe(0o600);
     expect(await service("status", options)).toMatchObject({ installed: true, running: true });
     await service("install", options);
+    expect(await restartService(options)).toEqual({ restarted: true });
+    expect(commands.at(-1)).toEqual(platform === "darwin" ? ["launchctl", "kickstart", "-k", "gui/501/dev.bedrock.daemon"] : ["systemctl", "--user", "restart", "bedrock.service"]);
     await service("uninstall", options);
+    expect(await restartService(options)).toEqual({ restarted: false });
     const count = commands.length;
     await service("uninstall", options);
     expect(commands).toHaveLength(count);
