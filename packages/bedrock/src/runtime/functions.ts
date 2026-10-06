@@ -120,8 +120,8 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
     identify,
     flushTokens() { return execute("mutation", "tokens", null, new Request("http://localhost"), { user: null }, () => {}); },
     detached,
-    storage(kind: "query" | "mutation", request: Request, handler: (ctx: FunctionContext) => unknown) {
-      return execute(kind, "storage", null, request, undefined, handler);
+    storage(kind: "query" | "mutation", request: Request, handler: (ctx: FunctionContext) => unknown, identity?: RequestIdentity) {
+      return execute(kind, "storage", null, request, identity, handler);
     },
     job(handler: (ctx: FunctionContext) => unknown) {
       return execute("mutation", "job", null, new Request("http://localhost/_bedrock/jobs"), { user: null }, handler);

@@ -242,6 +242,13 @@ metadata insert in that same transaction. Throwing rolls back app rows, metadata
 and the new blob. `BedrockError` is exported from `bedrock`; its code, message,
 and hint pass through to clients.
 
+Tokens and upload hooks compose: a ShareX-style upload route can use a pebble
+token granting `files:assets:upload`, while `admit` and `onStored` record
+`ctx.token.id` with the uploaded file. Staged uploads retain the same user and
+token across authorization and commit slots; every slot checks permissions.
+Chunk status (`GET .../uploads/<uid>`) requires upload permission too.
+Token clients omit cookies on fetch and XHR; browser session uploads retain them.
+
 For example, with an app-defined `used(db, ownerId)` performing `SUM(size)`,
 `QUOTA`, and a registered `assetRows` table:
 

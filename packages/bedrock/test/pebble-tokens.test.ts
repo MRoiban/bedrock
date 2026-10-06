@@ -97,10 +97,15 @@ test("daemon bearer requests omit Origin and session, retain runtime identity, a
   await mkdir(join(dir, "node_modules"), { recursive: true });
   const { symlink } = await import("node:fs/promises");
   await symlink(resolve(import.meta.dir, ".."), join(dir, "node_modules/bedrock"));
-  await Bun.write(join(dir, "pebble.ts"), `import { definePebble, mutation } from "bedrock";
+  await Bun.write(join(dir, "pebble.ts"), `import { definePebble, mutation, bucket } from "bedrock";
+const stored = [];
 export default definePebble({ name: "tokens", access: "users", tokens: true,
- mutations: { mint: mutation(ctx => ctx.tokens.create({ name: "native", permissions: ["route:POST /api/upload", "route:GET /private"] })) },
- routes: { "POST /api/upload": (_r, _s, ctx) => Response.json({ user: ctx.user, token: ctx.token }), "GET /private": (_r, _s, ctx) => Response.json(ctx.user) }
+ storage: [bucket("assets", { access: "owner", maxSize: 100,
+   admit: (ctx) => { if (!ctx.token) throw new Error("Missing upload token"); },
+   onStored: (ctx, file, meta) => { stored.push({ token: ctx.token.id, owner: file.ownerId, meta }); }
+ })],
+ mutations: { mint: mutation(ctx => ctx.tokens.create({ name: "native", permissions: ["route:POST /api/upload", "route:GET /private", "route:GET /stored", "files:assets:upload"] })) },
+ routes: { "GET /stored": () => Response.json(stored), "POST /api/upload": (_r, _s, ctx) => Response.json({ user: ctx.user, token: ctx.token }), "GET /private": (_r, _s, ctx) => Response.json(ctx.user) }
 });`);
   const daemon = await startDaemon({ home: join(temp.dir, "home"), port: 0, domain: "localhost", dev: true, devPebble: { name: "tokens", dir } });
   const origin = `http://tokens.localhost:${daemon.server.port}`;
@@ -116,6 +121,19 @@ export default definePebble({ name: "tokens", access: "users", tokens: true,
     const value = await response.json();
     expect(value.token.id).toBe(created.value.id);
     expect(value.user.id).not.toBe("spoof");
+    const meta = { label: "été", via: "daemon" };
+    const single = await call("/_bedrock/files/assets", { method: "POST", body: "hello", headers: { authorization, "x-bedrock-file-meta": encodeURIComponent(JSON.stringify(meta)) } });
+    expect(single.status).toBe(201);
+    const start = await call("/_bedrock/files/assets/uploads", { method: "POST", body: JSON.stringify({ name: "chunk", size: 5, meta }), headers: { authorization } });
+    expect(start.status).toBe(201);
+    const { uploadId } = await start.json();
+    const path = `/_bedrock/files/assets/uploads/${uploadId}`;
+    expect((await call(path + "/0", { method: "PUT", body: "hello", headers: { authorization } })).status).toBe(204);
+    expect((await (await call(path, { headers: { authorization } })).json()).received).toEqual([0]);
+    expect((await call(path + "/complete", { method: "POST", body: JSON.stringify({ sha256: new Bun.CryptoHasher("sha256").update("hello").digest("hex") }), headers: { authorization } })).status).toBe(201);
+    const stored = await (await call("/stored", { headers: { authorization } })).json();
+    expect(stored).toEqual(Array(2).fill({ token: created.value.id, owner: value.user.id, meta }));
+
     expect((await call("/api/upload", { method: "POST", headers: { authorization, cookie, origin: "http://wrong.localhost" } })).status).toBe(403);
     expect((await call("/api/upload", { method: "POST", headers: { authorization, cookie: "bedrock_session=", origin: "http://wrong.localhost" } })).status).toBe(403);
     const browser = await call("/api/upload", { method: "POST", headers: { authorization: "Bearer brk_invalid", cookie, origin } });

@@ -26,15 +26,19 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
       const config = pebble.storage?.find(value => value.name === bucket);
       if (!config) throw storageError('BUCKET_NOT_FOUND', 'Unknown storage bucket.');
       const method = request.method;
+      // Streaming separates slots; retain one authenticated identity throughout.
+      const identity = await execute.identify(request);
+      const slot = (kind: 'query' | 'mutation', handler: Parameters<typeof execute.storage>[2]) =>
+        execute.storage(kind, request, handler, identity);
       if (!id && method === 'POST') {
         if (!request.body) throw storageError('INVALID_FILE', 'Upload body is required.');
         const info = { ...fileInfo(request.headers.get('x-bedrock-file-name') ? decodeURIComponent(request.headers.get('x-bedrock-file-name')!) : 'file', request.headers.get('content-type') ?? undefined), meta: headerMeta(request.headers.get('x-bedrock-file-meta')) };
         const declared = request.headers.has('content-length') ? Number(request.headers.get('content-length')) : null;
         if (declared !== null && (!Number.isSafeInteger(declared) || declared < 0 || declared > SINGLE_LIMIT)) throw storageError('FILE_TOO_LARGE', 'Invalid single upload size.');
-        await execute.storage('query', request, ctx => authorizeUpload(config, ctx, { ...info, bucket, size: declared, ownerId: ctx.user?.id ?? null }));
+        await slot('query', ctx => authorizeUpload(config, ctx, { ...info, bucket, size: declared, ownerId: ctx.user?.id ?? null }));
         const staged = await stage(root, request.body, Math.min(SINGLE_LIMIT, sizeBytes(config.maxSize)), request.signal);
         try {
-          const result = await execute.storage('mutation', request, ctx => { request.signal.throwIfAborted(); return adoptStored(ctx.storage, config, staged, info); });
+          const result = await slot('mutation', ctx => { request.signal.throwIfAborted(); return adoptStored(ctx.storage, config, staged, info); });
           return Response.json(result.value, { status: 201 });
         } finally { await rm(staged.path, { force: true }); }
       }
@@ -42,11 +46,11 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
         await uploads.cleanup();
         if (!uploadId && method === 'POST') {
           const input = await request.json();
-          const result = await execute.storage('query', request, ctx => uploads.start(bucket, config, ctx, input));
+          const result = await slot('query', ctx => uploads.start(bucket, config, ctx, input));
           return Response.json(result.value, { status: 201 });
         }
         if (uploadId) return await uploads.serial(uploadId, async () => {
-          const result = await execute.storage('query', request, async ctx => {
+          const result = await slot('query', async ctx => {
             const upload = await uploads.load(uploadId, bucket, ctx);
             const { admit: _admit, ...policy } = config;
             await authorizeUpload(policy, ctx, { ...upload, meta: upload.meta });
@@ -58,7 +62,7 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
             const input = request.body ? await request.json() : {};
             const staged = await uploads.complete(uploadId, upload, input?.sha256, request.signal);
             try {
-              const committed = await execute.storage('mutation', request, ctx => { request.signal.throwIfAborted(); return adoptStored(ctx.storage, config, staged, upload); });
+              const committed = await slot('mutation', ctx => { request.signal.throwIfAborted(); return adoptStored(ctx.storage, config, staged, upload); });
               await uploads.remove(uploadId);
               return Response.json(committed.value, { status: 201 });
             } catch (error) { await uploads.remove(uploadId); throw error; }
@@ -73,11 +77,11 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
         throw storageError('UPLOAD_NOT_FOUND', 'Unknown chunk upload endpoint.');
       }
       if (id && parts.length === 2 && method === 'DELETE') {
-        await execute.storage('mutation', request, ctx => ctx.storage.delete(config, id));
+        await slot('mutation', ctx => ctx.storage.delete(config, id));
         return new Response(null, { status: 204 });
       }
       if (id && parts.length === 2 && (method === 'GET' || method === 'HEAD')) {
-        const result = await execute.storage('query', request, async ctx => {
+        const result = await slot('query', async ctx => {
           const blob = await ctx.storage.get(config, id);
           const file = ctx.db.select().from(files).where(and(eq(files.id, id), eq(files.bucket, bucket))).get()!;
           return { blob, file };
