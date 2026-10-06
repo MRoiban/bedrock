@@ -14,9 +14,9 @@ export interface Client<P extends PebbleConfig = PebbleConfig> {
   query<N extends QueryNames<P>>(name: N, args: FunctionArgs<Queries<P>[N]>): Promise<ClientResult<Queries<P>[N]>>;
   mutate<N extends MutationNames<P>>(name: N, args: FunctionArgs<Mutations<P>[N]>): Promise<ClientResult<Mutations<P>[N]>>;
   subscribe<N extends QueryNames<P>>(name: N, args: FunctionArgs<Queries<P>[N]>, onData: (data: ClientResult<Queries<P>[N]>) => void, onError?: (error: BedrockError) => void): () => void;
-  upload(bucket: keyof NonNullable<P["storage"]> & string, file: File, options?: import("./storage").UploadOptions): Promise<import("../config/types").FileMetadata>;
-  fileUrl(bucket: keyof NonNullable<P["storage"]> & string, id: string): string;
-  deleteFile(bucket: keyof NonNullable<P["storage"]> & string, id: string): Promise<void>;
+  upload(bucket: import("../config/types").BucketNames<P>, file: File, options?: import("./storage").UploadOptions): Promise<import("../config/types").FileMetadata>;
+  fileUrl(bucket: import("../config/types").BucketNames<P>, id: string): string;
+  deleteFile(bucket: import("../config/types").BucketNames<P>, id: string): Promise<void>;
   close(): void;
 }
 export interface ClientOptions {

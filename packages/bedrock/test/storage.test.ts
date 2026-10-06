@@ -8,19 +8,19 @@ import { CHUNK_SIZE } from '../src/storage/uploads';
 import { tempDirectory } from './helpers';
 import { storageIdentity } from './storage-identity';
 const storage = {
-  attachments: bucket({ maxSize: '128mb', access: 'owner' }),
-  tiny: bucket({ maxSize: 8, access: 'public', accept: ['text/*'] }),
-  public: bucket({ maxSize: '1mb', access: 'public' }),
-  users: bucket({ maxSize: '1mb', access: 'users' }),
-  custom: bucket({ maxSize: '1mb', access: (ctx, file) => ctx.user?.id === 'editor' || !!ctx.user && file.ownerId === ctx.user.id }),
+  attachments: bucket('attachments', { maxSize: '128mb', access: 'owner' }),
+  tiny: bucket('tiny', { maxSize: 8, access: 'public', accept: ['text/*'] }),
+  public: bucket('public', { maxSize: '1mb', access: 'public' }),
+  users: bucket('users', { maxSize: '1mb', access: 'users' }),
+  custom: bucket('custom', { maxSize: '1mb', access: (ctx, file) => ctx.user?.id === 'editor' || !!ctx.user && file.ownerId === ctx.user.id }),
 };
-const pebble = definePebble({ name: 'storage-test', sync: true, storage,
-  queries: { list: query(storage, ctx => ctx.storage.attachments.list()) },
+const pebble = definePebble({ name: 'storage-test', sync: true, storage: Object.values(storage),
+  queries: { list: query(ctx => ctx.storage.list(storage.attachments)) },
   mutations: {
-    put: mutation(storage, ctx => ctx.storage.attachments.put(new Blob(['hello']), { name: 'hello.txt', mime: 'text/plain' })),
-    fail: mutation(storage, async ctx => { await ctx.storage.attachments.put(new Blob(['discard']), { name: 'fail' }); throw new Error('rollback'); }),
-    deleteFail: mutation(storage, async ctx => { const [file] = await ctx.storage.attachments.list(); await ctx.storage.attachments.delete(file!.id); throw new Error('rollback'); }),
-    tooBig: mutation(storage, ctx => ctx.storage.tiny.put(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('123456')); controller.enqueue(new TextEncoder().encode('789')); controller.close(); } }), { name: 'big', mime: 'text/plain' })),
+    put: mutation(ctx => ctx.storage.put(storage.attachments, new Blob(['hello']), { name: 'hello.txt', mime: 'text/plain' })),
+    fail: mutation(async ctx => { await ctx.storage.put(storage.attachments, new Blob(['discard']), { name: 'fail' }); throw new Error('rollback'); }),
+    deleteFail: mutation(async ctx => { const [file] = await ctx.storage.list(storage.attachments); await ctx.storage.delete(storage.attachments, file!.id); throw new Error('rollback'); }),
+    tooBig: mutation(ctx => ctx.storage.put(storage.tiny, new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('123456')); controller.enqueue(new TextEncoder().encode('789')); controller.close(); } }), { name: 'big', mime: 'text/plain' })),
   },
 });
 async function fixture() {
@@ -50,11 +50,11 @@ test('ctx storage tracks metadata, supports put/get/list/delete and cleans rollb
     expect(await readdir(join(f.temp.dir, 'files', 'attachments'))).toEqual([]);
     await f.execute('mutation', 'put', null, f.request());
     await f.execute('mutation', 'put', null, f.request());
-    const first = (await f.execute.storage('query', f.request(), ctx => ctx.storage.attachments!.list({ limit: 1, ownerId: 'alice' }))).value as any[];
-    const next = (await f.execute.storage('query', f.request(), ctx => ctx.storage.attachments!.list({ cursor: first[0].id }))).value as any[];
+    const first = (await f.execute.storage('query', f.request(), ctx => ctx.storage.list(storage.attachments, { limit: 1, ownerId: 'alice' }))).value as any[];
+    const next = (await f.execute.storage('query', f.request(), ctx => ctx.storage.list(storage.attachments, { cursor: first[0].id }))).value as any[];
     expect(first).toHaveLength(1); expect(next).toHaveLength(1); expect(first[0].id < next[0].id).toBe(true);
-    expect((await f.execute.storage('query', f.request(), ctx => ctx.storage.attachments!.list({ ownerId: 'bob' }))).value).toEqual([]);
-    await expect(f.execute.storage('query', f.request(), ctx => ctx.storage.attachments!.put(new Blob(), { name: 'readonly' }))).rejects.toMatchObject({ code: 'READ_ONLY' });
+    expect((await f.execute.storage('query', f.request(), ctx => ctx.storage.list(storage.attachments, { ownerId: 'bob' }))).value).toEqual([]);
+    await expect(f.execute.storage('query', f.request(), ctx => ctx.storage.put(storage.attachments, new Blob(), { name: 'readonly' }))).rejects.toMatchObject({ code: 'READ_ONLY' });
   } finally { await f.cleanup(); }
 });
 
@@ -153,4 +153,21 @@ test('SDK chooses chunking above 90 MB, retries a failed chunk, reports progress
     const range = await f.call(`attachments/${file.id}`, { headers: { range: 'bytes=0-0' } });
     expect(new Uint8Array(await range.arrayBuffer())[0]).toBe(42);
   } finally { globalThis.fetch = nativeFetch; client.close(); await f.cleanup(); }
+});
+
+
+test('all server storage methods reject unregistered bucket objects with repair hints', async () => {
+  const f = await fixture();
+  try {
+    for (const missing of [bucket('missing', { maxSize: 1, access: 'public' }), bucket('attachments', { maxSize: 1, access: 'public' })]) {
+      for (const handler of [
+        (ctx: import('../src/config').FunctionContext) => ctx.storage.get(missing, 'id'),
+        (ctx: import('../src/config').FunctionContext) => ctx.storage.list(missing),
+        (ctx: import('../src/config').FunctionContext) => ctx.storage.delete(missing, 'id'),
+        (ctx: import('../src/config').FunctionContext) => ctx.storage.put(missing, new Blob(), { name: 'test' }),
+      ]) {
+        await expect(f.execute.storage('mutation', f.request(), handler)).rejects.toMatchObject({ code: 'UNKNOWN_BUCKET', hint: 'Add this exact bucket object to definePebble({ storage: [bucket] }).' });
+      }
+    }
+  } finally { await f.cleanup(); }
 });

@@ -8,11 +8,11 @@ export interface User {
   avatarUrl?: string;
 }
 
-export interface FunctionContext<S = Record<string, BucketConfig>> {
+export interface FunctionContext {
   db: BunSQLiteDatabase<Record<string, unknown>>;
   user: User | null;
   pebble: { readonly name: string };
-  storage: import("../storage").StorageFor<S>;
+  storage: import("../storage").Storage;
   request: Request;
 }
 
@@ -42,6 +42,12 @@ export interface BucketConfig {
   accept?: readonly string[];
 }
 
+export interface Bucket<Name extends string = string> extends BucketConfig {
+  readonly name: Name;
+}
+
+export type BucketNames<P extends PebbleConfig> = NonNullable<P["storage"]>[number]["name"];
+
 export interface PluginConfig {
   name: string;
   schema?: Record<string, unknown>;
@@ -57,7 +63,7 @@ export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends Fun
   schema?: Record<string, unknown>;
   queries?: Q;
   mutations?: M;
-  storage?: Record<string, BucketConfig>;
+  storage?: readonly Bucket[];
   sync?: boolean;
   web?: string;
   routes?: Record<string, RouteHandler>;

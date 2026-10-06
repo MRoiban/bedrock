@@ -59,7 +59,7 @@ export function useMutation<P extends PebbleConfig, N extends MutationNames<P> =
   return { mutate, isPending: count > 0, error };
 }
 
-export function useUpload<P extends PebbleConfig>(bucket: keyof NonNullable<P["storage"]> & string) {
+export function useUpload<P extends PebbleConfig>(bucket: import("../config/types").BucketNames<P>) {
   const client = useClient();
   const [progress, setProgress] = useState(0);
   const [count, setCount] = useState(0);

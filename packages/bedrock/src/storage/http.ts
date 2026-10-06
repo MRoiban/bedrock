@@ -20,13 +20,13 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
   async function handle(request: Request) {
     try {
       const parts = new URL(request.url).pathname.slice('/_bedrock/files/'.length).split('/');
-      const [bucket, id, uploadId, action] = parts;
-      if (!bucket || !Object.hasOwn(pebble.storage ?? {}, bucket)) throw storageError('BUCKET_NOT_FOUND', 'Unknown storage bucket.');
-      const config = pebble.storage![bucket]!;
+      const [bucket = '', id, uploadId, action] = parts;
+      const config = pebble.storage?.find(value => value.name === bucket);
+      if (!config) throw storageError('BUCKET_NOT_FOUND', 'Unknown storage bucket.');
       const method = request.method;
       if (!id && method === 'POST') {
         if (!request.body) throw storageError('INVALID_FILE', 'Upload body is required.');
-        const result = await execute.storage('mutation', request, ctx => ctx.storage[bucket]!.put(measuredStream(request.body!, SINGLE_LIMIT, { size: 0, sha256: '' }), {
+        const result = await execute.storage('mutation', request, ctx => ctx.storage.put(config, measuredStream(request.body!, SINGLE_LIMIT, { size: 0, sha256: '' }), {
           name: request.headers.get('x-bedrock-file-name') ? decodeURIComponent(request.headers.get('x-bedrock-file-name')!) : 'file', mime: request.headers.get('content-type') ?? 'application/octet-stream',
         }));
         return Response.json(result.value, { status: 201 });
@@ -39,7 +39,7 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
           return Response.json(result.value, { status: 201 });
         }
         if (uploadId && action === 'complete' && method === 'POST' && parts.length === 4) {
-          const result = await execute.storage('mutation', request, ctx => uploads.complete(uploadId, bucket, ctx));
+          const result = await execute.storage('mutation', request, ctx => uploads.complete(uploadId, config, ctx));
           await uploads.remove(uploadId);
           return Response.json(result.value, { status: 201 });
         }
@@ -50,12 +50,12 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
         throw storageError('UPLOAD_NOT_FOUND', 'Unknown chunk upload endpoint.');
       });
       if (id && parts.length === 2 && method === 'DELETE') {
-        await execute.storage('mutation', request, ctx => ctx.storage[bucket]!.delete(id));
+        await execute.storage('mutation', request, ctx => ctx.storage.delete(config, id));
         return new Response(null, { status: 204 });
       }
       if (id && parts.length === 2 && (method === 'GET' || method === 'HEAD')) {
         const result = await execute.storage('query', request, async ctx => {
-          const blob = await ctx.storage[bucket]!.get(id);
+          const blob = await ctx.storage.get(config, id);
           const file = ctx.db.select().from(files).where(and(eq(files.id, id), eq(files.bucket, bucket))).get()!;
           return { blob, file };
         });

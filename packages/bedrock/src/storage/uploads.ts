@@ -1,6 +1,6 @@
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { FileMetadata, FunctionContext, BucketConfig } from '../config/types';
+import type { FileMetadata, FunctionContext, Bucket, BucketConfig } from '../config/types';
 import { fileInfo, sizeBytes, storageError } from './config';
 import { fsDriver, measuredStream } from './driver';
 import { allowed } from './index';
@@ -61,8 +61,8 @@ export function createUploads(root: string) {
       });
       await driver.put(`${id}/${n}`, exact);
     },
-    async complete(id: string, bucket: string, ctx: FunctionContext) {
-      const upload = await load(id, bucket, ctx);
+    async complete(id: string, bucket: Bucket, ctx: FunctionContext) {
+      const upload = await load(id, bucket.name, ctx);
       const count = Math.ceil(upload.size / CHUNK_SIZE);
       for (let n = 0; n < count; n++) {
         const info = await driver.stat(`${id}/${n}`);
@@ -76,7 +76,7 @@ export function createUploads(root: string) {
         async pull(controller) { try { const next = await iterator.next(); if (next.done) controller.close(); else controller.enqueue(next.value); } catch (error) { controller.error(error); } },
         async cancel() { await iterator.return(undefined); },
       });
-      const file = await ctx.storage[bucket]!.put(stream, upload);
+      const file = await ctx.storage.put(bucket, stream, upload);
       if (file.size !== upload.size || file.sha256 !== upload.sha256) throw storageError('UPLOAD_CHECKSUM_MISMATCH', 'Assembled size or SHA-256 does not match the upload declaration.');
       return file;
     },

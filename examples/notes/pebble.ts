@@ -9,21 +9,22 @@ export const notes = sqliteTable("notes", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().$defaultFn(() => new Date()),
 });
 
-const storage = { attachments: bucket({ maxSize: "50mb", access: "owner" }) };
+export const attachments = bucket("attachments", { maxSize: "50mb", access: "owner" });
 
 export default definePebble({
   name: "notes",
   access: "users",
   schema: { notes },
   sync: true,
-  storage,
+  storage: [attachments],
   queries: {
     mine: query(({ db, user }) =>
       db.select().from(notes).where(eq(notes.ownerId, user!.id)).orderBy(desc(notes.createdAt))),
   },
   mutations: {
-    add: mutation(storage, v.object({ attachmentId: v.optional(v.string()), body: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(10000)) }), async ({ db, user, storage }, { body, attachmentId }) => {
-      if (attachmentId) await storage.attachments.get(attachmentId);
+    add: mutation(v.object({ attachmentId: v.optional(v.string()), body: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(10000)) }), async ({ db, user, storage }, { body, attachmentId }) => {
+      // The owner policy rejects another user’s attachment before it can be linked.
+      if (attachmentId) await storage.get(attachments, attachmentId);
       return db.insert(notes).values({ ownerId: user!.id, body, attachmentId: attachmentId ?? null }).returning();
     }),
   },

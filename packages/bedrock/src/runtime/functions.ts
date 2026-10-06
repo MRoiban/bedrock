@@ -25,9 +25,9 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         if (result.issues) throw new BedrockError("INVALID_ARGS", result.issues.map(issue => issue.message).join("; "), "Send JSON matching the function's Standard Schema.");
         args = result.value;
       }
-      const ctx: FunctionContext = { db: database.db, user, pebble, storage: {}, request };
+      const ctx: FunctionContext = { db: database.db, user, pebble, storage: null!, request };
       const effects: StorageEffects = { rollback: [], commit: [] };
-      ctx.storage = createStorage(join(database.dataDir, "files"), pebble.storage ?? {}, ctx, kind === "mutation", effects);
+      ctx.storage = createStorage(join(database.dataDir, "files"), pebble.storage ?? [], ctx, kind === "mutation", effects);
       const { sqlite, tracker } = database;
       let committed = false;
       try {

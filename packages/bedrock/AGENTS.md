@@ -46,10 +46,23 @@ export default definePebble({
   (BEDROCK_HOME defaults to ~/.bedrock). Tests must always use temporary data.
 - routes: { "GET /api/health": () => new Response("ok") } uses Bun route matching.
   /_bedrock/ is reserved. HTML web entries are bundled by Bun; directories serve static files.
-- Storage and plugins are config helpers, with no implementation.
-  No signed identity, login redirects, sync, client SDK, or OAuth yet.
-  Function APIs enforce users/email allow lists; web and escape-hatch routes are public.
-  Creator access requires Phase 3 authentication.
+- Storage uses standalone bucket objects: `const attachments = bucket("attachments", { maxSize: "50mb", access: "owner" })`; register `storage: [attachments]`.
+  Names use `[a-z0-9_-]{1,32}` and must be unique; bucket() and definePebble() validate configuration with hints.
+- All handlers share ctx.storage: `put(bucket, blobOrStream, { name, mime? })` returns metadata,
+  `get(bucket, id)` returns a Blob, `delete(bucket, id)`, `list(bucket, { ownerId?, limit?, cursor? })` returns metadata.
+  Passing an unregistered bucket object throws UNKNOWN_BUCKET; use the exact registered object.
+  Function signatures remain query(fn) / query(schema, fn), mutation(fn) / mutation(schema, fn).
+- Before linking a file to a row, call `await storage.get(attachments, attachmentId)` with an owner bucket
+  to verify ownership. See examples/notes. Storage writes require a mutation and roll back with it.
+- createClient<typeof pebble>() from bedrock/client infers bucket names from the storage array:
+  `client.upload("attachments", file, { onProgress?, signal? })`, `fileUrl("attachments", id)`, `deleteFile("attachments", id)`.
+  Client methods accept names only; browser code should not import server bucket configurations.
+  useUpload<typeof pebble>("attachments") from bedrock/react returns upload, progress, isUploading, error.
+- Storage endpoints: POST /_bedrock/files/<bucket>, GET/HEAD/DELETE /_bedrock/files/<bucket>/<id>.
+  Downloads enforce access, support byte ranges, and set safe headers. The SDK chunks uploads above 90 MiB.
+  Metadata lives in _bedrock_files; filesystem blobs live under data/files/<bucket>/<id>.
+- Sync subscriptions observe storage reads and invalidate after committed storage writes.
+  Plugin execution and Phase 3 authentication remain future work.
 
 Table tracking matches known schema table identifiers in executed Drizzle SQL and
 conservatively over-records reads. It does not observe direct db.$client calls,

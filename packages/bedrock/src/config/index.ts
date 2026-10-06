@@ -1,7 +1,7 @@
-import { validateBuckets } from "../storage/config";
+import { validateBucket, validateBuckets } from "../storage/config";
 import { is, Table, getTableName } from "drizzle-orm";
 import { BedrockError } from "../error";
-import type { BucketConfig, PebbleConfig, PluginConfig } from "./types";
+import type { Bucket, BucketConfig, PebbleConfig, PluginConfig } from "./types";
 
 export { query, mutation } from "./functions";
 export type * from "./types";
@@ -36,5 +36,9 @@ export function definePebble<const P extends PebbleConfig>(config: P): P {
   return config;
 }
 
-export function bucket<const T extends BucketConfig>(config: T): T { return config; }
+export function bucket<const N extends string>(name: N, config: BucketConfig): Bucket<N> {
+  const value = { ...config, name };
+  validateBucket(value);
+  return value;
+}
 export function plugin<const T extends PluginConfig>(config: T): T { return config; }

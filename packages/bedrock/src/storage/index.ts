@@ -1,5 +1,5 @@
 import { and, eq, gt, asc } from 'drizzle-orm';
-import type { BucketConfig, FileMetadata, FunctionContext } from '../config/types';
+import type { Bucket, BucketConfig, FileMetadata, FunctionContext } from '../config/types';
 import { files } from './schema';
 import { fileInfo, sizeBytes, storageError } from './config';
 import { fsDriver, measuredStream, type StorageDriver } from './driver';
@@ -10,11 +10,25 @@ export interface StorageBucket {
   delete(id: string): Promise<void>;
   list(filter?: { ownerId?: string; limit?: number; cursor?: string }): Promise<FileMetadata[]>;
 }
-export type StorageFor<S> = { [K in keyof S]: StorageBucket };
+export interface Storage {
+  put(bucket: Bucket, body: Blob | ReadableStream<Uint8Array>, meta: { name: string; mime?: string }): Promise<FileMetadata>;
+  get(bucket: Bucket, id: string): Promise<Blob>;
+  delete(bucket: Bucket, id: string): Promise<void>;
+  list(bucket: Bucket, filter?: { ownerId?: string; limit?: number; cursor?: string }): Promise<FileMetadata[]>;
+}
 export interface StorageEffects { rollback: (() => Promise<void>)[]; commit: (() => Promise<void>)[] }
-export function createStorage(root: string, buckets: Record<string, BucketConfig>, ctx: FunctionContext, writable: boolean, effects: StorageEffects) {
+export function createStorage(root: string, buckets: readonly Bucket[], ctx: FunctionContext, writable: boolean, effects: StorageEffects): Storage {
   const driver = fsDriver(root);
-  return Object.fromEntries(Object.entries(buckets).map(([bucket, config]) => [bucket, bucketApi(bucket, config, ctx, writable, effects, driver)]));
+  function api(bucket: Bucket) {
+    if (!buckets.includes(bucket)) throw storageError('UNKNOWN_BUCKET', `Bucket ${bucket?.name ?? '(invalid)'} is not registered.`, 'Add this exact bucket object to definePebble({ storage: [bucket] }).');
+    return bucketApi(bucket.name, bucket, ctx, writable, effects, driver);
+  }
+  return {
+    put: (bucket, body, meta) => api(bucket).put(body, meta),
+    get: (bucket, id) => api(bucket).get(id),
+    delete: (bucket, id) => api(bucket).delete(id),
+    list: (bucket, filter) => api(bucket).list(filter),
+  };
 }
 export async function allowed(config: BucketConfig, ctx: FunctionContext, file: FileMetadata, deleting = false) {
   if (deleting && ctx.user && file.ownerId === ctx.user.id) return true;

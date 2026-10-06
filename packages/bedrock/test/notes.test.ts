@@ -20,6 +20,18 @@ test("notes example serves bundled UI, adds and lists notes over HTTP, and gates
     expect(listed.value).toHaveLength(1);
     const bob = { ...headers, "x-bedrock-user": JSON.stringify({ id: "bob" }) };
     expect((await (await call("/_bedrock/q/mine", null, bob)).json()).value).toEqual([]);
+    const upload = await fetch(new URL('/_bedrock/files/attachments', running.server.url), {
+      method: 'POST', headers: { 'x-bedrock-user': headers['x-bedrock-user'], 'content-type': 'text/plain' }, body: 'my attachment',
+    });
+    expect(upload.status).toBe(201);
+    const attachment = await upload.json();
+    const forbidden = await call('/_bedrock/m/add', { body: 'stolen attachment', attachmentId: attachment.id }, bob);
+    expect(forbidden.status).toBe(403);
+    expect((await forbidden.json()).error.code).toBe('FORBIDDEN');
+    expect((await (await call('/_bedrock/q/mine', null, bob)).json()).value).toEqual([]);
+    const linked = await (await call('/_bedrock/m/add', { body: 'my attachment', attachmentId: attachment.id })).json();
+    expect(linked.ok).toBe(true);
+    expect(linked.value[0].attachmentId).toBe(attachment.id);
     expect((await call("/_bedrock/m/add", { body: "" })).status).toBe(400);
     expect((await call("/_bedrock/q/missing", null)).status).toBe(404);
     const page = await fetch(running.server.url);
