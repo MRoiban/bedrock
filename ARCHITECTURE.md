@@ -81,8 +81,6 @@ export const notes = sqliteTable("notes", {
 
 export const attachments = bucket("attachments", { maxSize: "50mb", access: "owner" });
 
-const attachments = bucket("attachments", { maxSize: "50mb", access: "owner" });
-
 export default definePebble({
   name: "notes",                        // subdomain; [a-z0-9-]{1,32}
   access: "users",                      // see §5
@@ -132,7 +130,7 @@ authorization is **per pebble**.
 
 - The daemon owns `$BEDROCK_HOME/bedrock.sqlite`: `users(id, email, name, avatar_url, created_at)`, `sessions(id_hash, user_id, expires_at)`, `pebbles(...)`, `deploy_tokens(...)`.
 - Login flow lives at `https://auth.<domain>` (Google OAuth via arctic, PKCE). Session cookie `bedrock_session` is set on `.<domain>`, HttpOnly, Secure, SameSite=Lax, 30-day sliding expiry. Session ids are stored hashed (SHA-256).
-- The daemon resolves the session and forwards the user to the pebble process as `x-bedrock-user` (JSON) plus `x-bedrock-signature` (HMAC with a per-boot secret). Pebble processes reject unsigned identity headers; the daemon strips any incoming `x-bedrock-*` headers from the internet.
+- The daemon resolves the session and forwards the user to the pebble process as `x-bedrock-user` (JSON) plus `x-bedrock-user-ts` and `x-bedrock-signature` (HMAC-SHA256). Pebble processes reject unsigned identity headers; the daemon strips incoming `x-bedrock-*` headers except upload filename metadata. A random per-boot master stays in daemon memory; each child receives only `HMAC-SHA256(master, "identity:" + pebbleName)` in `BEDROCK_IDENTITY_SECRET`. The daemon signs HTTP and WS identity with the target child’s derived secret. Signatures expire after 60 seconds.
 - `access` modes:
   - `"public"` — anyone; `user` may be null.
   - `"users"` — any signed-in Google account.
@@ -162,7 +160,8 @@ Future (do not build yet): row-level diffs, optimistic updates.
 - Files live in `$BEDROCK_HOME/pebbles/<name>/data/files/<bucket>/<id>`; metadata in the pebble DB table `_bedrock_files(id, bucket, owner_id, name, mime, size, sha256, created_at)`.
 - `bucket(name, { maxSize, access, accept? })`; register with `storage: [attachments]`, `access`: `"public" | "users" | "owner" | (ctx, file) => boolean`.
 - Endpoints: `POST /_bedrock/files/<bucket>` (upload), `GET /_bedrock/files/<bucket>/<id>` (download with Range support), `HEAD` and `DELETE` same path.
-- **Chunked uploads** are mandatory for files > 90 MB (Cloudflare's free plan rejects request bodies > 100 MB): `POST .../uploads` → `PUT .../uploads/<uid>/<n>` → `POST .../uploads/<uid>/complete`. The client SDK chunks transparently.
+- **Chunked uploads** are mandatory for files > 90 MiB (Cloudflare's free plan rejects request bodies > 100 MB): `POST .../uploads` → `PUT .../uploads/<uid>/<n>` → `POST .../uploads/<uid>/complete`. The client SDK chunks transparently.
+- The daemon streams upload bodies and download responses, preserves Range headers, and enforces the pebble Origin on every write. Public-bucket downloads are anonymous only on public pebbles.
 - Server-side API in functions: `storage.put(attachments, blobOrStream, { name, mime? })`, `storage.get(attachments, id)` (Blob), `storage.delete(attachments, id)`, `storage.list(attachments, { ownerId?, limit?, cursor? })` (metadata).
 - Bucket names use `[a-z0-9_-]{1,32}`; names must be unique within a pebble. `bucket()` and `definePebble()` validate configuration with repair hints. Passing a bucket object absent from the registered array throws `BedrockError("UNKNOWN_BUCKET", …, hint)`.
 - `ctx.storage` is shared across all handlers; bucket objects supply configuration without pebble-specific context inference. Function signatures remain `query(fn) | query(schema, fn)` and `mutation(fn) | mutation(schema, fn)`.

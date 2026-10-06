@@ -11,7 +11,7 @@ Daemon API requires Bearer tokens; flags --url/--token override env BEDROCK_URL/
 Phase 3 includes Google OAuth/PKCE, hashed sliding sessions, signed identity, access policies and local dev login.
 Dev serves http://<name>.localhost:<port>; protected pages redirect to host-local /_bedrock/dev-login.
 Production Google redirect URI: https://auth.<domain>/callback; setup accepts --google-client-id and --google-client-secret.
-Session cookies never reach pebble code. Writes/WebSocket upgrades require the pebble's own Origin.
+Session cookies never reach pebble code. The daemon keeps a per-boot master in memory and derives each child identity secret with HMAC-SHA256(master, "identity:" + pebbleName). Writes/WebSocket upgrades require the pebble's own Origin.
 Sync, bedrock/client and bedrock/react are implemented: client.user(), loginUrl(), logout(), useUser().
 Plugin execution belongs to a later phase.
 Phase 4 includes WebSocket sync, the typed browser client, and React hooks. Phase 5 includes filesystem storage, streamed/chunked uploads, access policies, safe downloads, and byte ranges.

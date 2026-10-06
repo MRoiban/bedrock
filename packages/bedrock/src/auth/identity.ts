@@ -2,6 +2,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { User } from "../config";
 import { BedrockError } from "../error";
 
+export function deriveIdentitySecret(master: string, pebbleName: string) {
+  return createHmac("sha256", master).update(`identity:${pebbleName}`).digest("hex");
+}
+
 const signature = (json: string, timestamp: string, secret: string) => createHmac("sha256", secret).update(`${json}\n${timestamp}`).digest("hex");
 export function signIdentity(user: User, secret: string, now = Date.now()) {
   const json = JSON.stringify(user);

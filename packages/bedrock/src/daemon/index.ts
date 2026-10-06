@@ -9,7 +9,7 @@ import { Supervisor } from "./supervisor";
 import { createSessions } from "../auth/sessions";
 import { createAuth, type AuthOptions } from "../auth/routes";
 import { cookieToken, requireOrigin } from "../auth/http";
-import { signIdentity } from "../auth/identity";
+import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
 
@@ -24,8 +24,8 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const config = validateConfig({ ...stored, port: options.port ?? stored.port, domain: options.domain ?? stored.domain });
   const db = await openDaemonDatabase(home);
   const dev = options.dev === true;
-  const secret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
-  const supervisor = new Supervisor(home, db, secret, config.creators, dev);
+  const master = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
+  const supervisor = new Supervisor(home, db, master, config.creators, dev);
   const sessions = createSessions(db.db);
   const sockets = sessionSockets(sessions);
   const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);
@@ -71,7 +71,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             if (page) return new Response("This account cannot access this pebble. Sign in with a permitted account.", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
             throw error;
           }
-          const identity = { ...(session ? signIdentity(session.user, secret) : {}), "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) };
+          const identity = { ...(session ? signIdentity(session.user, deriveIdentitySecret(master, target)) : {}), "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) };
           if (websocket) {
             const response = await proxyWebSocket(request, server, child.port, identity, session ? relay => {
               const remove = sockets.register(relay, token!, session.hash);

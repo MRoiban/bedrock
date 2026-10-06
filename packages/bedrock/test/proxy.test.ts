@@ -101,3 +101,31 @@ test("proxy streams HTTP and relays WebSocket text, binary, headers, protocols, 
     await upstream.stop(true);
   }
 }, 15000);
+
+test("proxy forwards a 90 MiB request before the producer finishes", async () => {
+  let received = 0;
+  let release!: () => void;
+  const firstReceived = new Promise<void>(resolve => { release = resolve; });
+  const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, maxRequestBodySize: 90 * 1024 ** 2,
+    async fetch(request) {
+      for await (const bytes of request.body!) { received += bytes.byteLength; release(); }
+      return Response.json({ received });
+    },
+  });
+  const proxy = Bun.serve({ hostname: "127.0.0.1", port: 0, maxRequestBodySize: 90 * 1024 ** 2,
+    fetch: request => proxyHttp(request, upstream.port!),
+  });
+  let sent = 0;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (sent === 1) await firstReceived;
+      if (sent === 90) { controller.close(); return; }
+      controller.enqueue(new Uint8Array(1024 ** 2)); sent++;
+    },
+  });
+  try {
+    const response = await fetch(proxy.url, { method: "POST", body, signal: AbortSignal.timeout(10000) });
+    expect(response.status).toBe(200);
+    expect((await response.json()).received).toBe(90 * 1024 ** 2);
+  } finally { release(); await proxy.stop(true); await upstream.stop(true); }
+}, 15000);

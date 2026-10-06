@@ -132,9 +132,12 @@ bedrock setup --domain example.com --creator you@example.com \
   create users. Identity is global; the daemon stores SHA-256 session hashes.
 - Sessions expire after 30 days, slide at most once daily, and use HttpOnly, Secure,
   SameSite=Lax parent-domain cookies. Dev uses host-only cookies without Secure.
-- The daemon strips internet x-bedrock-* headers and bedrock_session cookies,
+- The daemon strips internet x-bedrock-* headers (except x-bedrock-file-name)
+  and bedrock_session cookies,
   forwards JSON identity with a timestamp/HMAC, and prevents pebble responses from
-  setting bedrock_session. The per-boot signing secret is supplied only via child env.
+  setting bedrock_session. The per-boot master stays in daemon memory; each child gets only its own
+  HMAC-SHA256(master, "identity:" + pebbleName) secret via BEDROCK_IDENTITY_SECRET.
+  Identity forwarded to a child is signed with that child’s derived secret.
   Runtime rejects missing signatures, tampering and timestamps older than 60 seconds.
 - POST /_bedrock/logout on the pebble host is the SDK's same-origin logout endpoint;
   GET /_bedrock/me returns { user } even when the pebble requires authentication.

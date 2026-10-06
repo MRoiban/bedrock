@@ -1,3 +1,4 @@
+import { deriveIdentitySecret } from "../auth/identity";
 import { join } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 import type { Access } from "../config";
@@ -32,7 +33,7 @@ export class Supervisor {
   private loggers = new Map<string, PebbleLogs>();
   private stopping = false;
   private launches = new Set<Promise<unknown>>();
-  constructor(readonly home: string, readonly db: DaemonDatabase, readonly secret = "", readonly creators: string[] = [], readonly dev = false) {}
+  constructor(readonly home: string, readonly db: DaemonDatabase, private readonly master: string, readonly creators: string[] = [], readonly dev = false) {}
   logs(name: string) {
     let logs = this.loggers.get(name);
     if (!logs) { logs = new PebbleLogs(this.home, name); this.loggers.set(name, logs); }
@@ -52,7 +53,7 @@ export class Supervisor {
     const processChild = Bun.spawn([process.execPath, join(import.meta.dir, "../runtime/child.ts")], {
       cwd: release, stdin: "ignore", stdout: "pipe", stderr: "pipe",
       env: { ...process.env, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
-        BEDROCK_DATA: this.dev ? join(release, ".bedrock") : join(this.home, "pebbles", name, "data"), BEDROCK_IDENTITY_SECRET: this.secret, BEDROCK_CREATORS: JSON.stringify(this.creators) },
+        BEDROCK_DATA: this.dev ? join(release, ".bedrock") : join(this.home, "pebbles", name, "data"), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) },
       ipc(message: unknown) {
         const value = message as { name: string; port: number; error?: { code: string; message: string; hint: string } };
         if (value.error) failed(new BedrockError(value.error.code, value.error.message, value.error.hint));
