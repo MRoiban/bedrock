@@ -7,7 +7,7 @@ import { definePebble } from "../config";
 import { openDatabase, defaultDataDir, applyMigrations } from "../db";
 import { BedrockError, asBedrockError } from "../error";
 import { createSync, type SocketData } from "../sync";
-import { resolveUser } from "./identity";
+import { requirePermission } from "./tokens";
 import { checkAccess } from "./access";
 import { createExecutor } from "./functions";
 import { loadWeb } from "./web";
@@ -22,7 +22,7 @@ export type StartPebbleOptions = ({ dir: string; pebble?: never } | { pebble: Pe
 export async function startPebble(options: StartPebbleOptions) {
   const dir = resolve(options.dir ?? process.cwd());
   const pebble = options.pebble ? definePebble(options.pebble) : await loadPebble(dir);
-  const database = openDatabase(options.dataDir ?? defaultDataDir(pebble.name), pebble.schema);
+  const database = openDatabase(options.dataDir ?? defaultDataDir(pebble.name), pebble.schema, pebble.tokens === true);
   try {
     await applyMigrations(database.sqlite, join(dir, "migrations"));
     database.refreshTracking();
@@ -43,8 +43,8 @@ export async function startPebble(options: StartPebbleOptions) {
       routes[path][match[1]!] = async (request: Request, server: Bun.Server<undefined>) => {
         try {
           return typeof handler === "function"
-            ? (await execute.route(request, ctx => handler(request, server, ctx))).value as Response
-            : await execute.detached(request, ctx => handler.run(request, server, ctx));
+            ? (await execute.route(request, ctx => handler(request, server, ctx), `route:${key}`)).value as Response
+            : await execute.detached(request, ctx => handler.run(request, server, ctx), undefined, `route:${key}`);
         } catch (error) { return errorResponse(error); }
       };
     }
@@ -63,11 +63,12 @@ export async function startPebble(options: StartPebbleOptions) {
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };
     routes["/_bedrock/*"] = () => Response.json({ ok: false, error: new BedrockError("NOT_FOUND", "Unknown Bedrock endpoint.", "Use POST /_bedrock/q/<name> or /_bedrock/m/<name>.").toJSON() }, { status: 404 });
-    if (sync) routes["/_bedrock/ws"] = (request: Request, server: Bun.Server<SocketData>) => {
+    if (sync) routes["/_bedrock/ws"] = async (request: Request, server: Bun.Server<SocketData>) => {
       try {
-        const user = resolveUser(request);
+        const { user, token } = await execute.identify(request);
+        requirePermission(token, "*");
         checkAccess(pebble, user);
-        if (server.upgrade(request, { data: { user, request } })) return;
+        if (server.upgrade(request, { data: { user, token, request } })) return;
         return Response.json({ ok: false, error: new BedrockError("WEBSOCKET_REQUIRED", "WebSocket upgrade required.", "Open this endpoint with a WebSocket client.").toJSON() }, { status: 426 });
       } catch (error) { return errorResponse(error); }
     };
@@ -83,6 +84,8 @@ export async function startPebble(options: StartPebbleOptions) {
     });
     const storageCleanup = setInterval(() => { void files.cleanup().catch(error => console.error("Upload cleanup failed", error)); }, 60 * 60 * 1000);
     storageCleanup.unref();
+    const tokenCleanup = pebble.tokens ? setInterval(() => { void execute.flushTokens().catch(error => console.error("Token usage flush failed", error)); }, 60_000) : undefined;
+    tokenCleanup?.unref();
     jobs.start();
     let stopped = false;
     return {
@@ -91,6 +94,7 @@ export async function startPebble(options: StartPebbleOptions) {
         if (stopped) return;
         stopped = true;
         clearInterval(storageCleanup);
+        clearInterval(tokenCleanup);
         sync?.close();
         await server.stop(true);
         await jobs.stop();

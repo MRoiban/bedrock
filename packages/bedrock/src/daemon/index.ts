@@ -65,6 +65,8 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           if (!child) return notFound();
           if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
           const websocket = request.headers.get("upgrade")?.toLowerCase() === "websocket";
+          const hasSessionCookie = (request.headers.get("cookie") ?? "").split(";").some(part => part.trim().split("=", 1)[0] === "bedrock_session");
+          const bearer = !hasSessionCookie && request.headers.get("authorization")?.startsWith("Bearer brk_") === true;
           const token = cookieToken(request);
           const session = sessions.resolve(token, !websocket);
           if (url.pathname === "/_bedrock/logout" && request.method === "POST") return auth.logout(request, origin);
@@ -73,8 +75,10 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));
             return response;
           }
-          if (websocket || !["GET", "HEAD"].includes(request.method)) requireOrigin(request, origin);
-          try { enforceAccess(child.access, session?.user ?? null, config.creators); }
+          // Without the ambient session cookie, a bearer must be supplied explicitly;
+          // cross-site requests cannot borrow browser identity, so CSRF does not apply.
+          if (!bearer && (websocket || !["GET", "HEAD"].includes(request.method))) requireOrigin(request, origin);
+          try { if (!bearer) enforceAccess(child.access, session?.user ?? null, config.creators); }
           catch (error) {
             const page = !websocket && ["GET", "HEAD"].includes(request.method) && request.headers.get("accept")?.includes("text/html") && !url.pathname.startsWith("/_bedrock/") && !url.pathname.startsWith("/api/");
             if (page && error instanceof BedrockError && error.code === "UNAUTHENTICATED") {
@@ -85,6 +89,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             if (page) return new Response("This account cannot access this pebble. Sign in with a permitted account.", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
             throw error;
           }
+          if (hasSessionCookie) request.headers.delete("authorization");
           const identity = { ...(session ? signIdentity(session.user, deriveIdentitySecret(master, target)) : {}), "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) };
           if (websocket) {
             const response = await proxyWebSocket(request, server, child.port, identity, session ? relay => {

@@ -8,7 +8,7 @@ import { BedrockError, asBedrockError } from "../error";
  * server: {op:"data",id,result} | {op:"result",id,ok,value|error} | {op:"error",id,error}
  * Errors contain BedrockError's {code,message,hint}. IDs are nonempty strings.
  */
-export interface SocketData { user: User | null; request: Request }
+export interface SocketData { token?: import("../config").TokenIdentity | null; user: User | null; request: Request }
 type Socket = ServerWebSocket<SocketData>;
 interface Subscription {
   socket: Socket;
@@ -38,7 +38,7 @@ export function createSync(execute: ReturnType<typeof createExecutor>) {
   }
   async function refresh(sub: Subscription, validated: boolean) {
     try {
-      const result = await execute("query", sub.query, sub.args, sub.socket.data.request, { user: sub.user, validated });
+      const result = await execute("query", sub.query, sub.args, sub.socket.data.request, sub.socket.data.token ? undefined : { user: sub.user, validated });
       if (!sub.active) return;
       sub.args = result.args;
       sub.reads = result.reads;
@@ -97,7 +97,7 @@ export function createSync(execute: ReturnType<typeof createExecutor>) {
           } else if (message.op === "mut") {
             if (typeof message.mutation !== "string") throw fail("INVALID_MESSAGE", "A mutation needs a mutation name.");
             try {
-              const result = await execute("mutation", message.mutation, message.args, socket.data.request, { user: socket.data.user });
+              const result = await execute("mutation", message.mutation, message.args, socket.data.request, socket.data.token ? undefined : { user: socket.data.user });
               send(socket, { op: "result", id, ok: true, value: result.value ?? null });
             } catch (error) { send(socket, { op: "result", id, ok: false, error: asBedrockError(error).toJSON() }); }
           } else throw fail("INVALID_MESSAGE", "Unknown operation.");

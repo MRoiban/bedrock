@@ -10,10 +10,11 @@ export function storageClient(base: URL, options: ClientOptions, isClosed: () =>
     if (isClosed()) throw new BedrockError('CLIENT_CLOSED', 'The client is closed.', 'Create a new client.');
     signal?.throwIfAborted();
     const headers = new Headers(options.headers);
+    if (options.token) { headers.set("authorization", `Bearer ${options.token}`); headers.delete("cookie"); }
     headers.set('origin', base.origin);
     new Headers(extra).forEach((value, key) => headers.set(key, value));
     try {
-      const response = await fetch(new URL(path, base), { method, headers, credentials: 'include', ...(body === undefined ? {} : { body }), ...(signal ? { signal } : {}) });
+      const response = await fetch(new URL(path, base), { method, headers, credentials: options.token ? 'omit' : 'include', ...(body === undefined ? {} : { body }), ...(signal ? { signal } : {}) });
       if (response.status === 204) return;
       const result = await response.json();
       if (!response.ok) throw new BedrockError(result.error?.code ?? 'UPLOAD_FAILED', result.error?.message ?? 'File request failed.', result.error?.hint ?? 'Retry the upload.');

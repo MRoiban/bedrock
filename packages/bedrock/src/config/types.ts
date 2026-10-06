@@ -9,10 +9,20 @@ export interface User {
   avatarUrl?: string;
 }
 
+export interface TokenIdentity { id: string; name: string; permissions: string[] }
+export interface TokenMetadata extends TokenIdentity { createdAt: number; lastUsedAt: number | null; expiresAt: number | null }
+export interface TokenApi {
+  create(input: { name: string; permissions: string[]; expiresAt?: number }): TokenIdentity & { token: string; createdAt: number; expiresAt: number | null };
+  list(): TokenMetadata[];
+  revoke(id: string): void;
+}
+
 export interface FunctionContext {
   db: BunSQLiteDatabase<Record<string, unknown>> & { $client: import("bun:sqlite").Database };
   user: User | null;
+  readonly token: TokenIdentity | null;
   pebble: { readonly name: string };
+  tokens: TokenApi;
   storage: import("../storage").Storage;
   request: Request;
   invalidate: (tables: readonly (string | SQLiteTable)[]) => void;
@@ -20,6 +30,7 @@ export interface FunctionContext {
 
 export interface DetachedContext {
   user: User | null;
+  readonly token: TokenIdentity | null;
   pebble: { readonly name: string };
   request: Request;
   read: <R>(fn: (ctx: FunctionContext) => R) => Promise<Awaited<R>>;
@@ -84,6 +95,7 @@ export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends Fun
   mutations?: M;
   storage?: readonly Bucket[];
   sync?: boolean;
+  tokens?: boolean;
   web?: string;
   routes?: Record<string, RouteHandler | DetachedRouteDefinition>;
   plugins?: readonly PluginConfig[];

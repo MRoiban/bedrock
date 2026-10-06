@@ -78,6 +78,7 @@ HTML; `init <name> [--template react]` scaffolds in the current empty directory.
 | `queries`, `mutations` | Maps of named `query(...)` / `mutation(...)` definitions |
 | `storage` | Array of standalone registered bucket objects |
 | `sync` | `true` enables reactive WebSocket subscriptions |
+| `tokens` | `true` enables per-user pebble bearer tokens; disabled by default |
 | `web` | Bun HTML entry path, or static directory, relative to pebble directory |
 | `routes` | Bun handlers keyed by `"METHOD /path"`; `/_bedrock/` reserved |
 | `jobs` | Map of `job(cron, handler)` definitions |
@@ -92,7 +93,7 @@ JSON-serializable: Dates cross the wire as strings, `undefined` becomes `null`.
 Handlers receive `FunctionContext`:
 
 ```ts
-{ db, user, pebble, storage, request, invalidate }
+{ db, user, token, tokens, pebble, storage, request, invalidate }
 ```
 
 `db` is Drizzle over `bun:sqlite`; builders/operators are re-exported from
@@ -147,7 +148,7 @@ jobs: { refresh: job("0 * * * *", async ctx => {
 }, { transaction: false }) },
 ```
 
-`DetachedContext` has `{ user, pebble, request, read, write }`. Direct `db`,
+`DetachedContext` has `{ user, token, pebble, request, read, write }`. Direct `db`,
 `storage`, and `invalidate` access throws `BedrockError` with a read/write hint.
 `read(fn)` is a queued read-only transaction; `write(fn)` is a queued write
 transaction with storage effects and sync notification after commit. Callbacks
@@ -167,7 +168,7 @@ headers/session cookies. Each child receives a separately derived signing secret
 functions and sync verify signed identity too. Direct low-level custom routes
 retain Bun handler behavior; expose pebbles through the daemon, not their child
 port. Route context resolves signed identity, but public/private routing is the
-daemon's responsibility.
+daemon's responsibility for session/anonymous calls; runtime token requests enforce access on every entry point.
 
 `"users"` permits all signed-in users, not only row owners. Queries and mutations
 must enforce row authorization explicitly (e.g. filter `ownerId` and check it
@@ -175,8 +176,8 @@ before update/delete). Creators are configured on the server. Public handlers
 must handle `user === null`. Jobs always have `user: null` and bypass pebble access
 checks; they are trusted server code. Bucket access still applies in jobs.
 
-End-user writes and WebSocket upgrades require the exact pebble Origin. Browser
-clients supply cookies/Origin automatically. Direct non-browser HTTP calls must
+Session/browser writes and WebSocket upgrades require the exact pebble Origin. Browser
+clients supply cookies/Origin automatically. Non-browser calls without a pebble bearer must
 provide Origin; use the SDK for normal requests. Logout closes the session's
 sockets; expiry/revocation is checked periodically. WebSocket traffic alone does
 not slide the 30-day session expiry.
@@ -184,6 +185,65 @@ not slide the 30-day session expiry.
 Creators and their code are trusted. Pebbles have no OS isolation and can access
 server files as the daemon user. Security boundaries protect against end users
 and the internet, not hostile creators. Deploy tokens grant full daemon management.
+
+
+### Pebble tokens for native clients
+
+Enable `tokens: true`. Create tokens through a browser-authenticated mutation;
+return the raw value once and save it securely. Deploy tokens must never be used
+for pebble uploads. For example, save this as `pebble.ts`:
+
+```ts
+import { definePebble, mutation, bucket } from "bedrock";
+const uploads = bucket("uploads", { maxSize: "50mb", access: "owner" });
+export default definePebble({
+  name: "uploads", access: "users", tokens: true, storage: [uploads],
+  mutations: {
+    createUploadToken: mutation(ctx => ctx.tokens.create({
+      name: "ShareX", permissions: ["route:POST /api/upload"],
+    })),
+  },
+  queries: {},
+  routes: { "POST /api/upload": async (request, _server, ctx) => {
+    const file = await ctx.storage.put(uploads, request.body!, {
+      name: request.headers.get("x-filename") ?? "upload",
+      mime: request.headers.get("content-type") ?? "application/octet-stream",
+    });
+    return Response.json(file, { status: 201 });
+  } },
+});
+```
+
+Call `createUploadToken` from your signed-in browser; use the returned `token`:
+
+```sh
+curl https://uploads.example.com/api/upload \
+  -H "Authorization: Bearer $PEBBLE_TOKEN" \
+  -H "Content-Type: image/png" -H "X-Filename: screenshot.png" \
+  --data-binary @screenshot.png
+```
+
+`ctx.tokens.list()` returns only your non-revoked metadata. Create/revoke require
+write slots and participate in the transaction; token callers cannot mint tokens
+or revoke another user's token. Disabled APIs throw `TOKENS_DISABLED`.
+`ctx.token` (also on detached contexts) is `{ id, name, permissions }` or null;
+jobs always get null. Expiry is an optional future Unix millisecond timestamp.
+
+Permissions default to deny: `*`, `query:<name>`, `mutation:<name>`,
+`route:<exact METHOD /path-pattern>`, and `files:<bucket>:upload|read|delete`.
+Targets must exist; plugins' merged routes count. Chunk operations require upload,
+and WS sync requires `*`. Grants supplement user, row, and bucket authorization;
+current pebble access policies still apply to the stored user snapshot. Invalid,
+expired, or revoked tokens return JSON 401 with a new-token hint.
+
+Native bearer calls without a session cookie need no Origin. Any session cookie
+keeps the normal CSRF rules and suppresses bearer authentication; signed identity
+wins. Browser extensions needing cross-origin CORS are not yet supported.
+`createClient<typeof pebble>({ url, token, sync: false })` sends Authorization and
+omits cookies for function/storage calls. Bun supports token WebSockets through
+headers; browser token clients use HTTP snapshots because browser WebSockets
+cannot set Authorization. `fileUrl()` returns a URL only; download it with a
+bearer-authenticated fetch rather than embedding it as a browser image URL.
 
 ## Live queries and explicit invalidation
 
@@ -342,7 +402,7 @@ unsubscribe();
 client.close();
 ```
 
-The client accepts `{ url?, sync?, headers? }`; url defaults to browser origin.
+The client accepts `{ url?, sync?, headers?, token? }`; url defaults to browser origin.
 Pass an absolute URL outside the browser. `sync: false` uses HTTP; without server
 sync, subscriptions deliver one HTTP snapshot. Connections reconnect and resubscribe
 with backoff; uncertain mutations are never automatically replayed. Upload options
