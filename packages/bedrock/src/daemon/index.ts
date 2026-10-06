@@ -1,20 +1,34 @@
 import { join, resolve } from "node:path";
-import { asBedrockError } from "../error";
+import { BedrockError, asBedrockError } from "../error";
 import { atomicWrite, bedrockHome, readConfig, validateConfig } from "./config";
 import { localToken, openDaemonDatabase } from "./db";
 import { createApi, daemonError } from "./api";
 import { hostTarget, proxyHttp, proxyWebSocket, relayWebSocket, type Relay } from "./proxy";
 import { Releases } from "./releases";
 import { Supervisor } from "./supervisor";
+import { createSessions } from "../auth/sessions";
+import { createAuth, type AuthOptions } from "../auth/routes";
+import { cookieToken, requireOrigin } from "../auth/http";
+import { signIdentity } from "../auth/identity";
+import { enforceAccess } from "../auth/policy";
+import { sessionSockets } from "../auth/sockets";
 
-export interface StartDaemonOptions { home?: string; port?: number; domain?: string }
+export interface StartDaemonOptions { home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
   const home = resolve(options.home ?? bedrockHome());
-  const stored = await readConfig(home);
+  if (options.dev && options.domain !== "localhost") throw new BedrockError("INVALID_DEV_DOMAIN", "Development auth requires the explicit localhost domain.", "Use bedrock dev; never enable development auth on a production domain.");
+  const stored = options.dev && !await Bun.file(join(home, "config.json")).exists()
+    ? { domain: "localhost", creators: [], port: 3000 } : await readConfig(home);
+  if (options.dev && stored.domain !== "localhost") throw new BedrockError("INVALID_DEV_DOMAIN", "Development auth cannot use a production configuration.", "Use bedrock dev with its local .bedrock directory.");
   const config = validateConfig({ ...stored, port: options.port ?? stored.port, domain: options.domain ?? stored.domain });
   const db = await openDaemonDatabase(home);
-  const supervisor = new Supervisor(home, db);
+  const dev = options.dev === true;
+  const secret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
+  const supervisor = new Supervisor(home, db, secret, config.creators, dev);
+  const sessions = createSessions(db.db);
+  const sockets = sessionSockets(sessions);
+  const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);
   const releases = new Releases(home, db, supervisor);
   let server: Bun.Server<Relay> | undefined;
   try {
@@ -26,25 +40,66 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       websocket: relayWebSocket,
       async fetch(request, server) {
         try {
-          const target = hostTarget(request.headers.get("host") ?? "", config.domain);
+          const host = request.headers.get("host") ?? "";
+          const target = hostTarget(host, config.domain);
+          const url = new URL(request.url);
+          const origin = `${dev || host.split(":")[0]!.endsWith(".localhost") ? "http" : "https"}://${host}`;
           if (target === "bedrock") return await api(request);
+          if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
           if (!target || ["auth", "www"].includes(target)) return notFound();
           const child = supervisor.child(target);
           if (!child) return notFound();
-          if (request.headers.get("upgrade")?.toLowerCase() === "websocket") return await proxyWebSocket(request, server, child.port);
+          if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
+          const websocket = request.headers.get("upgrade")?.toLowerCase() === "websocket";
+          const token = cookieToken(request);
+          const session = sessions.resolve(token, !websocket);
+          if (url.pathname === "/_bedrock/logout" && request.method === "POST") return auth.logout(request, origin);
+          if (url.pathname === "/_bedrock/me" && request.method === "GET") {
+            const response = Response.json({ user: session?.user ?? null }, { headers: { "cache-control": "no-store" } });
+            if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));
+            return response;
+          }
+          if (websocket || !["GET", "HEAD"].includes(request.method)) requireOrigin(request, origin);
+          try { enforceAccess(child.access, session?.user ?? null, config.creators); }
+          catch (error) {
+            const page = !websocket && ["GET", "HEAD"].includes(request.method) && request.headers.get("accept")?.includes("text/html") && !url.pathname.startsWith("/_bedrock/") && !url.pathname.startsWith("/api/");
+            if (page && error instanceof BedrockError && error.code === "UNAUTHENTICATED") {
+              const returnTo = `${origin}${url.pathname}${url.search}`;
+              const login = dev ? `${origin}/_bedrock/dev-login` : `https://auth.${config.domain}/login`;
+              return Response.redirect(`${login}?return=${encodeURIComponent(returnTo)}`, 302);
+            }
+            if (page) return new Response("This account cannot access this pebble. Sign in with a permitted account.", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
+            throw error;
+          }
+          const identity = { ...(session ? signIdentity(session.user, secret) : {}), "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) };
+          if (websocket) {
+            const response = await proxyWebSocket(request, server, child.port, identity, session ? relay => {
+              const remove = sockets.register(relay, token!, session.hash);
+              sockets.revalidate();
+              return remove;
+            } : undefined);
+            return response;
+          }
           child.requests++;
-          return await proxyHttp(request, child.port, () => { child.requests--; });
+          const response = await proxyHttp(request, child.port, () => { child.requests--; }, identity);
+          if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));
+          return response;
         } catch (error) { return daemonError(error); }
       },
       error: daemonError,
     });
-    await supervisor.restore();
+    if (options.devPebble) {
+      if (!dev) throw new BedrockError("INVALID_DEV_DOMAIN", "A dev pebble requires development mode.", "Use bedrock dev.");
+      const child = await supervisor.launch(options.devPebble.name, options.devPebble.dir);
+      supervisor.activate(options.devPebble.name, child);
+    } else await supervisor.restore();
     await atomicWrite(join(home, "daemon.json"), JSON.stringify({ port: server.port, domain: config.domain }) + "\n");
     let stopping: Promise<void> | undefined;
     return {
       server, home,
       stop() {
         return stopping ??= (async () => {
+          sockets.stop();
           await releases.shutdown();
           await server!.stop(true);
           await supervisor.shutdown();
@@ -53,6 +108,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       },
     };
   } catch (error) {
+    sockets.stop();
     await server?.stop(true);
     await supervisor.shutdown();
     db.close();

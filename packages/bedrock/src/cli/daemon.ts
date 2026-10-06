@@ -14,7 +14,7 @@ function parse(args: string[]) {
     const arg = args[i]!;
     if (["--yes", "-f"].includes(arg)) flags[arg] = "true";
     else if (arg.startsWith("--")) {
-      if (!["--domain", "--creator", "--port", "--url", "--token"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, "Provide a value for domain, creator, port, url, or token.");
+      if (!["--domain", "--creator", "--port", "--url", "--token", "--google-client-id", "--google-client-secret"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, "Provide a value for domain, creator, port, url, or token.");
       flags[arg] = args[++i]!;
     } else positionals.push(arg);
   }
@@ -55,11 +55,13 @@ export async function daemonCommand(command: string, args: string[], json: boole
   const { positionals, flags } = parse(args);
   const name = positionals[0];
   const invalid = () => { throw new BedrockError("INVALID_ARGS", `Invalid arguments for ${command}.`, "Use setup --domain <d> [--creator <email>], daemon, deploy [dir], ls, logs <name> [-f], start|stop|restart|rollback <name>, rm <name> --yes, or token create."); };
-  const allowed = command === "setup" ? ["--domain", "--creator", "--port"] : command === "daemon" ? ["--port"] : command === "logs" ? ["--url", "--token", "-f"] : command === "rm" ? ["--url", "--token", "--yes"] : ["--url", "--token"];
+  const allowed = command === "setup" ? ["--domain", "--creator", "--port", "--google-client-id", "--google-client-secret"] : command === "daemon" ? ["--port"] : command === "logs" ? ["--url", "--token", "-f"] : command === "rm" ? ["--url", "--token", "--yes"] : ["--url", "--token"];
   if (Object.keys(flags).some(key => !allowed.includes(key))) invalid();
   if (command === "setup") {
     if (positionals.length || !flags["--domain"]) invalid();
-    return { command, ...await setup(bedrockHome(), flags["--domain"]!, flags["--creator"], Number(flags["--port"] ?? 3000)) };
+    if (!!flags["--google-client-id"] !== !!flags["--google-client-secret"]) invalid();
+    const result = await setup(bedrockHome(), flags["--domain"]!, flags["--creator"], Number(flags["--port"] ?? 3000), flags["--google-client-id"] ? { clientId: flags["--google-client-id"]!, clientSecret: flags["--google-client-secret"]! } : undefined);
+    return { command, ...result, config: { ...result.config, google: result.config.google ? { clientId: result.config.google.clientId, clientSecret: "[redacted]" } : undefined } };
   }
   if (command === "daemon") {
     if (positionals.length) invalid();

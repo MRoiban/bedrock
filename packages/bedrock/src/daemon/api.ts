@@ -6,10 +6,11 @@ import type { Supervisor } from "./supervisor";
 
 export function daemonError(error: unknown) {
   const typed = asBedrockError(error, "DAEMON_FAILED", "Check the daemon and pebble logs, then retry.");
-  const status = typed.code === "UNAUTHORIZED" ? 401
+  const status = ["UNAUTHORIZED", "UNAUTHENTICATED"].includes(typed.code) ? 401
+    : ["FORBIDDEN", "INVALID_IDENTITY"].includes(typed.code) ? 403
     : ["PEBBLE_NOT_FOUND", "NOT_FOUND"].includes(typed.code) ? 404
     : typed.code === "PEBBLE_BUSY" ? 409
-    : ["INVALID_PEBBLE_NAME", "CONFIRM_REQUIRED", "INVALID_ARCHIVE", "UNSAFE_ARCHIVE"].includes(typed.code) ? 400
+    : ["INVALID_ARGS", "INVALID_RETURN_URL", "INVALID_OAUTH_STATE", "OAUTH_FAILED", "INVALID_PEBBLE_NAME", "CONFIRM_REQUIRED", "INVALID_ARCHIVE", "UNSAFE_ARCHIVE"].includes(typed.code) ? 400
     : typed.code === "UPSTREAM_UNAVAILABLE" ? 502 : 500;
   return Response.json({ ok: false, error: typed.toJSON() }, { status });
 }

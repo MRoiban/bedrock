@@ -1,4 +1,4 @@
-import type { FunctionArgs, FunctionResult, FunctionDefinition, PebbleConfig, QueryNames, MutationNames } from "../config/types";
+import type { FunctionArgs, FunctionResult, FunctionDefinition, PebbleConfig, QueryNames, MutationNames, User } from "../config/types";
 import type { BedrockError } from "../error";
 
 // The wire is JSON: timestamps become strings and void results become null.
@@ -14,6 +14,9 @@ export interface Client<P extends PebbleConfig = PebbleConfig> {
   query<N extends QueryNames<P>>(name: N, args: FunctionArgs<Queries<P>[N]>): Promise<ClientResult<Queries<P>[N]>>;
   mutate<N extends MutationNames<P>>(name: N, args: FunctionArgs<Mutations<P>[N]>): Promise<ClientResult<Mutations<P>[N]>>;
   subscribe<N extends QueryNames<P>>(name: N, args: FunctionArgs<Queries<P>[N]>, onData: (data: ClientResult<Queries<P>[N]>) => void, onError?: (error: BedrockError) => void): () => void;
+  user(): Promise<User | null>;
+  loginUrl(returnTo?: string): string;
+  logout(): Promise<void>;
   close(): void;
 }
 export interface ClientOptions {
@@ -21,6 +24,4 @@ export interface ClientOptions {
   sync?: boolean;
   /** Extra HTTP headers. WebSocket identity normally comes from session cookies. */
   headers?: HeadersInit;
-  /** Local dev bridge for browsers, which cannot send WebSocket identity headers. */
-  devUser?: { id: string; email?: string };
 }

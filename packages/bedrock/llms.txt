@@ -8,4 +8,9 @@ Phase 1 includes config, SQLite migrations/tracking, HTTP functions, static/HTML
 Phase 2 includes the daemon, host proxy (HTTP + WebSockets), subprocess supervision, deploy/rollback, tokens, and rotated logs.
 CLI: setup, daemon, deploy [dir], ls, logs <name> [-f], start|stop|restart <name>, rollback <name>, rm <name> --yes, token create.
 Daemon API requires Bearer tokens; flags --url/--token override env BEDROCK_URL/BEDROCK_TOKEN, then local BEDROCK_HOME defaults.
-Auth, WebSocket sync, SDKs, storage, and plugin execution belong to later phases.
+Phase 3 includes Google OAuth/PKCE, hashed sliding sessions, signed identity, access policies and local dev login.
+Dev serves http://<name>.localhost:<port>; protected pages redirect to host-local /_bedrock/dev-login.
+Production Google redirect URI: https://auth.<domain>/callback; setup accepts --google-client-id and --google-client-secret.
+Session cookies never reach pebble code. Writes/WebSocket upgrades require the pebble's own Origin.
+Sync, bedrock/client and bedrock/react are implemented: client.user(), loginUrl(), logout(), useUser().
+Storage and plugin execution belong to later phases.

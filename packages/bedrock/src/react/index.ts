@@ -1,7 +1,7 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Client, ClientResult } from "../client";
-import type { FunctionArgs, PebbleConfig, QueryNames, MutationNames } from "../config/types";
+import type { User, FunctionArgs, PebbleConfig, QueryNames, MutationNames } from "../config/types";
 import { BedrockError, asBedrockError } from "../error";
 
 const Context = createContext<Client | null>(null);
@@ -57,4 +57,16 @@ export function useMutation<P extends PebbleConfig, N extends MutationNames<P> =
     finally { setCount(value => value - 1); }
   }
   return { mutate, isPending: count > 0, error };
+}
+
+export function useUser() {
+  const client = useClient();
+  const [state, setState] = useState<{ user: User | null; isLoading: boolean }>({ user: null, isLoading: true });
+  useEffect(() => {
+    let active = true;
+    setState({ user: null, isLoading: true });
+    void client.user().then(user => { if (active) setState({ user, isLoading: false }); }, () => { if (active) setState({ user: null, isLoading: false }); });
+    return () => { active = false; };
+  }, [client]);
+  return state;
 }

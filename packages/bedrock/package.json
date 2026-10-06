@@ -18,8 +18,9 @@
     "llms.txt"
   ],
   "dependencies": {
-    "drizzle-orm": "^0.45.1",
-    "@standard-schema/spec": "^1.1.0"
+    "@standard-schema/spec": "^1.1.0",
+    "arctic": "^3.7.0",
+    "drizzle-orm": "^0.45.1"
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.9",

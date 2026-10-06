@@ -16,12 +16,14 @@ export function proxyHeaders(request: Request) {
   for (const name of [...headers.keys()]) {
     if (name.startsWith("x-bedrock-") || [...connection, "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"].includes(name)) headers.delete(name);
   }
+  const cookies = (headers.get("cookie") ?? "").split(";").map(part => part.trim()).filter(part => part && part.split("=", 1)[0]!.trim() !== "bedrock_session");
+  if (cookies.length) headers.set("cookie", cookies.join("; ")); else headers.delete("cookie");
   headers.set("x-forwarded-host", request.headers.get("host") ?? new URL(request.url).host);
   headers.set("x-forwarded-proto", new URL(request.url).protocol.replace(":", ""));
   return headers;
 }
 
-export async function proxyHttp(request: Request, port: number, complete = () => {}) {
+export async function proxyHttp(request: Request, port: number, complete = () => {}, identity: HeadersInit = {}) {
   let completed = false;
   const finish = () => { if (!completed) { completed = true; complete(); } };
   try {
@@ -29,13 +31,17 @@ export async function proxyHttp(request: Request, port: number, complete = () =>
     url.hostname = "127.0.0.1";
     url.port = String(port);
     const response = await fetch(url, {
-      method: request.method, headers: proxyHeaders(request),
+      method: request.method, headers: forwardHeaders(request, identity),
       body: ["GET", "HEAD"].includes(request.method) ? null : request.body,
       redirect: "manual", signal: request.signal, decompress: false,
     });
     const headers = new Headers(response.headers);
     const connection = headers.get("connection")?.split(",").map(name => name.trim().toLowerCase()) ?? [];
     for (const name of [...connection, "connection", "keep-alive", "transfer-encoding", "upgrade", "trailer"]) headers.delete(name);
+    // A pebble must not overwrite the daemon's parent-domain session cookie.
+    const cookies = headers.getSetCookie().filter(value => !/^bedrock_session\s*=/i.test(value));
+    headers.delete("set-cookie");
+    for (const cookie of cookies) headers.append("set-cookie", cookie);
     if (!response.body) { finish(); return new Response(null, { status: response.status, statusText: response.statusText, headers }); }
     const reader = response.body.getReader();
     const body = new ReadableStream<Uint8Array>({
@@ -52,20 +58,27 @@ export async function proxyHttp(request: Request, port: number, complete = () =>
   } catch (error) { finish(); throw error; }
 }
 
+function forwardHeaders(request: Request, identity: HeadersInit) {
+  const headers = proxyHeaders(request);
+  new Headers(identity).forEach((value, key) => headers.set(key, value));
+  return headers;
+}
+
 export interface Relay {
   upstream: WebSocket;
+  onClose?: (() => void) | undefined;
   downstream?: Bun.ServerWebSocket<Relay>;
   pending: (string | ArrayBuffer)[];
   closed?: { code: number; reason: string };
 }
 const closeCode = (code: number) => code === 1005 || code === 1006 || code === 1015 ? 1011 : code;
 
-export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>, port: number) {
+export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>, port: number, identity: HeadersInit = {}, register?: (relay: Relay) => (() => void)) {
   const url = new URL(request.url);
   url.protocol = "ws:";
   url.hostname = "127.0.0.1";
   url.port = String(port);
-  const headers = proxyHeaders(request);
+  const headers = forwardHeaders(request, identity);
   for (const name of [...headers.keys()]) if (name.startsWith("sec-websocket-")) headers.delete(name);
   const protocols = request.headers.get("sec-websocket-protocol")?.split(",").map(value => value.trim());
   // DOM declarations omit Bun's header-capable WebSocket constructor.
@@ -73,6 +86,7 @@ export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>
   const upstream = new BunWebSocket(url, { headers: Object.fromEntries(headers), ...(protocols ? { protocols } : {}) });
   upstream.binaryType = "arraybuffer";
   const relay: Relay = { upstream, pending: [] };
+  relay.onClose = register?.(relay);
   upstream.onmessage = event => {
     if (relay.downstream) relay.downstream.send(event.data);
     else {
@@ -81,6 +95,7 @@ export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>
     }
   };
   upstream.onclose = event => {
+    relay.onClose?.();
     relay.closed = { code: closeCode(event.code), reason: event.reason };
     relay.downstream?.close(relay.closed.code, relay.closed.reason);
   };
@@ -113,5 +128,5 @@ export const relayWebSocket: Bun.WebSocketHandler<Relay> = {
   message(socket, message) {
     if (socket.data.upstream.readyState === WebSocket.OPEN) socket.data.upstream.send(message);
   },
-  close(socket, code, reason) { socket.data.upstream.close(closeCode(code), reason); },
+  close(socket, code, reason) { socket.data.onClose?.(); socket.data.upstream.close(closeCode(code), reason); },
 };

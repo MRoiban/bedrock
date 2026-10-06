@@ -1,31 +1,22 @@
 import { expect, test } from "bun:test";
 import { definePebble, query } from "../src/config";
 import { startPebble } from "../src/runtime";
-import { tempDirectory } from "./helpers";
+import { tempDirectory, identityHeaders } from "./helpers";
 
 async function until(predicate: () => boolean) {
   for (let attempt = 0; attempt < 300; attempt++) { if (predicate()) return; await Bun.sleep(10); }
   throw new Error("Timed out");
 }
-test("upgrade enforces access and ignores development URL identity when disabled", async () => {
+test("upgrade enforces access with signed identity", async () => {
   const temp = tempDirectory();
-  const previous = process.env.BEDROCK_INSECURE_DEV_USER;
   const running = await startPebble({ pebble: definePebble({ name: "protected", access: { allow: ["@allowed.test"] }, sync: true }), dir: temp.dir, dataDir: temp.dir, port: 0 });
   try {
     const url = new URL("/_bedrock/ws", running.server.url);
-    url.searchParams.set("devUser", JSON.stringify({ id: "a", email: "a@allowed.test" }));
-    delete process.env.BEDROCK_INSECURE_DEV_USER;
     expect((await fetch(url)).status).toBe(401);
-    process.env.BEDROCK_INSECURE_DEV_USER = "1";
-    expect((await fetch(url)).status).toBe(426);
-    url.searchParams.set("devUser", JSON.stringify({ id: "b", email: "b@other.test" }));
-    expect((await fetch(url)).status).toBe(403);
-    url.searchParams.set("devUser", "garbage");
-    expect((await fetch(url)).status).toBe(400);
-  } finally {
-    await running.stop(); temp.cleanup();
-    if (previous === undefined) delete process.env.BEDROCK_INSECURE_DEV_USER; else process.env.BEDROCK_INSECURE_DEV_USER = previous;
-  }
+    expect((await fetch(url, { headers: identityHeaders("a", "a@allowed.test") })).status).toBe(426);
+    expect((await fetch(url, { headers: identityHeaders("b", "b@other.test") })).status).toBe(403);
+    expect((await fetch(url, { headers: { "x-bedrock-user": "garbage" } })).status).toBe(403);
+  } finally { await running.stop(); temp.cleanup(); }
 });
 
 test("subscription limits, duplicate IDs, malformed JSON, and oversized messages are bounded", async () => {

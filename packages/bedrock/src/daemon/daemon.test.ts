@@ -23,7 +23,7 @@ test("setup is idempotent and daemon migrations/tokens support later schema exte
     first.close();
     const second = await openDaemonDatabase(temp.dir);
     expect(second.accepts(token)).toBe(true);
-    expect(second.db.query("SELECT name FROM _bedrock_migrations").all()).toHaveLength(1);
+    expect(second.db.query("SELECT name FROM _bedrock_migrations").all()).toHaveLength(2);
     second.close();
   } finally { temp.cleanup(); }
 });
@@ -55,5 +55,18 @@ test("deploy extraction rejects archive links before touching release files", as
     const archive = join(temp.dir, "bad.tar.gz");
     await run(["tar", "-czf", archive, "-C", source, "."]);
     await expect(extract(archive, join(temp.dir, "release"))).rejects.toMatchObject({ code: "UNSAFE_ARCHIVE" });
+  } finally { temp.cleanup(); }
+});
+
+test("setup adds and updates Google credentials idempotently without losing existing configuration", async () => {
+  const temp = tempDirectory();
+  try {
+    await setup(temp.dir, "example.test", "creator@example.test", 1234);
+    const google = { clientId: "client", clientSecret: "secret" };
+    const updated = await setup(temp.dir, "example.test", undefined, 3000, google);
+    expect(updated.created).toBe(false);
+    expect(updated.config).toMatchObject({ creators: ["creator@example.test"], port: 1234, google });
+    expect((await setup(temp.dir, "example.test", undefined, 3000, google)).config).toEqual(updated.config);
+    expect((await setup(temp.dir, "example.test", undefined, 3000, { ...google, clientSecret: "new-secret" })).config.google?.clientSecret).toBe("new-secret");
   } finally { temp.cleanup(); }
 });

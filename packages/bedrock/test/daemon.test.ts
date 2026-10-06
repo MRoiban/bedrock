@@ -6,16 +6,16 @@ import { setup } from "../src/daemon/config";
 import { createArchive } from "../src/daemon/archive";
 import { tempDirectory } from "./helpers";
 
-async function harness() {
+async function harness(dev = false) {
   const temp = tempDirectory();
   const home = join(temp.dir, "home");
-  await setup(home, "example.test", "creator@example.test", 0);
-  const daemon = await startDaemon({ home });
+  await setup(home, dev ? "localhost" : "example.test", "creator@example.test", 0);
+  const daemon = await startDaemon({ home, ...(dev ? { domain: "localhost", dev: true } : {}) });
   const token = (await Bun.file(join(home, "admin-token")).text()).trim();
   const api = (path: string, init: RequestInit = {}, bearer = token) => fetch(new URL(path, daemon.server.url), {
     ...init, headers: { host: "bedrock.localhost", authorization: `Bearer ${bearer}`, ...init.headers },
   });
-  const request = (host: string, path = "/", init: RequestInit = {}) => fetch(new URL(path, daemon.server.url), { ...init, headers: { ...init.headers, host } });
+  const request = (host: string, path = "/", init: RequestInit = {}) => fetch(new URL(path, daemon.server.url), { ...init, headers: { origin: `${host.includes(".localhost") ? "http" : "https"}://${host}`, ...init.headers, host }, redirect: "manual" });
   const deploy = async (name: string, dir: string) => {
     const archive = join(temp.dir, `${crypto.randomUUID()}.tar.gz`);
     await createArchive(dir, archive);
@@ -109,29 +109,29 @@ test("daemon routes, strips headers, authorizes, swaps, retains releases, rolls 
 }, 30000);
 
 test("deploys notes with production dependencies, serves HTML, adds/lists, and rejects a broken migration", async () => {
-  const h = await harness();
+  const h = await harness(true);
   const dir = join(h.temp.dir, "notes");
   await mkdir(dir);
   await cp(resolve(import.meta.dir, "../../../examples/notes"), dir, { recursive: true, filter: path => !path.split("/").includes("node_modules") && !path.split("/").includes(".bedrock") });
-  // Phase 3 owns daemon identity. Exercise the real notes code with anonymous ownership meanwhile.
-  const notes = await Bun.file(join(dir, "pebble.ts")).text();
-  await Bun.write(join(dir, "pebble.ts"), notes.replace('access: "users"', 'access: "public"').replaceAll("user!.id", '(user?.id ?? "anonymous")'));
   try {
     const response = await h.deploy("notes", dir);
     const body = await response.json();
     expect(body.ok).toBe(true);
-    expect((await h.request("notes.localhost")).status).toBe(200);
-    const call = (path: string, args: unknown) => h.request("notes.localhost", path, { method: "POST", body: JSON.stringify(args), headers: { "content-type": "application/json" } });
+    expect((await h.request("notes.localhost", "/", { headers: { accept: "text/html" } })).status).toBe(302);
+    const login = await h.request("notes.localhost", "/_bedrock/dev-login", { method: "POST", body: new URLSearchParams({ email: "alice@example.test" }) });
+    const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+    expect((await h.request("notes.localhost", "/", { headers: { cookie } })).status).toBe(200);
+    const call = (path: string, args: unknown) => h.request("notes.localhost", path, { method: "POST", body: JSON.stringify(args), headers: { "content-type": "application/json", cookie } });
     expect((await (await call("/_bedrock/m/add", { body: "deployed note" })).json()).value[0].body).toBe("deployed note");
     expect((await (await call("/_bedrock/q/mine", null)).json()).value).toHaveLength(1);
     await Bun.write(join(dir, "migrations/9999_bad.sql"), "THIS IS NOT SQL;");
     expect((await h.deploy("notes", dir)).status).toBe(500);
     expect((await (await call("/_bedrock/q/mine", null)).json()).value).toHaveLength(1);
     await h.daemon.stop();
-    const restored = await startDaemon({ home: h.home });
+    const restored = await startDaemon({ home: h.home, dev: true, domain: "localhost" });
     try {
-      expect((await fetch(new URL("/api/health", restored.server.url), { headers: { host: "notes.localhost" } })).status).toBe(200);
-      const response = await fetch(new URL("/_bedrock/q/mine", restored.server.url), { method: "POST", body: "null", headers: { host: "notes.localhost" } });
+      expect((await fetch(new URL("/api/health", restored.server.url), { headers: { host: "notes.localhost", cookie, origin: "http://notes.localhost" } })).status).toBe(200);
+      const response = await fetch(new URL("/_bedrock/q/mine", restored.server.url), { method: "POST", body: "null", headers: { host: "notes.localhost", cookie, origin: "http://notes.localhost" } });
       expect((await response.json()).value).toHaveLength(1);
     } finally { await restored.stop(); }
   } finally { await h.cleanup(); }

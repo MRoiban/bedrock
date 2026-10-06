@@ -32,8 +32,12 @@ export default definePebble({
 - HTTP: POST /_bedrock/q/<name> or /_bedrock/m/<name>, JSON arguments (null without args).
   Responses: { ok: true, value } or { ok: false, error: { code, message, hint } }.
 - Development: bedrock dev [--port 3000]. Data lives in ./.bedrock/db.sqlite.
-  The CLI enables BEDROCK_INSECURE_DEV_USER=1 in its localhost worker only.
-  Send x-bedrock-user containing JSON { id, email? } to test user access.
+  Runs an embedded daemon plus a private pebble child at http://<name>.localhost:<port>.
+  Protected pages redirect to /_bedrock/dev-login; pick any email and optional name.
+  Dev cookies are HttpOnly and host-only: browsers reject Domain=.localhost.
+  auth.localhost/login?return=<pebble URL> redirects to the host-local form.
+  Dev mode requires an explicit startDaemon dev flag and a localhost domain/config.
+  Production daemons never read a dev-mode environment switch.
 - Migration generation: bun add --dev drizzle-kit; bedrock db generate.
   Tables in pebble.schema are used automatically. Commit migrations/ including meta/.
   bedrock db plan shows pending SQL; bedrock db migrate applies it to ./.bedrock/.
@@ -47,9 +51,16 @@ export default definePebble({
 - routes: { "GET /api/health": () => new Response("ok") } uses Bun route matching.
   /_bedrock/ is reserved. HTML web entries are bundled by Bun; directories serve static files.
 - Storage and plugins are config helpers, with no implementation.
-  No signed identity, login redirects, sync, client SDK, or OAuth yet.
-  Function APIs enforce users/email allow lists; web and escape-hatch routes are public.
-  Creator access requires Phase 3 authentication.
+  The daemon gates every pebble route using access from the child's health check.
+  Access: public, users, creators (config.json emails), or { allow: [email, "@domain"] }.
+  Runtime functions and sync also verify signed identity and enforce access.
+- createClient({ url? }) from bedrock/client supports query, mutate, subscribe,
+  user() -> User | null, loginUrl(returnTo?) -> string, logout() -> Promise<void>, close().
+  Browser sessions travel as cookies automatically. React provides useUser() ->
+  { user, isLoading }, useQuery, useMutation and BedrockProvider.
+  Non-browser writes and WebSocket upgrades must send the pebble's exact Origin.
+- Sync reruns subscriptions for each socket's user after committed writes.
+  Logout closes that session's sockets; expiry/revocation is checked every five minutes.
 
 Table tracking matches known schema table identifiers in executed Drizzle SQL and
 conservatively over-records reads. It does not observe direct db.$client calls,
@@ -70,7 +81,7 @@ bedrock rm hello --yes
 - startDaemon({ home, port, domain }) from bedrock/daemon returns { server, home, stop }.
   Run setup first. It listens on 127.0.0.1; each pebble is a separate Bun subprocess.
 - Hosts: <name>.<domain> and <name>.localhost route to pebbles. bedrock hosts route
-  to the daemon API; auth and www are reserved. HTTP and generic WebSockets proxy.
+  to the daemon API; auth hosts serve login/callback/logout/me; www is reserved. HTTP and generic WebSockets proxy.
 - Runtime dependencies must be in dependencies, not devDependencies. The daemon
   installs production deps and symlinks its own bedrock package into every release.
   Archives must contain regular files/directories only, with pebble.ts at the root.
@@ -87,5 +98,28 @@ bedrock rm hello --yes
   the previous version. Runtime GET /_bedrock/health is reserved for readiness.
 - Logs rotate at 10 MB, keeping three older files. --json logs -f streams one JSON
   object which completes when interrupted; parse it after the stream ends.
-- Daemon children disable insecure development identity. Incoming x-bedrock-*
+- Incoming x-bedrock-*
   headers are stripped. Auth/user pebbles require Phase 3; use public pebbles now.
+
+## Authentication (Phase 3)
+
+```sh
+bedrock setup --domain example.com --creator you@example.com \
+  --google-client-id <id> --google-client-secret <secret>
+```
+
+- Configure Google's redirect URI as https://auth.<domain>/callback.
+  Repeating setup adds/updates Google credentials while preserving existing config.
+- Production login: auth.<domain>/login?return=https://<pebble>.<domain>/.
+  Google OAuth uses PKCE and browser-bound, single-use state with a __Host- cookie. Only verified emails
+  create users. Identity is global; the daemon stores SHA-256 session hashes.
+- Sessions expire after 30 days, slide at most once daily, and use HttpOnly, Secure,
+  SameSite=Lax parent-domain cookies. Dev uses host-only cookies without Secure.
+- The daemon strips internet x-bedrock-* headers and bedrock_session cookies,
+  forwards JSON identity with a timestamp/HMAC, and prevents pebble responses from
+  setting bedrock_session. The per-boot signing secret is supplied only via child env.
+  Runtime rejects missing signatures, tampering and timestamps older than 60 seconds.
+- POST /_bedrock/logout on the pebble host is the SDK's same-origin logout endpoint;
+  GET /_bedrock/me returns { user } even when the pebble requires authentication.
+- Sibling origins cannot write or upgrade WebSockets. No Origin also fails for writes.
+  WebSocket-only activity does not extend session expiry; make an HTTP request to slide it.

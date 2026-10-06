@@ -4,7 +4,7 @@ import { BedrockError, asBedrockError } from "../error";
 export function errorResponse(error: unknown) {
   const typed = asBedrockError(error);
   const status = typed.code === "FUNCTION_NOT_FOUND" ? 404
-    : typed.code === "UNAUTHENTICATED" ? 401 : typed.code === "FORBIDDEN" ? 403
+    : typed.code === "UNAUTHENTICATED" ? 401 : ["FORBIDDEN", "INVALID_IDENTITY"].includes(typed.code) ? 403
     : ["INVALID_ARGS", "INVALID_JSON", "INVALID_USER"].includes(typed.code) ? 400 : 500;
   return Response.json({ ok: false, error: typed.toJSON() }, { status });
 }

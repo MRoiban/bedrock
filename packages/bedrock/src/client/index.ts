@@ -1,3 +1,4 @@
+import type { User } from "../config/types";
 import type { PebbleConfig } from "../config/types";
 import { BedrockError, asBedrockError } from "../error";
 import type { Client, ClientOptions } from "./types";
@@ -49,7 +50,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     try {
       const headers = new Headers(options.headers);
       headers.set("Content-Type", "application/json");
-      if (options.devUser) headers.set("x-bedrock-user", JSON.stringify(options.devUser));
+      headers.set("origin", base.origin);
       const response = await fetch(new URL(`/_bedrock/${kind}/${encodeURIComponent(name)}`, base), {
         method: "POST", headers, credentials: "include", signal: AbortSignal.timeout(30_000), body: JSON.stringify(wireArgs(args)),
       });
@@ -85,7 +86,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     probing = true;
     try {
       const headers = new Headers(options.headers);
-      if (options.devUser) headers.set("x-bedrock-user", JSON.stringify(options.devUser));
+      headers.set("origin", base.origin);
       const response = await fetch(new URL("/_bedrock/ws", base), { headers, credentials: "include", signal: AbortSignal.timeout(5000) });
       if (closed) return;
       // A plain request gets 426 only when sync is enabled and access permits it.
@@ -99,9 +100,16 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     if (closed || unavailable || probing || socket || timer) return;
     const url = new URL("/_bedrock/ws", base);
     url.protocol = base.protocol === "https:" ? "wss:" : "ws:";
-    if (options.devUser) url.searchParams.set("devUser", JSON.stringify(options.devUser));
     let ws: WebSocket;
-    try { ws = new WebSocket(url); } catch { fallback(); return; }
+    try {
+      // Bun callers can supply cookies; browsers authenticate with their cookie jar.
+      if (typeof Bun !== "undefined") {
+        const Constructor = WebSocket as unknown as new (url: URL, options: Bun.WebSocketOptions) => WebSocket;
+        const headers = new Headers(options.headers);
+        headers.set("origin", base.origin);
+        ws = new Constructor(url, { headers: Object.fromEntries(headers) });
+      } else ws = new WebSocket(url);
+    } catch { fallback(); return; }
     socket = ws;
     let opened = false;
     const timeout = setTimeout(() => ws.close(), 5000);
@@ -143,7 +151,26 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       reconnect();
     };
   }
+  async function authRequest(path: string, method = "GET") {
+    if (closed) throw new BedrockError("CLIENT_CLOSED", "The client is closed.", "Create a new client.");
+    try {
+      const headers = new Headers(options.headers);
+      headers.set("origin", base.origin);
+      const response = await fetch(new URL(path, base), { method, headers, credentials: "include", signal: AbortSignal.timeout(30_000) });
+      const result = await response.json();
+      if (!response.ok) throw remoteError(result.error);
+      return result;
+    } catch (error) { throw asBedrockError(error, "REQUEST_FAILED", "Check your network connection and pebble URL."); }
+  }
   return {
+    async user(): Promise<User | null> { return (await authRequest("/_bedrock/me")).user; },
+    loginUrl(returnTo = typeof location !== "undefined" ? location.href : base.href) {
+      const dev = base.hostname.endsWith(".localhost");
+      const login = dev ? new URL("/_bedrock/dev-login", base) : new URL(`https://auth.${base.hostname.split(".").slice(1).join(".")}/login`);
+      login.searchParams.set("return", returnTo);
+      return login.href;
+    },
+    async logout() { await authRequest("/_bedrock/logout", "POST"); },
     query: (name, args) => http("q", name, args),
     mutate(name, args) {
       if (closed) return Promise.reject(new BedrockError("CLIENT_CLOSED", "The client is closed.", "Create a new client."));

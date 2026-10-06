@@ -37,13 +37,18 @@ export default definePebble({ name: "devtest", schema: { items },
     await until(() => stdout.includes("\n"));
     const started = JSON.parse(stdout.trim());
     expect(started.ok).toBe(true);
-    const add = await fetch(new URL("/_bedrock/m/add", started.url), { method: "POST", body: "null" });
+    const request = (url: URL, init: RequestInit = {}) => {
+      const host = url.host;
+      url.hostname = "127.0.0.1";
+      return fetch(url, { ...init, headers: { ...init.headers, host } });
+    };
+    const add = await request(new URL("/_bedrock/m/add", started.url), { method: "POST", body: "null", headers: { origin: new URL(started.url).origin } });
     expect((await add.json()).value).toEqual([{ id: "saved" }]);
     await Bun.write(join(temp.dir, "pebble.ts"), source.replace('"v1"', '"v2"'));
     await until(() => /Restarted devtest: (http:\/\/[^\s]+)/.test(stderr));
     const newUrl = /Restarted devtest: (http:\/\/[^\s]+)/.exec(stderr)![1]!;
-    expect(await (await fetch(new URL("/version", newUrl))).text()).toBe("v2");
-    const listed = await fetch(new URL("/_bedrock/q/list", newUrl), { method: "POST", body: "null" });
+    expect(await (await request(new URL("/version", newUrl))).text()).toBe("v2");
+    const listed = await request(new URL("/_bedrock/q/list", newUrl), { method: "POST", body: "null", headers: { origin: new URL(newUrl).origin } });
     expect((await listed.json()).value).toEqual([{ id: "saved" }]);
     expect(stdout.trim().split("\n")).toHaveLength(1);
   } finally {

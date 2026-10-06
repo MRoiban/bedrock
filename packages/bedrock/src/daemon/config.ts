@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 
-export interface DaemonConfig { domain: string; creators: string[]; port: number }
+export interface DaemonConfig { domain: string; creators: string[]; port: number; google?: { clientId: string; clientSecret: string } }
 export const bedrockHome = () => resolve(process.env.BEDROCK_HOME ?? join(homedir(), ".bedrock"));
 
 export function validateConfig(config: DaemonConfig) {
@@ -12,6 +12,7 @@ export function validateConfig(config: DaemonConfig) {
       !Number.isInteger(config.port) || config.port < 0 || config.port > 65535) {
     throw new BedrockError("INVALID_DAEMON_CONFIG", "Invalid daemon domain, creators, or port.", "Use a lowercase hostname, creator emails, and a port from 0 to 65535.");
   }
+  if (config.google && (typeof config.google.clientId !== "string" || !config.google.clientId || typeof config.google.clientSecret !== "string" || !config.google.clientSecret)) throw new BedrockError("INVALID_DAEMON_CONFIG", "Both Google credentials are required.", "Pass --google-client-id and --google-client-secret together.");
   return config;
 }
 
@@ -27,11 +28,15 @@ export async function readConfig(home: string): Promise<DaemonConfig> {
   catch (error) { throw asBedrockError(error, "CONFIG_MISSING", "Run bedrock setup --domain <domain> --creator <email> first."); }
 }
 
-export async function setup(home: string, domain: string, creator?: string, port = 3000) {
+export async function setup(home: string, domain: string, creator?: string, port = 3000, google?: DaemonConfig["google"]) {
   await mkdir(home, { recursive: true, mode: 0o700 });
   const path = join(home, "config.json");
-  if (await Bun.file(path).exists()) return { home, config: await readConfig(home), created: false };
-  const config = validateConfig({ domain, creators: creator ? [creator] : [], port });
+  if (await Bun.file(path).exists()) {
+    const config = await readConfig(home);
+    if (google) { config.google = google; validateConfig(config); await atomicWrite(path, JSON.stringify(config, null, 2) + "\n"); }
+    return { home, config, created: false };
+  }
+  const config = validateConfig({ domain, creators: creator ? [creator] : [], port, ...(google ? { google } : {}) });
   await atomicWrite(path, JSON.stringify(config, null, 2) + "\n");
   return { home, config, created: true };
 }

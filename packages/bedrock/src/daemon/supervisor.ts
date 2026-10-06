@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
+import type { Access } from "../config";
 import type { DaemonDatabase, PebbleRecord } from "./db";
 import { PebbleLogs } from "./logs";
 
@@ -10,6 +11,7 @@ export interface Child {
   started: number;
   reading: Promise<unknown>;
   requests: number;
+  access: Access;
 }
 interface State { child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number }
 
@@ -30,7 +32,7 @@ export class Supervisor {
   private loggers = new Map<string, PebbleLogs>();
   private stopping = false;
   private launches = new Set<Promise<unknown>>();
-  constructor(readonly home: string, readonly db: DaemonDatabase) {}
+  constructor(readonly home: string, readonly db: DaemonDatabase, readonly secret = "", readonly creators: string[] = [], readonly dev = false) {}
   logs(name: string) {
     let logs = this.loggers.get(name);
     if (!logs) { logs = new PebbleLogs(this.home, name); this.loggers.set(name, logs); }
@@ -50,7 +52,7 @@ export class Supervisor {
     const processChild = Bun.spawn([process.execPath, join(import.meta.dir, "../runtime/child.ts")], {
       cwd: release, stdin: "ignore", stdout: "pipe", stderr: "pipe",
       env: { ...process.env, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
-        BEDROCK_DATA: join(this.home, "pebbles", name, "data"), BEDROCK_INSECURE_DEV_USER: "0" },
+        BEDROCK_DATA: this.dev ? join(release, ".bedrock") : join(this.home, "pebbles", name, "data"), BEDROCK_IDENTITY_SECRET: this.secret, BEDROCK_CREATORS: JSON.stringify(this.creators) },
       ipc(message: unknown) {
         const value = message as { name: string; port: number; error?: { code: string; message: string; hint: string } };
         if (value.error) failed(new BedrockError(value.error.code, value.error.message, value.error.hint));
@@ -60,7 +62,7 @@ export class Supervisor {
     const reading = Promise.all([logs.pump(processChild.stdout), logs.pump(processChild.stderr)]);
     // Observe pipe failures immediately; the child is also reaped on every failure path.
     void reading.catch(() => {});
-    const child: Child = { process: processChild, port: 0, release, started: Date.now(), reading, requests: 0 };
+    const child: Child = { process: processChild, port: 0, release, started: Date.now(), reading, requests: 0, access: "users" };
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const value = await Promise.race([
@@ -71,7 +73,11 @@ export class Supervisor {
       if (value.name !== name || !Number.isInteger(value.port) || value.port < 1) throw new BedrockError("PEBBLE_NAME_MISMATCH", "Deployed pebble name does not match the requested name.", "Use the name from definePebble in the deploy request.");
       child.port = value.port;
       const health = await fetch(`http://127.0.0.1:${child.port}/_bedrock/health`, { signal: AbortSignal.timeout(3000) });
-      if (!health.ok || (await health.json()).name !== name || processChild.exitCode !== null) throw new BedrockError("HEALTH_FAILED", `${name} failed its health check.`, `Check bedrock logs ${name} before retrying.`);
+      const info = await health.json();
+      if (!health.ok || info.name !== name || processChild.exitCode !== null) throw new BedrockError("HEALTH_FAILED", `${name} failed its health check.`, `Check bedrock logs ${name} before retrying.`);
+      const access = info.access;
+      if (!["public", "users", "creators"].includes(access) && !(access && Array.isArray(access.allow) && access.allow.every((email: unknown) => typeof email === "string"))) throw new BedrockError("HEALTH_FAILED", "Invalid child access policy.", "Return a valid access value in the health check.");
+      child.access = access;
       return child;
     } catch (error) {
       await stopChild(child).catch(() => {});
@@ -99,7 +105,7 @@ export class Supervisor {
     state.timer = setTimeout(() => {
       delete state.timer;
       const work = this.launch(name, child.release).then(next => {
-        if (this.stopping || state.generation !== generation || this.db.get(name)?.status !== "restarting") return stopChild(next);
+        if (this.stopping || state.generation !== generation || (!this.dev && this.db.get(name)?.status !== "restarting")) return stopChild(next);
         this.activate(name, next, false);
         this.db.status(name, "running");
       }).catch(error => {
