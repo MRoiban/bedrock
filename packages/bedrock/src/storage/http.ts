@@ -17,6 +17,25 @@ export function downloadHeaders(file: FileMetadata, isPublic: boolean) {
     'Content-Disposition': `${inlineSafe(file.mime) ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name).replaceAll("'", '%27')}`,
   });
 }
+
+export function fileResponse(request: Request, file: FileMetadata, blob: Blob, options: { cache?: string; disposition?: 'inline' | 'attachment' } = {}): Response {
+  const headers = downloadHeaders(file, false);
+  headers.set('Cache-Control', options.cache ?? 'private, no-store');
+  if (options.disposition === 'attachment') headers.set('Content-Disposition', headers.get('Content-Disposition')!.replace(/^inline/, 'attachment'));
+  if (request.headers.get('if-none-match') === headers.get('etag')) return new Response(null, { status: 304, headers });
+  const range = request.headers.get('range');
+  if (range && (!request.headers.has('if-range') || request.headers.get('if-range') === headers.get('etag'))) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    let start = 0, end = file.size - 1;
+    if (match) { if (match[1]) { start = Number(match[1]); if (match[2]) end = Math.min(end, Number(match[2])); } else if (match[2]) start = Math.max(0, file.size - Number(match[2])); }
+    if (!match || !match[1] && !match[2] || start > end || start >= file.size || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)) {
+      headers.set('Content-Range', `bytes */${file.size}`); headers.delete('Content-Length'); return new Response(null, { status: 416, headers });
+    }
+    headers.set('Content-Range', `bytes ${start}-${end}/${file.size}`); headers.set('Content-Length', String(end - start + 1));
+    return new Response(request.method === 'HEAD' ? null : blob.slice(start, end + 1), { status: 206, headers });
+  }
+  return new Response(request.method === 'HEAD' ? null : blob, { headers });
+}
 export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<typeof createExecutor>, root: string) {
   const uploads = createUploads(root);
   async function handle(request: Request) {
@@ -87,20 +106,7 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
           return { blob, file };
         });
         const { blob, file } = result.value as { blob: Blob; file: FileMetadata };
-        const headers = downloadHeaders(file, config.access === 'public');
-        if (request.headers.get('if-none-match') === headers.get('etag')) return new Response(null, { status: 304, headers });
-        const range = request.headers.get('range');
-        if (range && (!request.headers.has('if-range') || request.headers.get('if-range') === headers.get('etag'))) {
-          const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-          let start = 0, end = file.size - 1;
-          if (match) { if (match[1]) { start = Number(match[1]); if (match[2]) end = Math.min(end, Number(match[2])); } else if (match[2]) start = Math.max(0, file.size - Number(match[2])); }
-          if (!match || !match[1] && !match[2] || start > end || start >= file.size || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)) {
-            headers.set('Content-Range', `bytes */${file.size}`); headers.delete('Content-Length'); return new Response(null, { status: 416, headers });
-          }
-          headers.set('Content-Range', `bytes ${start}-${end}/${file.size}`); headers.set('Content-Length', String(end - start + 1));
-          return new Response(method === 'HEAD' ? null : blob.slice(start, end + 1), { status: 206, headers });
-        }
-        return new Response(method === 'HEAD' ? null : blob, { headers });
+        return fileResponse(request, file, blob, { cache: config.access === 'public' ? 'public, max-age=3600' : 'private, no-store' });
       }
       throw storageError('FILE_NOT_FOUND', 'Unknown file endpoint.');
     } catch (error) { return errorResponse(error); }

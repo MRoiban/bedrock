@@ -107,3 +107,5 @@ export async function startPebble(options: StartPebbleOptions) {
     throw asBedrockError(error, "START_FAILED", "Check the pebble configuration, web entry, migrations, and port.");
   }
 }
+
+export { fileResponse } from '../storage/http';
