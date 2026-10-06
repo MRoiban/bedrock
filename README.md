@@ -24,6 +24,16 @@ browser authorization, your domain and creator email, Google sign-in, backups,
 and automatic startup. It finishes by checking the server and your creator login.
 Google and backups can be deferred; public pebbles work without Google.
 
+For Google consent, choose **External** and publish the app via
+**Audience → Publish app → In production**, so friends can sign in. Bedrock requests
+only `openid`, `email`, and `profile`; no Google scope verification is needed.
+Testing with listed test users is an alternative for development. Google also
+[allows basic identity scopes without test-user listing](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview),
+but check a non-test account before sharing. After creator sign-in, open a pebble
+with `access: "users"` in a private window and sign in with an account absent from
+your test-user list. `bedrock doctor` cannot detect Google publishing status or
+verify that another account can sign in.
+
 Install the CLI on your laptop with the same checkout installer, then:
 
 ```sh
@@ -57,7 +67,11 @@ invalidate tunnel configuration. Rerun the full setup to apply those changes.
 Every prompt has a flag. With redirected stdin, `--yes`, or `--json`, setup never
 prompts. Missing choices produce a `BedrockError` listing the missing flags before
 setup changes anything. For an unattended server, use an API token with Zone: Read,
-DNS: Edit and Cloudflare Tunnel: Edit permissions. Account and zone IDs are discovered:
+DNS: Edit and Cloudflare Tunnel: Edit permissions. The default browser-login tunnel
+mode cannot run unattended: fresh unattended setup requires `--api-token` or
+`CLOUDFLARE_API_TOKEN`. Account and zone IDs are discovered. The minimal flag set is
+`--domain <domain> --creator <email> --api-token <token> --skip-google --skip-backups`;
+Google credentials, backups, port and other options can be added as below:
 
 ```sh
 CLOUDFLARE_API_TOKEN=YOUR_TOKEN bedrock setup --yes --json \

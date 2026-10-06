@@ -67,7 +67,11 @@ test("noninteractive missing flags are collected before changes and JSON never p
   try {
     const fixture = await wizardHarness(temp.dir);
     try { await setupWizard([], true, fixture.options); throw new Error("expected error"); }
-    catch (error) { expect(error).toMatchObject({ code: "SETUP_FLAGS_MISSING" }); const hint = (error as { hint: string }).hint; for (const flag of ["--domain", "--creator", "--api-token", "--google-client-id", "--google-client-secret", "--dir"]) expect(hint).toContain(flag); }
+    catch (error) { expect(error).toMatchObject({ code: "SETUP_FLAGS_MISSING" }); const hint = (error as { hint: string }).hint; for (const flag of ["--domain", "--creator", "--api-token", "--google-client-id", "--google-client-secret", "--dir"]) expect(hint).toContain(flag);
+      expect(hint).toStartWith("Minimal fresh setup: --domain <domain> --creator <email> --api-token <token> --skip-google --skip-backups.");
+      expect(hint).toContain("browser login cannot run unattended");
+      expect(hint.indexOf("Optional:")).toBeGreaterThan(hint.indexOf("Tunnel choices:"));
+    }
     expect(fixture.prompts).toHaveLength(0);
     expect(await Bun.file(join(fixture.home, "setup.json")).exists()).toBe(false);
     expect(fixture.output).toHaveLength(0);

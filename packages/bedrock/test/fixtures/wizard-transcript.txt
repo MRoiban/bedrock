@@ -5,14 +5,22 @@
 5. · backups
 6. · service
 7. · verify
+
+[1/7] Prerequisites
 ✓ Bun 1.2.0
 ✓ cloudflared installed
+
+[2/7] Identity
 Cloudflare domain: example.com
 Your creator email [creator@example.com]: creator@example.com
 Daemon port [3000]: 3000
 ✓ Identity: example.com · creator@example.com · port 3000
+
+[3/7] Cloudflare
 Authorize Cloudflare in your browser; select your domain's zone.
 ✓ Tunnel: *.example.com → localhost:3000
+
+[4/7] Google
 Google sign-in identifies your users and creators.
 Create a Web application OAuth client.
 Public pebbles work without Google; you can set it up later.
@@ -20,19 +28,29 @@ https://console.cloud.google.com/auth/clients/create
 Application type: Web application
 Authorized redirect URI: https://auth.example.com/callback
 ✓ Redirect URI copied
-Consent screen: External; add yourself as a test user, or publish.
+Consent screen: External; publish the app (Audience → Publish app → In production) so friends can sign in.
+Bedrock requests only openid, email and profile; no Google scope verification is needed.
+Alternative: keep Testing and add test users for a development app. Google allows basic identity scopes without test-user listing, but check a non-test account before sharing.
+Doctor cannot detect your Google publishing status.
 https://console.cloud.google.com/auth/audience
 Google client ID (or skip) [skip]: 123-test.apps.googleusercontent.com
 Google client secret: [hidden]
 ✓ Google sign-in configured
+
+[5/7] Backups
 Backups: disk / r2 / skip [skip]: disk
 External disk backup path: /mnt/backup/bedrock
 ✓ Backups configured
+
+[6/7] Service
 ✓ Service started · daemon healthy
+
+[7/7] Verify
 ✓ Doctor passed
 Sign in once as creator@example.com: https://bedrock.example.com
 Type skip to defer sign-in; setup checks automatically: 
 ✓ Creator sign-in verified
+Check friend access: open a pebble with access: "users" in a private window and sign in with a Google account absent from your test-user list; doctor cannot check this.
 
 ┌ You're live
 │ https://bedrock.example.com

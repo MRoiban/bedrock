@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "bedrock": "workspace:*",
+    "bedrock": "^0.1.0",
     "valibot": "^1.5.0",
-    "@bedrock/ui": "workspace:*",
+    "@bedrock/ui": "^0.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

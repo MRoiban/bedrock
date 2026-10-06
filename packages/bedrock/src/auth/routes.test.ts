@@ -37,6 +37,7 @@ test("Google OAuth uses PKCE, bound state and mocked token exchange without netw
     const start = await h.auth.handle(new Request(`${origin}/login?start=1&return=https://notes.example.test/`), origin);
     const google = new URL(start.headers.get("location")!);
     expect(google.hostname).toBe("accounts.google.com");
+    expect(google.searchParams.get("scope")?.split(" ")).toEqual(["openid", "email", "profile"]);
     expect(google.searchParams.get("code_challenge_method")).toBe("S256");
     expect(google.searchParams.get("code_challenge")!.length).toBeGreaterThan(30);
     const callback = `${origin}/callback?state=${google.searchParams.get("state")}&code=valid-code`;

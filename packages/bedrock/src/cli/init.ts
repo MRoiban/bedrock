@@ -25,7 +25,8 @@ const result = await response.json();
 document.querySelector("#message").textContent = result.ok ? result.value.message : result.error.message;
 </script></body></html>
 `,
-    "package.json": JSON.stringify({ name, private: true, type: "module", scripts: { dev: "bedrock dev" }, dependencies: { bedrock: "^0.1.0" } }, null, 2) + "\n",
+    "package.json": JSON.stringify({ name, private: true, type: "module", scripts: { dev: "bedrock dev", typecheck: "tsc --noEmit" }, dependencies: { bedrock: "^0.1.0" }, devDependencies: { "@types/bun": "^1.3.10", typescript: "^5.9.3" } }, null, 2) + "\n",
+    "tsconfig.json": JSON.stringify({ compilerOptions: { target: "ESNext", module: "Preserve", moduleResolution: "Bundler", strict: true, noEmit: true, skipLibCheck: true, types: ["bun"] } }, null, 2) + "\n",
     "AGENTS.md": `# ${name}
 
 pebble.ts is the source of truth. Use bedrock query/mutation and Standard Schema for arguments.

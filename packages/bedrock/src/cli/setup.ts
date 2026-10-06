@@ -10,6 +10,7 @@ import { terminal, marker, type Terminal } from "./terminal";
 
 export const setupSteps = ["prereqs", "identity", "cloudflare", "google", "backups", "service", "verify"] as const;
 type Step = typeof setupSteps[number];
+const stepLabels: Record<Step, string> = { prereqs: "Prerequisites", identity: "Identity", cloudflare: "Cloudflare", google: "Google", backups: "Backups", service: "Service", verify: "Verify" };
 interface State { version: 1; steps: Partial<Record<Step, { completedAt: string; skipped?: boolean }>> }
 const booleans = ["--yes", "--status", "--install-cloudflared", "--skip-google", "--skip-backups", "--enable-linger", "--skip-sign-in"];
 const values = ["--domain", "--creator", "--port", "--api-token", "--google-client-id", "--google-client-secret", "--dir", "--r2-account", "--r2-bucket", "--r2-access-key-id", "--r2-secret-access-key"];
@@ -80,7 +81,7 @@ export async function setupWizard(args: string[], json = false, options: SetupOp
       if (!flags["--r2-account"] && !api) missing.push("--r2-account <id> OR --api-token <token>");
     }
     if (pending.includes("verify") && (config?.google || flags["--google-client-id"]) && !flags["--skip-sign-in"]) missing.push("--skip-sign-in (browser verification later)");
-    if (missing.length) throw new BedrockError("SETUP_FLAGS_MISSING", "Unattended setup needs explicit choices.", `Missing flags: ${missing.join(", ")}. Google and backups may be deferred with --skip-google --skip-backups.`);
+    if (missing.length) throw new BedrockError("SETUP_FLAGS_MISSING", "Unattended setup needs explicit choices.", `Minimal fresh setup: --domain <domain> --creator <email> --api-token <token> --skip-google --skip-backups.\nTunnel choices: interactive browser login (default), or --api-token / CLOUDFLARE_API_TOKEN; unattended fresh setup requires an API token because browser login cannot run unattended.\nOptional:\n  --port <port>\n  --google-client-id <id> --google-client-secret <secret> --skip-sign-in (instead of --skip-google)\n  --dir <path> or R2 flags (instead of --skip-backups)\n  --install-cloudflared\n  --enable-linger\nMissing choices for this run:\n${missing.map(choice => `  ${choice}`).join("\n")}.`);
   }
   const ask = async (flag: string, label: string, fallback = "", secret = false) => flags[flag] ?? (interactive ? io.prompt(label, fallback, secret) : fallback);
   const confirm = async (flag: string, label: string) => !!flags[flag] || interactive && /^(y|yes)$/i.test(await io.prompt(label, "n"));
@@ -94,6 +95,7 @@ export async function setupWizard(args: string[], json = false, options: SetupOp
     if (current === "identity") delete state.steps.cloudflare;
     if (current !== "service" && current !== "verify") { delete state.steps.service; delete state.steps.verify; }
     await atomicWrite(statePath, JSON.stringify(state, null, 2) + "\n");
+    write(`\n[${setupSteps.indexOf(current) + 1}/${setupSteps.length}] ${stepLabels[current]}`);
     let skipped = false;
     try {
       skipped = await stepActions[current]({ home, flags, options, io, interactive, redo: !!step, api, action, warning, write, ask, confirm });

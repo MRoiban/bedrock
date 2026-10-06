@@ -86,7 +86,7 @@ async function google(context: StepContext) {
       write(url); await io.open(url);
       write(`Application type: Web application\nAuthorized redirect URI: https://auth.${config.domain}/callback`);
       if (await io.clipboard(`https://auth.${config.domain}/callback`)) action("Redirect URI copied");
-      write("Consent screen: External; add yourself as a test user, or publish.\nhttps://console.cloud.google.com/auth/audience");
+      write("Consent screen: External; publish the app (Audience → Publish app → In production) so friends can sign in.\nBedrock requests only openid, email and profile; no Google scope verification is needed.\nAlternative: keep Testing and add test users for a development app. Google allows basic identity scopes without test-user listing, but check a non-test account before sharing.\nDoctor cannot detect your Google publishing status.\nhttps://console.cloud.google.com/auth/audience");
     }
     const clientId = await ask("--google-client-id", "Google client ID (or skip)", config.google?.clientId ?? "skip");
     if (clientId === "skip") skipped = true;
@@ -154,6 +154,7 @@ async function verify(context: StepContext) {
     } finally { controller.abort(); await input; }
     if (!signedIn) { skipped = true; warning("Creator sign-in deferred: bedrock setup verify"); } else action("Creator sign-in verified");
   } else if (config.google) { skipped = true; warning("Creator sign-in deferred: bedrock setup verify"); }
+  if (config.google) write("Check friend access: open a pebble with access: \"users\" in a private window and sign in with a Google account absent from your test-user list; doctor cannot check this.");
   return skipped;
 }
 
