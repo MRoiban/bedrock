@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { opsCommand, opsCommands } from "./ops";
 import { BedrockError, asBedrockError } from "../error";
 import { daemonCommand, daemonCommands } from "./daemon";
 import { init } from "./init";
@@ -19,13 +20,16 @@ async function main() {
     return;
   }
   let result: unknown;
-  if (command && daemonCommands.includes(command)) {
+  if (command && opsCommands.includes(command)) {
+    result = await opsCommand(command, args, json);
+    if (result === undefined) return;
+  } else if (command && daemonCommands.includes(command)) {
     result = await daemonCommand(command, args, json);
     if (result === undefined) return;
   }
   else if (command === "init" && args.length === 1) result = { command: "init", ...await init(args[0]!) };
   else if (command === "db" && args.length === 1 && ["generate", "plan", "migrate"].includes(args[0]!)) result = await dbCommand(args[0]!);
-  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name>, dev [--port n], db generate|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, or token create; add --json for machine-readable output.");
+  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name>, dev [--port n], db generate|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, tunnel setup|status|teardown, service install|uninstall|status, doctor, login --url <url>, or logout; add --json for machine-readable output.");
   console.log(json ? JSON.stringify({ ok: true, ...(result as object) }) : JSON.stringify(result, null, 2));
 }
 

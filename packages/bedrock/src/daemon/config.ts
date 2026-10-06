@@ -1,9 +1,9 @@
-import { chmod, mkdir, rename } from "node:fs/promises";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 
-export interface DaemonConfig { domain: string; creators: string[]; port: number; google?: { clientId: string; clientSecret: string } }
+export interface DaemonConfig { domain: string; creators: string[]; port: number; google?: { clientId: string; clientSecret: string }; cloudflare?: { accountId: string; zoneId: string; tunnelId: string; dnsRecordId: string; name: string } }
 export const bedrockHome = () => resolve(process.env.BEDROCK_HOME ?? join(homedir(), ".bedrock"));
 
 export function validateConfig(config: DaemonConfig) {
@@ -13,14 +13,22 @@ export function validateConfig(config: DaemonConfig) {
     throw new BedrockError("INVALID_DAEMON_CONFIG", "Invalid daemon domain, creators, or port.", "Use a lowercase hostname, creator emails, and a port from 0 to 65535.");
   }
   if (config.google && (typeof config.google.clientId !== "string" || !config.google.clientId || typeof config.google.clientSecret !== "string" || !config.google.clientSecret)) throw new BedrockError("INVALID_DAEMON_CONFIG", "Both Google credentials are required.", "Pass --google-client-id and --google-client-secret together.");
+  if (config.cloudflare && [config.cloudflare.accountId, config.cloudflare.zoneId, config.cloudflare.tunnelId, config.cloudflare.dnsRecordId, config.cloudflare.name].some(value => typeof value !== "string" || !value)) throw new BedrockError("INVALID_DAEMON_CONFIG", "Invalid Cloudflare configuration.", "Run bedrock tunnel setup again.");
   return config;
 }
 
 export async function atomicWrite(path: string, value: string, mode = 0o600) {
   const temporary = `${path}.${crypto.randomUUID()}.tmp`;
-  await Bun.write(temporary, value);
-  await chmod(temporary, mode);
-  await rename(temporary, path);
+  const file = await open(temporary, "wx", mode);
+  try {
+    await file.writeFile(value);
+    await file.close();
+    await rename(temporary, path);
+  } catch (error) {
+    await file.close().catch(() => {});
+    await rm(temporary, { force: true });
+    throw error;
+  }
 }
 
 export async function readConfig(home: string): Promise<DaemonConfig> {

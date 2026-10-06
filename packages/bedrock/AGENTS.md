@@ -104,7 +104,7 @@ bedrock rm hello --yes
   Archives must contain regular files/directories only, with pebble.ts at the root.
 - setup is idempotent and preserves existing config. daemon writes admin-token
   (0600) and daemon.json in BEDROCK_HOME. Tokens are SHA-256 hashed in SQLite.
-- CLI connection precedence: --url/--token, BEDROCK_URL/BEDROCK_TOKEN, local home.
+- CLI connection precedence: --url/--token, BEDROCK_URL/BEDROCK_TOKEN, reachable local home, saved remote credentials.
   token create prints a fresh deploy token once. start/stop/restart manage processes.
 - API (Bearer deploy token required): GET /api/pebbles; POST /api/tokens;
   POST /api/deploy?name=<name> (tar.gz body); GET /api/pebbles/<name>/logs[?follow=true];
@@ -143,3 +143,60 @@ bedrock setup --domain example.com --creator you@example.com \
   GET /_bedrock/me returns { user } even when the pebble requires authentication.
 - Sibling origins cannot write or upgrade WebSockets. No Origin also fails for writes.
   WebSocket-only activity does not extend session expiry; make an HTTP request to slide it.
+
+## Tunnel, service, and remote operations (Phase 6)
+
+```sh
+bedrock tunnel setup --account-id <account-id> --zone-id <zone-id>
+bedrock tunnel status --json
+bedrock service install --dry-run
+bedrock service install
+bedrock service status --json
+bedrock doctor --json
+bedrock login --url https://bedrock.example.com
+bedrock deploy ./hello
+bedrock token ls --json
+bedrock token revoke <id> --json
+bedrock logout
+bedrock service uninstall
+bedrock tunnel teardown --yes
+```
+
+- Install cloudflared on the host (Homebrew on macOS; Cloudflare's package on Linux).
+  No other host executable is required besides Bun. Service install invokes the OS
+  launchctl/systemctl; it does not require a system-wide/root service.
+- Tunnel setup accepts --api-token, CLOUDFLARE_API_TOKEN, or hidden interactive input.
+  Grant Cloudflare Tunnel: Edit on the account and DNS: Edit on the zone.
+  Use a public domain and fixed port. API tokens are transient; only the run token
+  lives in BEDROCK_HOME/tunnel-token, mode 0600. config.json stores metadata only.
+- Setup reconciles bedrock-<hostname>, remote ingress, and a proxied wildcard CNAME.
+  Repeat setup safely; restart the daemon afterward. Status checks remote drift only
+  when an API token is available. Stop the daemon before teardown; --yes is required.
+- cloudflared uses TUNNEL_TOKEN in its environment, not argv; crashes restart with
+  backoff while the daemon serves locally. logs/cloudflared.log rotates at 10 MiB,
+  with three older files, and redacts the run token.
+- Services use absolute Bun/CLI paths plus BEDROCK_HOME. macOS installs a LaunchAgent
+  at ~/Library/LaunchAgents/dev.bedrock.daemon.plist and runs at user login.
+  Linux installs ~/.config/systemd/user/bedrock.service; for startup without login,
+  run loginctl enable-linger "$USER". --dry-run writes nothing and prints the unit/plist.
+- Doctor returns pass/warn/fail checks, each with a hint. --json returns an array;
+  any fail exits 1. OAuth absence warns; remote configuration skips without an API
+  token; DNS skips offline. Pebbles are checked against their live health endpoints.
+- Login requires HTTPS, starts a random-port loopback callback, and opens /cli-login.
+  The signed-in creator explicitly confirms on the daemon. Confirmation is bound to
+  the session and nonce, expires in five minutes, and cannot be replayed; the local
+  callback validates random state before storing the token. Repeat login reuses
+  valid credentials; logout before switching servers.
+- Credentials: ~/.config/bedrock/credentials.json (or XDG_CONFIG_HOME), 0600,
+  {url, token}. They supply deploy/ls/logs and other daemon commands when the local
+  daemon is unavailable. Explicit flags override env; tokens never follow redirects.
+- Logout revokes remotely before deleting credentials; retry after offline failure.
+  Deploy tokens are SHA-256 hashed in SQLite. token ls returns hash IDs/creation times;
+  token revoke <id> revokes immediately and is safe to repeat with another valid token.
+  Creator deploy tokens have full management access; keep them private.
+- API additions (Bearer token required): GET /api/status (process/live health),
+  GET /api/tokens, DELETE /api/tokens/<hash-id>, DELETE /api/tokens/current.
+  POST /api/tokens still prints a newly minted token once.
+- Tests use temporary BEDROCK_HOME and credential paths, local Bun.serve Cloudflare
+  mocks, fake cloudflared executables, and injectable service runners/targets.
+  Never test against real Cloudflare or install a host service in automated tests.

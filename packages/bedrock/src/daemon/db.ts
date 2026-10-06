@@ -25,6 +25,8 @@ export async function openDaemonDatabase(home: string, migrations = join(import.
       status: (name: string, status: string) => db.query("UPDATE pebbles SET status=? WHERE name=?").run(status, name),
       remove: (name: string) => db.query("DELETE FROM pebbles WHERE name=?").run(name),
       accepts: (token: string) => !!db.query("SELECT hash FROM deploy_tokens WHERE hash=?").get(tokenHash(token)),
+      tokens: () => db.query("SELECT hash AS id, created_at AS createdAt FROM deploy_tokens ORDER BY created_at").all(),
+      revokeToken: (id: string) => db.query("DELETE FROM deploy_tokens WHERE hash=?").run(id).changes > 0,
       createToken() {
         const token = `br_${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
         db.query("INSERT INTO deploy_tokens VALUES (?, ?)").run(tokenHash(token), Date.now());

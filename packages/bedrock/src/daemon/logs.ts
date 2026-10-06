@@ -5,10 +5,10 @@ export class PebbleLogs {
   readonly path: string;
   private listeners = new Set<(chunk: Uint8Array) => void>();
   private followers = new Set<() => void>();
-  constructor(home: string, name: string, private limit = 10 * 1024 * 1024) {
-    const dir = join(home, "pebbles", name, "logs");
+  constructor(home: string, name: string, private limit = 10 * 1024 * 1024, directory?: string, filename = "pebble.log") {
+    const dir = directory ?? join(home, "pebbles", name, "logs");
     mkdirSync(dir, { recursive: true });
-    this.path = join(dir, "pebble.log");
+    this.path = join(dir, filename);
   }
   write(chunk: Uint8Array) {
     // Split oversized chunks so a noisy child cannot bypass rotation.

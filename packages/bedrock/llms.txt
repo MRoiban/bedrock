@@ -23,3 +23,19 @@ put returns metadata; get returns a Blob; list returns metadata. Unregistered bu
 Before linking attachments, await storage.get(attachments, attachmentId) with access: "owner" to verify ownership; see examples/notes.
 createClient<typeof pebble>() from bedrock/client infers upload/fileUrl/deleteFile bucket names from the storage array. Clients accept names, not server bucket objects.
 useUpload<typeof pebble>("attachments") from bedrock/react exposes upload, progress, isUploading, error. The SDK transparently chunks files above 90 MiB.
+
+Phase 6: tunnel, service, doctor, remote creator login, and deploy token management.
+CLI: tunnel setup --account-id <id> --zone-id <id> [--api-token <token>], tunnel status, tunnel teardown --yes.
+Cloudflare API token comes from flag/env CLOUDFLARE_API_TOKEN/hidden prompt; never persisted. Permissions: Cloudflare Tunnel: Edit and DNS: Edit.
+Setup reconciles bedrock-<hostname>, wildcard ingress and proxied CNAME. Public domain/fixed port required; restart daemon after setup.
+Only the tunnel run token is persisted (BEDROCK_HOME/tunnel-token, 0600); metadata in config.json. cloudflared uses TUNNEL_TOKEN env, never argv.
+cloudflared restarts with capped backoff; local serving survives failures. logs/cloudflared.log rotates and redacts the token.
+CLI: service install|uninstall|status [--dry-run]. Dry-run prints the plist/unit, writes nothing, invokes no service manager.
+macOS LaunchAgent: ~/Library/LaunchAgents/dev.bedrock.daemon.plist (at user login). Linux systemd user: ~/.config/systemd/user/bedrock.service; loginctl enable-linger "$USER" for startup without login.
+CLI: doctor [--json]. JSON is an array of pass/warn/fail checks with hints; exit 1 on any fail. API verification skips without token; DoH skips offline.
+CLI: login --url https://bedrock.<domain>, logout, token create|ls|revoke <id>. Login requires browser creator session and explicit single-use confirmation; random loopback callback state is checked.
+Remote credentials: ~/.config/bedrock/credentials.json (XDG_CONFIG_HOME supported), {url, token}, 0600. Used when local daemon unavailable; --url/--token then env take precedence.
+Tokens never follow redirects. Logout revokes remotely before deleting local credentials and retains them on network failure.
+Deploy tokens are hashed in SQLite; ls returns IDs/timestamps, revoke invalidates immediately. All creator deploy tokens have full daemon management access.
+API additions: GET /api/status, GET /api/tokens, DELETE /api/tokens/<id>, DELETE /api/tokens/current (Bearer required).
+Repeat login verifies/reuses valid credentials; logout before switching servers.

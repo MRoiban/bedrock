@@ -1,3 +1,4 @@
+import { readCredentials, type Credentials } from "./credentials";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -21,28 +22,41 @@ function parse(args: string[]) {
   return { positionals, flags };
 }
 
-async function connection(flags: Record<string, string>) {
-  const home = bedrockHome();
+export async function connection(flags: Record<string, string>, options: { home?: string; credentials?: () => Promise<Credentials | null>; fetch?: typeof fetch } = {}) {
+  const home = options.home ?? bedrockHome();
+  const credentialsReader = options.credentials ?? readCredentials;
   const explicit = flags["--url"] ?? process.env.BEDROCK_URL;
-  let url = explicit;
-  if (!url) {
-    const state = await Bun.file(join(home, "daemon.json")).json().catch(() => null);
-    const port = state?.port ?? (await readConfig(home)).port;
-    url = `http://bedrock.localhost:${port}`;
+  const explicitToken = flags["--token"] ?? process.env.BEDROCK_TOKEN;
+  if (explicit) {
+    const credentials = explicitToken ? null : await credentialsReader();
+    let origin: string;
+    try { origin = new URL(explicit).origin; } catch { throw new BedrockError("INVALID_REMOTE_URL", "Invalid daemon URL.", "Use --url https://bedrock.<domain>."); }
+    const token = explicitToken ?? (credentials?.url === origin ? credentials.token : "");
+    if (!token) throw new BedrockError("TOKEN_MISSING", "No token for this daemon URL.", "Run bedrock login --url <url> or pass --token.");
+    return { url: explicit, token };
   }
-  const token = flags["--token"] ?? process.env.BEDROCK_TOKEN ?? (await Bun.file(join(home, "admin-token")).text().catch(() => "")).trim();
-  if (!token) throw new BedrockError("TOKEN_MISSING", "No deploy token is available.", "Start the local daemon, pass --token, or set BEDROCK_TOKEN.");
-  return { url, token };
+  const state = await Bun.file(join(home, "daemon.json")).json().catch(() => null);
+  const port = state?.port ?? (await readConfig(home).catch(() => null))?.port;
+  const local = (await Bun.file(join(home, "admin-token")).text().catch(() => "")).trim();
+  if (port && (local || explicitToken)) {
+    try {
+      const response = await (options.fetch ?? fetch)(`http://127.0.0.1:${port}/api/pebbles`, { headers: { host: `bedrock.localhost:${port}`, authorization: `Bearer ${explicitToken ?? local}` }, signal: AbortSignal.timeout(1000) });
+      if (response.ok || response.status === 401) return { url: `http://bedrock.localhost:${port}`, token: explicitToken ?? local };
+    } catch {}
+  }
+  const credentials = await credentialsReader();
+  if (credentials) return { url: credentials.url, token: explicitToken ?? credentials.token };
+  throw new BedrockError("DAEMON_UNREACHABLE", "No local daemon or remote credentials are available.", "Start bedrock daemon locally, or run bedrock login --url https://bedrock.<domain>.");
 }
 
-async function call(flags: Record<string, string>, path: string, init: RequestInit = {}) {
+export async function call(flags: Record<string, string>, path: string, init: RequestInit = {}) {
   const { url, token } = await connection(flags);
   const target = new URL(path, url);
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${token}`);
   // *.localhost is not resolved by every operating system resolver.
   if (target.hostname === "bedrock.localhost") { headers.set("host", target.host); target.hostname = "127.0.0.1"; }
-  const response = await fetch(target, { ...init, headers });
+  const response = await fetch(target, { ...init, headers, redirect: "error" });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new BedrockError(body?.error?.code ?? "DAEMON_REQUEST_FAILED", body?.error?.message ?? `Daemon returned HTTP ${response.status}.`, body?.error?.hint ?? "Check the daemon URL, token, and logs.");
@@ -89,8 +103,10 @@ export async function daemonCommand(command: string, args: string[], json: boole
     return { command, ...(await (await call(flags, "/api/pebbles")).json()) };
   }
   if (command === "token") {
-    if (positionals.length !== 1 || name !== "create") invalid();
-    return { command: "token create", ...(await (await call(flags, "/api/tokens", { method: "POST" })).json()) };
+    if (!name || !["create", "ls", "revoke"].includes(name) || positionals.length !== (name === "revoke" ? 2 : 1)) invalid();
+    const id = positionals[1];
+    if (name === "revoke" && !/^[a-f0-9]{64}$/.test(id ?? "")) invalid();
+    return { command: `token ${name}`, ...(await (await call(flags, name === "revoke" ? `/api/tokens/${id}` : "/api/tokens", { method: name === "create" ? "POST" : name === "revoke" ? "DELETE" : "GET" })).json()) };
   }
   if (positionals.length !== 1) invalid();
   const path = `/api/pebbles/${encodeURIComponent(name!)}`;

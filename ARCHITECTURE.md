@@ -172,7 +172,9 @@ Future (do not build yet): row-level diffs, optimistic updates.
 
 ```
 $BEDROCK_HOME (default ~/.bedrock)
-  config.json        { domain, creators: [emails], port, cloudflare: {...}, google: {...} }
+  config.json        { domain, creators: [emails], port, cloudflare: {accountId, zoneId, tunnelId, dnsRecordId, name}, google: {...} }
+  tunnel-token       Cloudflare tunnel run token (0600); API token is never persisted
+  logs/cloudflared.log  rotated cloudflared output (run token redacted)
   bedrock.sqlite     users, sessions, pebbles registry, deploy tokens
   pebbles/<name>/
     releases/<ts>/   deployed code (kept: last 3)
@@ -185,17 +187,65 @@ $BEDROCK_HOME (default ~/.bedrock)
 - Each pebble runs as **its own Bun subprocess** (`startPebble`) on a private localhost port. The daemon routes by `Host` header, proxies HTTP and WebSockets, restarts crashed pebbles with backoff, and does zero-downtime swaps on deploy (start new, health-check, switch, stop old).
 - Reserved subdomains: `auth`, `bedrock` (daemon API/dashboard), `www`.
 - **Deploy**: `bedrock deploy` in a pebble directory. Local: copies to a new release. Remote: tars the directory and uploads to `https://bedrock.<domain>/api/deploy` with a creator deploy token (`bedrock login` stores it). Daemon then installs deps (`bun install --production`), migrates, swaps.
-- `bedrock service install` writes a launchd (macOS) or systemd (Linux) unit for the daemon.
+- `bedrock service install|uninstall|status` manages a macOS **LaunchAgent**
+  (`~/Library/LaunchAgents/dev.bedrock.daemon.plist`, RunAtLoad/KeepAlive) or Linux
+  **systemd user** unit (`~/.config/systemd/user/bedrock.service`, Restart=always).
+  Units use absolute Bun/CLI paths and BEDROCK_HOME. `install --dry-run` prints the
+  file without writing it or invoking the service manager. Linux users can run
+  `loginctl enable-linger "$USER"` for startup without login; macOS runs at user login.
+- `bedrock login --url https://bedrock.<domain>` opens a browser and a one-shot
+  random-port callback on 127.0.0.1. `/cli-login` requires a signed-in creator,
+  then explicit confirmation to mint a deploy token. Confirmation is bound to the
+  session, single-use, expires after five minutes, and requires the exact Origin.
+  The callback state is random and checked before accepting the token. Repeating
+  login verifies and reuses valid credentials; logout is required before switching
+  servers.
+- CLI credentials are `{url, token}` in `~/.config/bedrock/credentials.json`
+  (or `$XDG_CONFIG_HOME/bedrock/credentials.json`), mode 0600. Explicit URL/token
+  flags override environment variables; the reachable local daemon takes priority
+  over saved remote credentials. An explicit URL can use a saved token only for
+  its matching origin. Tokens are never forwarded through HTTP redirects.
+- `bedrock logout` revokes the saved token remotely before deleting credentials;
+  offline failure retains credentials for retry. `bedrock token create|ls|revoke <id>`
+  manages hashed deploy tokens; ls returns IDs and creation times, never raw tokens.
+  Creator deploy tokens grant full daemon operations, including token management.
+- `bedrock doctor` checks Bun, local daemon/configuration, domain/creators, OAuth,
+  cloudflared installation/process, tunnel ingress/DNS via the API when a transient
+  API token is available, wildcard resolution via Cloudflare DoH, available disk,
+  and each pebble's live health. Offline DNS and unavailable API credentials are
+  skipped warnings; any failed check sets exit code 1. `doctor --json` emits an
+  array of checks `{name, status: pass|warn|fail, message, hint, skipped?}`.
 
 ## 9. Cloudflare Tunnel
 
-One-time `bedrock tunnel setup` (needs API token with *Cloudflare Tunnel: Edit* and *DNS: Edit*):
-1. Create a remotely-managed tunnel (`POST /accounts/:id/cfd_tunnel`, `config_src: "cloudflare"`).
-2. Put ingress config: `*.<domain>` → `http://127.0.0.1:<daemon port>`, catch-all `http_status:404`.
-3. Upsert proxied DNS `CNAME *.<domain> → <tunnel-id>.cfargotunnel.com`.
-4. Store tunnel token in `config.json`; the daemon supervises `cloudflared tunnel run --token ...`.
+`bedrock tunnel setup --account-id <id> --zone-id <id>` uses a Cloudflare API
+client built on fetch. The API token comes from `--api-token`,
+`CLOUDFLARE_API_TOKEN`, or a hidden interactive prompt, and is never written to
+configuration or logs. It needs *Cloudflare Tunnel: Edit* on the account and
+*DNS: Edit* on the zone.
 
-Adding a pebble needs **no** Cloudflare calls. All steps are idempotent.
+1. Find the existing non-deleted tunnel named `bedrock-<hostname>` or create one
+   (`POST /accounts/:id/cfd_tunnel`, `config_src: "cloudflare"`). A conflicting
+   locally managed tunnel is an error rather than an implicit migration.
+2. Re-PUT ingress config: `*.<domain>` → `http://127.0.0.1:<daemon port>`,
+   catch-all `http_status:404`. The public domain and a fixed daemon port are required.
+3. Upsert proxied DNS `CNAME *.<domain> → <tunnel-id>.cfargotunnel.com`.
+   Conflicting wildcard DNS records require explicit repair.
+4. Retrieve the tunnel run token and store it in `$BEDROCK_HOME/tunnel-token`
+   (0600), with only non-secret tunnel metadata in config.json. Restart the daemon
+   after setup. The daemon supervises `cloudflared tunnel --no-autoupdate run`
+   with `TUNNEL_TOKEN` in the child environment, never in argv. The run token is
+   redacted from rotated `$BEDROCK_HOME/logs/cloudflared.log` output.
+
+cloudflared is the only external host dependency. Missing binary/startup/connection
+failures do not stop local serving; restart backoff caps at 30 seconds. Install it
+via Homebrew on macOS or the Cloudflare package for the Linux distribution.
+
+`bedrock tunnel status` shows saved metadata; with an API token it checks remote
+ingress and DNS for drift. `bedrock tunnel teardown --yes` removes only the
+wildcard CNAME pointing at this tunnel, deletes the tunnel, and removes local
+metadata/run token. Stop the daemon before teardown. Repeating setup or teardown
+is safe; adding a pebble needs **no** Cloudflare calls.
 
 ## 10. Extensibility
 
@@ -212,7 +262,7 @@ plugin({
 
 ## 11. Agent-friendliness (non-negotiable)
 
-- Every CLI command supports `--json` (machine-readable output, one JSON object on stdout) and is idempotent.
+- Every CLI command supports `--json` (machine-readable output, one JSON object on stdout, except doctor returns its checks array) and is idempotent.
 - Errors are typed (`BedrockError` with `code`, `message`, `hint`) — the hint says how to fix it.
 - `bedrock dev` runs the full stack locally (daemon + pebble + fake auth) at `http://<pebble>.localhost:<port>`.
 - The package ships `llms.txt` and `AGENTS.md` describing the API with copy-pasteable examples.
@@ -225,5 +275,5 @@ plugin({
 3. **Auth** — Google + dev login, sessions, access modes, signed identity headers.
 4. **Sync** — WS protocol, read/write tracking, invalidation; `client` + `react`.
 5. **Storage** — buckets, fs driver, chunked uploads.
-6. **Tunnel + service** — Cloudflare setup, cloudflared supervision, launchd/systemd.
+6. **Tunnel + service + remote ops** — Cloudflare setup/supervision, launchd/systemd user services, doctor, creator CLI login, deploy token management.
 7. **Ops** — remote deploy, backups, jobs, plugins, `@bedrock/ui` (Onyx), docs/llms.txt.

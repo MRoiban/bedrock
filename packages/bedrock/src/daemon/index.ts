@@ -1,3 +1,6 @@
+import { TunnelSupervisor } from "../tunnel/supervisor";
+import { tunnelTokenPath } from "../tunnel";
+import { createCliLogin } from "../auth/cli-login";
 import { join, resolve } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 import { atomicWrite, bedrockHome, readConfig, validateConfig } from "./config";
@@ -13,7 +16,7 @@ import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
 
-export interface StartDaemonOptions { home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions }
+export interface StartDaemonOptions { home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
   const home = resolve(options.home ?? bedrockHome());
@@ -29,11 +32,14 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const sessions = createSessions(db.db);
   const sockets = sessionSockets(sessions);
   const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);
+  const cliLogin = createCliLogin(config, sessions, db, dev);
+  const tunnelToken = dev ? "" : (await Bun.file(tunnelTokenPath(home)).text().catch(() => "")).trim();
+  const tunnel = config.cloudflare && tunnelToken ? new TunnelSupervisor(home, tunnelToken, options.tunnelBinary) : undefined;
   const releases = new Releases(home, db, supervisor);
   let server: Bun.Server<Relay> | undefined;
   try {
     await localToken(home, db);
-    const api = createApi(db, releases, supervisor);
+    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null });
     const notFound = () => new Response("Pebble not found. Deploy it with bedrock deploy, or check its hostname.", { status: 404 });
     server = Bun.serve<Relay>({
       hostname: "127.0.0.1", port: config.port, maxRequestBodySize: 256 * 1024 * 1024,
@@ -44,7 +50,11 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           const target = hostTarget(host, config.domain);
           const url = new URL(request.url);
           const origin = `${dev || host.split(":")[0]!.endsWith(".localhost") ? "http" : "https"}://${host}`;
-          if (target === "bedrock") return await api(request);
+          if (target === "bedrock") {
+            if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
+            if (url.pathname === "/cli-login") return await cliLogin(request, origin);
+            return await api(request);
+          }
           if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
           if (!target || ["auth", "www"].includes(target)) return notFound();
           const child = supervisor.child(target);
@@ -94,6 +104,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       supervisor.activate(options.devPebble.name, child);
     } else await supervisor.restore();
     await atomicWrite(join(home, "daemon.json"), JSON.stringify({ port: server.port, domain: config.domain }) + "\n");
+    tunnel?.start();
     let stopping: Promise<void> | undefined;
     return {
       server, home,
@@ -102,6 +113,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           sockets.stop();
           await releases.shutdown();
           await server!.stop(true);
+          await tunnel?.stop();
           await supervisor.shutdown();
           db.close();
         })();
@@ -110,6 +122,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   } catch (error) {
     sockets.stop();
     await server?.stop(true);
+    await tunnel?.stop();
     await supervisor.shutdown();
     db.close();
     throw asBedrockError(error, "DAEMON_START_FAILED", "Check setup, the listen port, and daemon home permissions.");
