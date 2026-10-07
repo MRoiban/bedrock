@@ -37,7 +37,7 @@ test("identity headers stay ASCII and survive a real WebSocket upgrade", async (
   const user = { id: "u1", email: "lea@example.com", name: "Léa Ünal 🌱" } as User;
   const headers = signIdentity(user, secret);
   expect(/^[\x20-\x7e]*$/.test(headers["x-bedrock-user"])).toBe(true);
-  let seen: User | null = null;
+  let seen = null as User | null;
   const server = Bun.serve({ port: 0, fetch(request, server) { seen = verifyIdentity(request, secret); return server.upgrade(request) ? undefined : new Response("no", { status: 400 }); }, websocket: { message() {} } });
   try {
     const Socket = WebSocket as unknown as new (url: string, options: Bun.WebSocketOptions) => WebSocket;
