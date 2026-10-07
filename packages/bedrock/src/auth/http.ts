@@ -60,18 +60,34 @@ button:focus-visible{outline:none;box-shadow:0 0 0 3px var(--focus)}
 code{padding:1px 5px;font:12.5px ${MONO};color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:5px}
 pre{margin:0;padding:12px 14px;font:13px/1.75 ${MONO};color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
 pre i{font-style:normal;color:var(--muted);user-select:none;-webkit-user-select:none}
-ul{margin:0;padding:0;list-style:none;border:1px solid var(--line);border-radius:12px;overflow:hidden}
-li+li{border-top:1px solid var(--line)}
-li a{display:flex;align-items:center;gap:12px;min-height:58px;padding:10px 14px;color:inherit;text-decoration:none;transition:background-color .12s}
-li a:hover{background:var(--bg)}
-li b{display:block;font-weight:600;overflow-wrap:anywhere}
-li small{display:block;font:12px/1.4 ${MONO};color:var(--muted);overflow-wrap:anywhere}
-.dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--muted)}
-.dot.running{background:#3c9a66;box-shadow:0 0 0 3px rgba(60,154,102,.18)}
-.dot.restarting{background:#cf972b;box-shadow:0 0 0 3px rgba(207,151,43,.18)}
-.dot.crashed{background:#d0533f;box-shadow:0 0 0 3px rgba(208,83,63,.18)}
-.state{margin-left:auto;padding-left:8px;font-size:12.5px;color:var(--muted)}
-@media (max-width:480px){body{justify-content:flex-start;padding-top:max(9vh,calc(env(safe-area-inset-top) + 24px))}main{max-width:none;padding:0 6px;background:none;border:0;border-radius:0;box-shadow:none}h1{font-size:27px}.brand{margin-bottom:36px}}
+body.wide{justify-content:flex-start}
+.wide main{max-width:880px;padding:0;background:none;border:0;border-radius:0;box-shadow:none}
+.wide .brand{margin-bottom:44px}
+.wide h1{font-size:30px;margin-bottom:4px}
+.actions{display:flex;align-items:center;gap:16px;margin-left:auto;font-size:13px;font-weight:400;color:var(--muted)}
+.actions form{display:contents}
+button.link{display:inline;width:auto;min-height:0;margin:0;padding:6px 0;font-size:13px;font-weight:500;color:var(--ink);background:none;border:0;box-shadow:none;transform:none}
+button.link:hover{text-decoration:underline;text-underline-offset:3px}
+.bad{color:#b8402c}
+ul.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin:28px 0 0;padding:0;list-style:none}
+.tiles a{display:flex;flex-direction:column;gap:6px;height:100%;padding:15px 16px 14px;color:inherit;text-decoration:none;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 0 rgba(28,33,30,.04);transition:border-color .12s,box-shadow .15s,transform .07s;-webkit-tap-highlight-color:transparent}
+.tiles a:hover{border-color:var(--field-line);box-shadow:0 1px 0 rgba(28,33,30,.04),0 10px 24px -16px rgba(28,33,30,.35)}
+.tiles a:active{transform:translateY(1px);box-shadow:none}
+.tiles a:focus-visible{outline:none;box-shadow:0 0 0 3px var(--focus)}
+.tiles .top{display:flex;align-items:center;gap:10px;min-height:24px}
+.tiles .top .dot{margin-left:auto;margin-right:4px}
+.tiles b{font-size:17px;font-weight:600;letter-spacing:-.012em;overflow-wrap:anywhere}
+.tiles .meta{margin-top:auto;font-size:13px;color:var(--muted)}
+.tiles .meta code{font-size:12px}
+.dot{flex:none;width:7px;height:7px;border-radius:50%;background:#3c9a66;box-shadow:0 0 0 3px rgba(60,154,102,.16)}
+.chip{margin-left:auto;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;color:var(--muted);background:var(--bg);border:1px solid var(--line)}
+.chip.crashed{color:#b8402c;background:rgba(208,83,63,.1);border-color:rgba(208,83,63,.22)}
+.chip.restarting{color:#9a6b12;background:rgba(207,151,43,.12);border-color:rgba(207,151,43,.25)}
+.tiles .crashed a{border-color:rgba(208,83,63,.4)}
+.first{margin-top:28px;padding:18px;background:var(--card);border:1px solid var(--line);border-radius:14px}
+.first p{margin-bottom:12px}
+@media (prefers-color-scheme:dark){.bad,.chip.crashed{color:#ec8a74}.chip.restarting{color:#e2b45a}.tiles a,.tiles a:hover{box-shadow:none}}
+@media (max-width:480px){body{justify-content:flex-start;padding-top:max(9vh,calc(env(safe-area-inset-top) + 24px))}body.wide{padding-top:max(20px,env(safe-area-inset-top))}main{max-width:none;padding:0 6px;background:none;border:0;border-radius:0;box-shadow:none}h1{font-size:27px}.brand{margin-bottom:36px}.wide .brand{margin-bottom:36px}.actions .who{display:none}ul.tiles{grid-template-columns:1fr;gap:10px;margin-top:24px}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}`;
 export interface AuthPage {
   /** Document title; " · Bedrock" is appended. */
@@ -80,10 +96,15 @@ export interface AuthPage {
   heading: string;
   body: string;
   badge?: string;
+  /** Trusted HTML placed at the right of the brand row. */
+  actions?: string;
+  /** A full-width page instead of the sign-in card. */
+  wide?: boolean;
 }
 export function authPage(page: AuthPage) {
   const badge = page.badge ? `<span class="badge">${page.badge}</span>` : "";
-  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark"><meta name="theme-color" content="#f3f1eb" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#101211" media="(prefers-color-scheme: dark)"><title>${page.title} · Bedrock</title><style>${STYLE}</style></head><body><main><div class="brand">${MARK}<span>bedrock</span>${badge}</div><h1>${page.heading}</h1>${page.body}</main></body></html>`, {
+  const actions = page.actions ? `<span class="actions">${page.actions}</span>` : "";
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark"><meta name="theme-color" content="#f3f1eb" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#101211" media="(prefers-color-scheme: dark)"><title>${page.title} · Bedrock</title><style>${STYLE}</style></head><body${page.wide ? ' class="wide"' : ""}><main><div class="brand">${MARK}<span>bedrock</span>${badge}${actions}</div><h1>${page.heading}</h1>${page.body}</main></body></html>`, {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", "referrer-policy": "same-origin" },
   });
 }

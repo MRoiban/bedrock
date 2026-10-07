@@ -196,12 +196,17 @@ test("dashboard redirects to Google, authorizes creators, and status reports rea
     const sessions = createSessions(database.db);
     const user = sessions.user("creator@example.com", "Creator");
     const cookie = `bedrock_session=${sessions.create(user.id)}`;
-    expect(await (await fetch(url + "/", { headers: { ...headers, cookie } })).text()).toContain("Your server is ready");
+    expect(await (await fetch(url + "/", { headers: { ...headers, cookie } })).text()).toContain("Sign out");
     const token = database.createToken(user.email);
     const status = (await (await fetch(url + "/api/status", { headers: { ...headers, authorization: `Bearer ${token}` } })).json()).value;
     expect(status).toMatchObject({ domain: "example.com", user: "creator@example.com", creatorSignedIn: true });
     const outsider = sessions.user("outsider@example.com", "Other");
     expect((await fetch(url + "/", { headers: { ...headers, cookie: `bedrock_session=${sessions.create(outsider.id)}` } })).status).toBe(403);
+    const signedOut = await fetch(url + "/sign-out", { method: "POST", headers: { ...headers, cookie, origin: "https://bedrock.example.com" }, redirect: "manual" });
+    expect(signedOut.status).toBe(303);
+    expect(signedOut.headers.get("location")).toBe("/");
+    expect(signedOut.headers.get("set-cookie")).toContain("bedrock_session=;");
+    expect((await fetch(url + "/", { headers: { ...headers, cookie }, redirect: "manual" })).status).toBe(302);
   } finally { database?.close(); await daemon?.stop(); temp.cleanup(); }
 });
 

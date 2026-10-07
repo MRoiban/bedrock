@@ -1,5 +1,5 @@
 import { createBackups } from "../backup";
-import { dashboard } from "./dashboard";
+import { dashboard, signOut } from "./dashboard";
 import { TunnelSupervisor } from "../tunnel/supervisor";
 import { tunnelTokenPath } from "../tunnel";
 import { createCliLogin } from "../auth/cli-login";
@@ -55,6 +55,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           const origin = `${dev || host.split(":")[0]!.endsWith(".localhost") ? "http" : "https"}://${host}`;
           if (target === "bedrock") {
             if (request.method === "GET" && url.pathname === "/") return dashboard(request, origin, config, db, sessions, dev);
+            if (request.method === "POST" && url.pathname === "/sign-out") return signOut(auth.logout(request, origin));
             if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
             if (url.pathname === "/cli-login") return await cliLogin(request, origin);
             return await api(request);
