@@ -426,3 +426,10 @@ test("a socket that keeps failing while sync answers 426 keeps data live over HT
   expect(client.connection().state).toBe("polling"); expect(seen).toEqual(["fresh"]);
   env.clock.advance(1300); latest().open(); expect(client.connection().state).toBe("live"); client.close();
 }));
+
+test("coming back online over a surviving socket returns to live", async () => setup(async env => {
+  const client = createClient({ url: "https://pebble.test", autoReload: false });
+  client.subscribe("notes", null, () => {}); latest().open();
+  env.window.emit("offline"); expect(client.connection().state).toBe("offline");
+  env.window.emit("online"); expect(client.connection().state).toBe("live"); client.close();
+}));

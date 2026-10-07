@@ -169,6 +169,8 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     clearTimeout(timer); timer = undefined;
     attempt = 0;
     if (subscriptions.size || pending.size) { if (polling) { if (connection.state !== "offline") state("polling"); if (pollInterval > 0) void poll(); } connect(); }
+    // Going offline does not always drop an open socket; if it survived, we are simply live again.
+    if (socket?.readyState === 1) state("live");
     release.check();
   }
   function visible() { if (!browser?.document.hidden) resume(); else { clearTimeout(pollTimer); pollTimer = undefined; } }
