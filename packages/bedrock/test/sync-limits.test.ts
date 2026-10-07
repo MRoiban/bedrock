@@ -25,7 +25,10 @@ test("subscription limits, duplicate IDs, malformed JSON, and oversized messages
   const endpoint = new URL("/_bedrock/ws", running.server.url); endpoint.protocol = "ws:";
   const ws = new WebSocket(endpoint);
   const messages: any[] = [];
-  ws.onmessage = event => messages.push(JSON.parse(String(event.data)));
+  ws.onmessage = event => {
+    const message = JSON.parse(String(event.data));
+    if (message.op !== "hello") messages.push(message);
+  };
   await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = reject; });
   try {
     for (let i = 0; i <= 100; i++) ws.send(JSON.stringify({ op: "sub", id: String(i), query: "one", args: null }));

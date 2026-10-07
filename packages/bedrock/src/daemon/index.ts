@@ -100,7 +100,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             return response;
           }
           child.requests++;
-          const response = await proxyHttp(request, child.port, () => { child.requests--; }, identity);
+          const response = await proxyHttp(request, child.port, child.releaseId, () => { child.requests--; }, identity);
           if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));
           return response;
         } catch (error) { return daemonError(error); }

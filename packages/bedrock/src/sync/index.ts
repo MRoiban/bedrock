@@ -5,7 +5,7 @@ import { BedrockError, asBedrockError } from "../error";
 
 /* JSON protocol:
  * client: {op:"sub",id,query,args} | {op:"unsub",id} | {op:"mut",id,mutation,args}
- * server: {op:"data",id,result} | {op:"result",id,ok,value|error} | {op:"error",id,error}
+ * server: {op:"hello",release} | {op:"data",id,result} | {op:"result",id,ok,value|error} | {op:"error",id,error}
  * Errors contain BedrockError's {code,message,hint}. IDs are nonempty strings.
  */
 export interface SocketData { token?: import("../config").TokenIdentity | null; user: User | null; request: Request }
@@ -24,7 +24,7 @@ interface Subscription {
 const fail = (code: string, message: string) => new BedrockError(code, message, "Use the documented Bedrock WebSocket protocol.");
 const hash = (value: unknown) => new Bun.CryptoHasher("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 
-export function createSync(execute: ReturnType<typeof createExecutor>) {
+export function createSync(execute: ReturnType<typeof createExecutor>, release: string) {
   const sockets = new Map<Socket, Map<string, Subscription>>();
   function send(socket: Socket, message: object) {
     const sent = socket.send(JSON.stringify(message));
@@ -71,7 +71,7 @@ export function createSync(execute: ReturnType<typeof createExecutor>) {
       sendPings: true,
       backpressureLimit: 1024 * 1024,
       closeOnBackpressureLimit: true,
-      open(socket: Socket) { sockets.set(socket, new Map()); },
+      open(socket: Socket) { sockets.set(socket, new Map()); send(socket, { op: "hello", release }); },
       close(socket: Socket) {
         for (const sub of sockets.get(socket)?.values() ?? []) remove(sub);
         sockets.delete(socket);
@@ -98,6 +98,12 @@ export function createSync(execute: ReturnType<typeof createExecutor>) {
             if (typeof message.mutation !== "string") throw fail("INVALID_MESSAGE", "A mutation needs a mutation name.");
             try {
               const result = await execute("mutation", message.mutation, message.args, socket.data.request, socket.data.token ? undefined : { user: socket.data.user });
+              for (const sub of subscriptions.values()) {
+                if (![...sub.reads].some(table => table === "*" || result.writes.has(table))) continue;
+                clearTimeout(sub.timer);
+                delete sub.timer;
+                await refresh(sub, sub.hash !== undefined);
+              }
               send(socket, { op: "result", id, ok: true, value: result.value ?? null });
             } catch (error) { send(socket, { op: "result", id, ok: false, error: asBedrockError(error).toJSON() }); }
           } else throw fail("INVALID_MESSAGE", "Unknown operation.");
@@ -108,7 +114,7 @@ export function createSync(execute: ReturnType<typeof createExecutor>) {
       detach();
       for (const [socket, subscriptions] of sockets) {
         for (const sub of subscriptions.values()) remove(sub);
-        socket.close(1001, "Pebble stopped");
+        socket.close(1012, "Service restart");
       }
       sockets.clear();
     },

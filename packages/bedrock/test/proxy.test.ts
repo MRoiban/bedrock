@@ -39,7 +39,7 @@ test("proxy streams HTTP and relays WebSocket text, binary, headers, protocols, 
     async fetch(request, server) {
       try {
         if (request.headers.get("upgrade") === "websocket") return await proxyWebSocket(request, server, upstream.port!);
-        return await proxyHttp(request, upstream.port!);
+        return await proxyHttp(request, upstream.port!, "test-release");
       } catch (error) { return daemonError(error); }
     },
   });
@@ -113,7 +113,7 @@ test("proxy forwards a 90 MiB request before the producer finishes", async () =>
     },
   });
   const proxy = Bun.serve({ hostname: "127.0.0.1", port: 0, maxRequestBodySize: 90 * 1024 ** 2,
-    fetch: request => proxyHttp(request, upstream.port!),
+    fetch: request => proxyHttp(request, upstream.port!, "test-release"),
   });
   let sent = 0;
   const body = new ReadableStream<Uint8Array>({
@@ -129,3 +129,16 @@ test("proxy forwards a 90 MiB request before the producer finishes", async () =>
     expect((await response.json()).received).toBe(90 * 1024 ** 2);
   } finally { release(); await proxy.stop(true); await upstream.stop(true); }
 }, 15000);
+
+test("proxy stamps release identity, removes spoofed timing entries, and preserves app timings", async () => {
+  const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok", { headers: {
+    "x-bedrock-release": "spoofed",
+    "server-timing": 'db;dur=3;desc="query, with comma", bedrock-release;desc="spoofed", cache;dur=1, BEDROCK-RELEASE ;desc="also spoofed"',
+  } }) });
+  try {
+    const response = await proxyHttp(new Request("http://pebble.localhost/"), upstream.port!, "actual-release");
+    expect(response.headers.get("x-bedrock-release")).toBe("actual-release");
+    expect(response.headers.get("server-timing")).toBe('db;dur=3;desc="query, with comma", cache;dur=1, bedrock-release;desc="actual-release"');
+    expect(await response.text()).toBe("ok");
+  } finally { await upstream.stop(true); }
+});

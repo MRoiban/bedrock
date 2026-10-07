@@ -23,7 +23,7 @@ export function proxyHeaders(request: Request) {
   return headers;
 }
 
-export async function proxyHttp(request: Request, port: number, complete = () => {}, identity: HeadersInit = {}) {
+export async function proxyHttp(request: Request, port: number, release: string, complete = () => {}, identity: HeadersInit = {}) {
   let completed = false;
   const finish = () => { if (!completed) { completed = true; complete(); } };
   try {
@@ -38,6 +38,10 @@ export async function proxyHttp(request: Request, port: number, complete = () =>
     const headers = new Headers(response.headers);
     const connection = headers.get("connection")?.split(",").map(name => name.trim().toLowerCase()) ?? [];
     for (const name of [...connection, "connection", "keep-alive", "transfer-encoding", "upgrade", "trailer"]) headers.delete(name);
+    headers.set("x-bedrock-release", release);
+    const timing = timingEntries(headers.get("server-timing") ?? "").filter(entry => !/^bedrock-release\s*(?:;|$)/i.test(entry));
+    timing.push(`bedrock-release;desc="${release}"`);
+    headers.set("server-timing", timing.join(", "));
     // A pebble must not overwrite the daemon's parent-domain session cookie.
     const cookies = headers.getSetCookie().filter(value => !/^bedrock_session\s*=/i.test(value));
     headers.delete("set-cookie");
@@ -56,6 +60,20 @@ export async function proxyHttp(request: Request, port: number, complete = () =>
     });
     return new Response(body, { status: response.status, statusText: response.statusText, headers });
   } catch (error) { finish(); throw error; }
+}
+
+function timingEntries(value: string) {
+  const entries: string[] = [];
+  let start = 0, quoted = false, escaped = false;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (escaped) { escaped = false; continue; }
+    if (quoted && char === "\\") { escaped = true; continue; }
+    if (char === '"') quoted = !quoted;
+    if (char === "," && !quoted) { entries.push(value.slice(start, index).trim()); start = index + 1; }
+  }
+  entries.push(value.slice(start).trim());
+  return entries.filter(Boolean);
 }
 
 function forwardHeaders(request: Request, identity: HeadersInit) {
