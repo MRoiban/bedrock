@@ -7,8 +7,11 @@ export function deriveIdentitySecret(master: string, pebbleName: string) {
 }
 
 const signature = (json: string, timestamp: string, secret: string) => createHmac("sha256", secret).update(`${json}\n${timestamp}`).digest("hex");
+// Header values must stay ASCII: Bun's WebSocket client sends UTF-8 bytes that the server
+// reads back as Latin-1, so a name like "Léa" would fail the signature check.
+const asciiJson = (value: unknown) => JSON.stringify(value).replace(/[\u007f-\uffff]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
 export function signIdentity(user: User, secret: string, now = Date.now()) {
-  const json = JSON.stringify(user);
+  const json = asciiJson(user);
   const timestamp = String(now);
   return { "x-bedrock-user": json, "x-bedrock-user-ts": timestamp, "x-bedrock-signature": signature(json, timestamp, secret) };
 }
