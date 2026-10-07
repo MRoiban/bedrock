@@ -24,7 +24,10 @@ export function createCliLogin(config: DaemonConfig, sessions: Sessions, db: Dae
       if (pending.size >= 1000) throw new BedrockError("LOGIN_LIMIT", "Too many pending CLI authorizations.", "Wait five minutes and retry.");
       const nonce = randomToken();
       pending.set(nonce, { hash: session.hash, port, state, expires: Date.now() + 300000 });
-      return authPage(`<p>Authorize CLI on ${escapeHtml(host)}?</p><p>This grants creator access to deploy and manage all pebbles.</p><form method="post" action="/cli-login"><input type="hidden" name="nonce" value="${nonce}"><button>Authorize CLI</button></form>`);
+      return authPage({
+        title: "Authorize CLI", heading: `Authorize CLI on ${escapeHtml(host)}?`,
+        body: `<p>It gets your creator access: it can deploy, restart and delete every pebble on this server.</p><form method="post" action="/cli-login"><input type="hidden" name="nonce" value="${nonce}"><button class="primary">Authorize CLI</button></form><p class="note">Didn’t just run <code>bedrock login</code>? Close this tab.</p>`,
+      });
     }
     if (request.method !== "POST") throw new BedrockError("NOT_FOUND", "Unknown CLI login method.", "Run bedrock login again.");
     requireOrigin(request, origin);

@@ -4,7 +4,13 @@ import type { DaemonConfig } from "../daemon/config";
 import { BedrockError } from "../error";
 import type { Sessions } from "./sessions";
 import { SESSION_LIFETIME, randomToken } from "./sessions";
-import { authPage, cookieToken, escapeHtml, requireOrigin, sessionCookie, validateReturn } from "./http";
+import { GOOGLE_G, authPage, cookieToken, escapeHtml, requireOrigin, sessionCookie, validateReturn } from "./http";
+
+// Name the place the visitor is going, not the server they are signing in to.
+function destination(returnTo: string) {
+  const label = new URL(returnTo).hostname.split(".")[0]!;
+  return label === "bedrock" ? "Bedrock" : label;
+}
 
 export interface OAuthProvider {
   createAuthorizationURL(state: string, verifier: string, scopes: string[]): URL;
@@ -43,7 +49,10 @@ export function createAuth(config: DaemonConfig, dev: boolean, sessions: Session
     const returnTo = validateReturn(url.searchParams.get("return") ?? `${origin}/`, "localhost", true);
     // Dev cookies are host-only, so the form must remain on the destination host.
     if (new URL(returnTo).origin !== origin) return Response.redirect(`${new URL(returnTo).origin}/_bedrock/dev-login?return=${encodeURIComponent(returnTo)}`, 302);
-    if (request.method === "GET") return authPage(`<p>Local development: choose any email.</p><form method="post" action="${escapeHtml(path)}?return=${escapeHtml(encodeURIComponent(returnTo))}"><label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="email"><label for="name">Name (optional)</label><input id="name" name="name" autocomplete="name"><button>Sign in</button></form>`);
+    if (request.method === "GET") return authPage({
+      title: "Sign in", badge: "Local dev", heading: `Sign in to ${escapeHtml(destination(returnTo))}`,
+      body: `<p>There is no Google in development. Use any email to act as that person.</p><form method="post" action="${escapeHtml(path)}?return=${escapeHtml(encodeURIComponent(returnTo))}"><label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="email" autocapitalize="off" spellcheck="false" autofocus placeholder="you@example.com"><label for="name">Name <span>(optional)</span></label><input id="name" name="name" autocomplete="name"><button class="primary">Sign in</button></form>`,
+    });
     if (request.method !== "POST") throw new BedrockError("NOT_FOUND", "Unknown login method.", "Use the local login form.");
     requireOrigin(request, origin);
     const form = await request.formData();
@@ -69,7 +78,10 @@ export function createAuth(config: DaemonConfig, dev: boolean, sessions: Session
     if (url.pathname === "/login" && request.method === "GET") {
       const returnTo = validateReturn(url.searchParams.get("return") ?? `https://bedrock.${config.domain}/`, config.domain);
       if (!oauth) throw new BedrockError("OAUTH_NOT_CONFIGURED", "Google sign-in is not configured.", "Run bedrock setup with --google-client-id and --google-client-secret.");
-      if (url.searchParams.get("start") !== "1") return authPage(`<p>Sign in to your personal cloud.</p><form method="get" action="/login"><input type="hidden" name="return" value="${escapeHtml(returnTo)}"><input type="hidden" name="start" value="1"><button>Continue with Google</button></form>`);
+      if (url.searchParams.get("start") !== "1") return authPage({
+        title: "Sign in", heading: `Sign in to ${escapeHtml(destination(returnTo))}`,
+        body: `<p class="host">${escapeHtml(new URL(returnTo).host)}</p><form method="get" action="/login"><input type="hidden" name="return" value="${escapeHtml(returnTo)}"><input type="hidden" name="start" value="1"><button class="google">${GOOGLE_G}Continue with Google</button></form><p class="note">This server receives only your name, email address and profile photo.</p>`,
+      });
       for (const [key, login] of pending) if (login.expiresAt <= Date.now()) pending.delete(key);
       if (pending.size >= 1000) throw new BedrockError("LOGIN_LIMIT", "Too many pending sign-ins.", "Wait a few minutes and try again.");
       const state = generateState();
