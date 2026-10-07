@@ -56,6 +56,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
   let unavailable = (!!options.token && typeof Bun === "undefined") || options.sync === false || typeof WebSocket === "undefined";
   let polling = unavailable;
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let ticking = false;
   const pollInterval = options.pollInterval ?? 5000;
   let connection: Connection = { state: "idle", since: Date.now(), attempt: 0 };
@@ -74,14 +75,20 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     connection = { state: next, since: changed ? Date.now() : connection.since, attempt };
     if (changed) for (const fn of listeners) fn(connection);
   }
+  const quiet = () => !subscriptions.size && !pending.size && !mutations;
+  // Linger briefly so an unsubscribe followed by a resubscribe (a React re-render) keeps the socket.
   function settled() {
-    if (!subscriptions.size && !pending.size && !mutations) {
+    clearTimeout(idleTimer); idleTimer = undefined;
+    if (!quiet() || closed) return;
+    idleTimer = setTimeout(() => {
+      idleTimer = undefined;
+      if (!quiet() || closed) return;
       probeGeneration++; probing = false;
       clearTimeout(timer); timer = undefined;
       clearTimeout(pollTimer); pollTimer = undefined;
       const ws = socket; socket = undefined; ws?.close();
       attempt = 0; attempted = false; if (connection.state !== "offline") state("idle");
-    }
+    }, 1000);
   }
   function received(response: Response) {
     if (connection.state === "offline") state(socket?.readyState === 1 ? "live" : polling ? "polling" : subscriptions.size || pending.size ? "reconnecting" : "idle");
@@ -213,7 +220,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     const generation = ++probeGeneration;
     try {
       const response = await request("/_bedrock/ws", { signal: AbortSignal.timeout(5000) });
-      if (closed || suspended || generation !== probeGeneration) return;
+      if (closed || suspended || generation !== probeGeneration || quiet()) return;
       if (response.status !== 426) {
         const body = await response.json().catch(() => null);
         if (closed || suspended || generation !== probeGeneration) return;
@@ -226,7 +233,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
         } else fallback();
       }
     } catch {
-      if (!closed && !suspended && generation === probeGeneration) { fallback(); state("offline"); }
+      if (!closed && !suspended && generation === probeGeneration && !quiet()) { fallback(); state("offline"); }
     } finally { if (generation === probeGeneration) probing = false; }
     if (generation === probeGeneration) reconnect();
   }
@@ -376,7 +383,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       browser?.window.removeEventListener("online", resume);
       browser?.window.removeEventListener("offline", offline);
       browser?.document.removeEventListener("visibilitychange", visible);
-      clearTimeout(timer); clearTimeout(pollTimer);
+      clearTimeout(timer); clearTimeout(pollTimer); clearTimeout(idleTimer);
       listeners.clear(); state("idle");
       subscriptions.clear();
       for (const item of pending.values()) item.reject(disconnected());

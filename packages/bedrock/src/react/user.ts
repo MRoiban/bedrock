@@ -33,15 +33,17 @@ export function watchUser(load: () => Promise<User | null>, changed: (state: Use
     }
   }
   const retry = () => { void run(); };
-  const visible = () => { if (!browser?.document.hidden) retry(); };
-  browser?.window.addEventListener("online", retry);
+  // Only a failed check is worth repeating; a known answer stays until the next mount.
+  const recover = () => { if (state.error) retry(); };
+  const visible = () => { if (!browser?.document.hidden) recover(); };
+  browser?.window.addEventListener("online", recover);
   browser?.document.addEventListener("visibilitychange", visible);
   retry();
   return {
     retry,
     close() {
       active = false; cancel(timer!);
-      browser?.window.removeEventListener("online", retry);
+      browser?.window.removeEventListener("online", recover);
       browser?.document.removeEventListener("visibilitychange", visible);
     },
   };

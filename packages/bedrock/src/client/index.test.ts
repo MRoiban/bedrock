@@ -281,7 +281,7 @@ test("connection listeners only fire on state changes and unsubscribe", async ()
   const unsub = client.subscribe("notes", null, () => {}); expect(states).toEqual(["connecting"]);
   latest().open(); latest().close(); env.clock.advance(250); latest().close(); await drain();
   expect(states).toEqual(["connecting", "live", "reconnecting"]); expect(client.connection().attempt).toBe(2);
-  env.clock.advance(500); latest().open(); unsub(); expect(states.slice(-2)).toEqual(["live", "idle"]);
+  env.clock.advance(500); latest().open(); unsub(); expect(states.at(-1)).toBe("live"); env.clock.advance(1000); expect(states.slice(-2)).toEqual(["live", "idle"]);
   unsubscribe(); client.subscribe("notes", null, () => {}); expect(states.at(-1)).toBe("idle"); client.close();
 }));
 
@@ -380,11 +380,11 @@ test("unsubscribing during discovery stays idle and temporary polling retries af
   let respond!: (response: Response) => void;
   globalThis.fetch = ((input: string | URL | Request) => String(input).endsWith("/ws") ? new Promise(resolve => { respond = resolve; }) : Promise.resolve(Response.json({ ok: true, value: 1 }))) as unknown as typeof fetch;
   const client = createClient({ url: "https://pebble.test", autoReload: false });
-  const first = client.subscribe("notes", null, () => {}); latest().close(); first();
+  const first = client.subscribe("notes", null, () => {}); latest().close(); first(); env.clock.advance(1000);
   respond(new Response(null, { status: 502 })); await drain(); expect(client.connection().state).toBe("idle");
   const second = client.subscribe("notes", null, () => {}); latest().close(); respond(new Response(null, { status: 502 })); await drain();
-  expect(client.connection().state).toBe("polling"); second(); expect(client.connection().state).toBe("idle");
-  client.subscribe("notes", null, () => {}); expect(FakeSocket.instances).toHaveLength(3);
+  expect(client.connection().state).toBe("polling"); second(); env.clock.advance(1000); expect(client.connection().state).toBe("idle");
+  const before = FakeSocket.instances.length; client.subscribe("notes", null, () => {}); expect(FakeSocket.instances).toHaveLength(before + 1);
   latest().open(); expect(client.connection().state).toBe("live"); client.close(); env.clock.advance(30000);
 }));
 
@@ -407,4 +407,11 @@ test("storage transport network failures also mark the client offline", async ()
   const client = createClient({ url: "https://pebble.test", autoReload: false });
   await expect(client.deleteFile("assets", "file")).rejects.toMatchObject({ code: "UPLOAD_FAILED" });
   expect(client.connection().state).toBe("offline"); client.close();
+}));
+
+test("a resubscription within a second keeps the open socket", async () => setup(async env => {
+  const client = createClient({ url: "https://pebble.test", autoReload: false });
+  const first = client.subscribe("notes", null, () => {}); const socket = latest(); socket.open();
+  first(); env.clock.advance(500); client.subscribe("notes", null, () => {}); env.clock.advance(1000);
+  expect(latest()).toBe(socket); expect(client.connection().state).toBe("live"); client.close();
 }));
