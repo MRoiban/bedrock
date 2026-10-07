@@ -20,9 +20,13 @@ export interface Client<P extends PebbleConfig = PebbleConfig> {
   upload(bucket: import("../config/types").BucketNames<P>, file: File, options?: import("./storage").UploadOptions): Promise<import("../config/types").FileMetadata>;
   fileUrl(bucket: import("../config/types").BucketNames<P>, id: string): string;
   deleteFile(bucket: import("../config/types").BucketNames<P>, id: string): Promise<void>;
+  release(): import("./release").Release;
+  onRelease(fn: (release: import("./release").Release) => void): () => void;
   close(): void;
 }
 export interface ClientOptions {
+  autoReload?: boolean;
+  beforeReload?: () => boolean | void;
   url?: string;
   token?: string;
   sync?: boolean;

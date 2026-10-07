@@ -1,3 +1,6 @@
+import { browserEnvironment } from "./browser";
+import { releaseTracker } from "./release";
+import { restorePlace } from "./restore";
 import type { User } from "../config/types";
 import { storageClient } from "./storage";
 export type { UploadOptions } from "./storage";
@@ -5,6 +8,7 @@ import type { PebbleConfig } from "../config/types";
 import { BedrockError, asBedrockError } from "../error";
 import type { Client, ClientOptions } from "./types";
 export type { Client, ClientOptions, ClientResult, JsonResult } from "./types";
+export type { Release } from "./release";
 export { BedrockError } from "../error";
 
 interface Subscription {
@@ -44,8 +48,55 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
   let timer: ReturnType<typeof setTimeout> | undefined;
   let attempt = 0;
   let probing = false;
+  let probeGeneration = 0;
   let unavailable = (!!options.token && typeof Bun === "undefined") || options.sync === false || typeof WebSocket === "undefined";
   let closed = false;
+  let suspended = false;
+  let mutations = 0, uploads = 0;
+  const browser = browserEnvironment();
+  const release = releaseTracker(options, browser, () => suspended || pending.size > 0 || mutations > 0 || uploads > 0);
+  const restore = restorePlace(options.token ? undefined : browser);
+  function received(response: Response) { release.observe(response.headers.get("x-bedrock-release")); }
+  function delivered(id: string, value: unknown) {
+    const sub = subscriptions.get(id);
+    if (!sub) return;
+    sub.onData(value);
+    restore.data(id);
+  }
+  async function trackedMutation(name: string, args: unknown) {
+    mutations++;
+    try { return await http("m", name, args); }
+    finally { mutations--; release.check(); }
+  }
+  function rejectSent() {
+    for (const [id, item] of pending) {
+      if (item.sent) { pending.delete(id); item.reject(disconnected()); }
+    }
+    release.check();
+  }
+  function hide() {
+    suspended = true;
+    probeGeneration++; probing = false;
+    clearTimeout(timer); timer = undefined;
+    const ws = socket;
+    socket = undefined;
+    ws?.close(1000, "Page hidden");
+    rejectSent();
+  }
+  function resume() {
+    if (closed) return;
+    suspended = false;
+    probeGeneration++; probing = false;
+    clearTimeout(timer); timer = undefined;
+    attempt = 0;
+    if (subscriptions.size || pending.size) connect();
+    release.check();
+  }
+  function visible() { if (!browser?.document.hidden) resume(); }
+  browser?.window.addEventListener("pagehide", hide);
+  browser?.window.addEventListener("pageshow", resume);
+  browser?.window.addEventListener("online", resume);
+  browser?.document.addEventListener("visibilitychange", visible);
 
   async function http(kind: "q" | "m", name: string, args: unknown) {
     if (closed) throw new BedrockError("CLIENT_CLOSED", "The client is closed.", "Create a new client.");
@@ -57,6 +108,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       const response = await fetch(new URL(`/_bedrock/${kind}/${encodeURIComponent(name)}`, base), {
         method: "POST", headers, credentials: options.token ? "omit" : "include", signal: AbortSignal.timeout(30_000), body: JSON.stringify(wireArgs(args)),
       });
+      received(response);
       const result = await response.json();
       if (!result.ok) throw remoteError(result.error);
       return result.value;
@@ -72,36 +124,38 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     unavailable = true;
     for (const [id, item] of pending) {
       pending.delete(id);
-      void http("m", item.message.mutation, item.message.args).then(item.resolve, item.reject);
+      void trackedMutation(item.message.mutation, item.message.args).then(item.resolve, item.reject);
     }
     for (const [id, sub] of subscriptions) {
       void http("q", sub.query, sub.args).then(value => {
-        if (subscriptions.has(id)) sub.onData(value);
+        delivered(id, value);
       }, error => { if (subscriptions.has(id)) sub.onError?.(error); });
     }
   }
-  function reconnect() {
-    if (closed || !subscriptions.size && !pending.size) return;
-    const delay = Math.min(30_000, 250 * 2 ** Math.min(attempt++, 7)) * (0.75 + Math.random() * 0.5);
+  function reconnect(restarting = false) {
+    if (suspended || closed || !subscriptions.size && !pending.size) return;
+    const delay = restarting ? 100 + Math.random() * 900 : Math.min(30_000, 250 * 2 ** Math.min(attempt++, 7)) * (0.75 + Math.random() * 0.5);
     timer = setTimeout(() => { timer = undefined; connect(); }, delay);
   }
   async function discover() {
     probing = true;
+    const generation = ++probeGeneration;
     try {
       const headers = new Headers(options.headers);
       if (options.token) { headers.set("authorization", `Bearer ${options.token}`); headers.delete("cookie"); }
       headers.set("origin", base.origin);
       const response = await fetch(new URL("/_bedrock/ws", base), { headers, credentials: options.token ? "omit" : "include", signal: AbortSignal.timeout(5000) });
-      if (closed) return;
+      received(response);
+      if (closed || suspended || generation !== probeGeneration) return;
       // A plain request gets 426 only when sync is enabled and access permits it.
       if (response.status !== 426) { fallback(); return; }
     } catch {
       // A temporary network failure does not establish that sync is unavailable.
-    } finally { probing = false; }
-    reconnect();
+    } finally { if (generation === probeGeneration) probing = false; }
+    if (generation === probeGeneration) reconnect();
   }
   function connect() {
-    if (closed || unavailable || probing || socket || timer) return;
+    if (closed || suspended || unavailable || probing || socket || timer) return;
     const url = new URL("/_bedrock/ws", base);
     url.protocol = base.protocol === "https:" ? "wss:" : "ws:";
     let ws: WebSocket;
@@ -131,7 +185,8 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       let message: any;
       try { message = JSON.parse(String(event.data)); }
       catch { ws.close(1002, "Invalid server message"); return; }
-      if (message.op === "data") subscriptions.get(message.id)?.onData(message.result);
+      if (message.op === "hello") release.observe(message.release);
+      else if (message.op === "data") delivered(message.id, message.result);
       else if (message.op === "result") {
         const item = pending.get(message.id);
         if (!item) return;
@@ -144,14 +199,13 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       }
     };
     ws.onerror = () => {};
-    ws.onclose = () => {
+    ws.onclose = event => {
       clearTimeout(timeout);
       if (socket !== ws) return;
       socket = undefined;
-      for (const [id, item] of pending) {
-        if (item.sent) { pending.delete(id); item.reject(disconnected()); }
-      }
-      if (closed) return;
+      rejectSent();
+      if (closed || suspended) return;
+      if (event.code === 1012) { reconnect(true); return; }
       if (!opened) { void discover(); return; }
       reconnect();
     };
@@ -163,6 +217,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       if (options.token) { headers.set("authorization", `Bearer ${options.token}`); headers.delete("cookie"); }
       headers.set("origin", base.origin);
       const response = await fetch(new URL(path, base), { method, headers, credentials: options.token ? "omit" : "include", signal: AbortSignal.timeout(30_000) });
+      received(response);
       const result = await response.json();
       if (!response.ok) throw remoteError(result.error);
       return result;
@@ -177,11 +232,13 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       return login.href;
     },
     async logout() { await authRequest("/_bedrock/logout", "POST"); },
-    ...storageClient(base, options, () => closed),
+    release: release.release,
+    onRelease: release.onRelease,
+    ...storageClient(base, options, () => closed, received, change => { uploads += change; release.check(); }),
     query: (name, args) => http("q", name, args),
     mutate(name, args) {
       if (closed) return Promise.reject(new BedrockError("CLIENT_CLOSED", "The client is closed.", "Create a new client."));
-      if (unavailable) return http("m", name, args);
+      if (unavailable) return trackedMutation(name, args);
       if (pending.size >= 1000) return Promise.reject(new BedrockError("MUTATION_LIMIT", "Too many pending mutations.", "Wait for earlier mutations to finish."));
       let serialized: unknown;
       try { serialized = wireArgs(args); } catch (error) { return Promise.reject(error); }
@@ -190,11 +247,12 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
         const timeout = setTimeout(() => {
           pending.delete(id);
           reject(new BedrockError("MUTATION_TIMEOUT", "No mutation result arrived within 30 seconds.", "Check whether the mutation committed before retrying."));
+          release.check();
         }, 30_000);
         pending.set(id, {
           message: { op: "mut", id, mutation: name, args: serialized }, sent: false,
-          resolve(value) { clearTimeout(timeout); resolve(value); },
-          reject(error) { clearTimeout(timeout); reject(error); },
+          resolve(value) { clearTimeout(timeout); resolve(value); release.check(); },
+          reject(error) { clearTimeout(timeout); reject(error); release.check(); },
         });
         if (socket?.readyState === WebSocket.OPEN) flush(); else connect();
       });
@@ -204,17 +262,24 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       const id = `s${++sequence}`;
       args = wireArgs(args);
       subscriptions.set(id, { query, args, onData, onError });
+      restore.subscribe(id);
       if (unavailable) {
-        void http("q", query, args).then(value => { if (subscriptions.has(id)) onData(value); }, error => { if (subscriptions.has(id)) onError?.(error); });
+        void http("q", query, args).then(value => { delivered(id, value); }, error => { if (subscriptions.has(id)) onError?.(error); });
       } else if (socket?.readyState === WebSocket.OPEN) send({ op: "sub", id, query, args: args ?? null });
       else connect();
       return () => {
         subscriptions.delete(id);
+        restore.unsubscribe(id);
         if (socket?.readyState === WebSocket.OPEN) send({ op: "unsub", id });
       };
     },
     close() {
       closed = true;
+      release.close(); restore.close();
+      browser?.window.removeEventListener("pagehide", hide);
+      browser?.window.removeEventListener("pageshow", resume);
+      browser?.window.removeEventListener("online", resume);
+      browser?.document.removeEventListener("visibilitychange", visible);
       clearTimeout(timer);
       subscriptions.clear();
       for (const item of pending.values()) item.reject(disconnected());
