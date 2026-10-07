@@ -5,7 +5,7 @@ import { verifyIdentity } from "../auth/identity";
 import { createFileHandler } from "../storage/http";
 import { resolve, join } from "node:path";
 import type { PebbleConfig } from "../config";
-import { definePebble } from "../config";
+import { definePebble, socketSize, DEFAULT_SOCKET_MESSAGE_SIZE } from "../config";
 import { openDatabase, defaultDataDir, applyMigrations } from "../db";
 import { BedrockError, asBedrockError } from "../error";
 import { createSync, type SocketData } from "../sync";
@@ -68,7 +68,7 @@ export async function startPebble(options: StartPebbleOptions) {
         return Response.json({ ok: true, value: request.method === "POST" && name ? await jobs.run(name) : jobs.list() });
       } catch (error) { return errorResponse(error); }
     };
-    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, name: pebble.name, access: pebble.access ?? "public" }) };
+    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };
     routes["/_bedrock/*"] = () => Response.json({ ok: false, error: new BedrockError("NOT_FOUND", "Unknown Bedrock endpoint.", "Use POST /_bedrock/q/<name> or /_bedrock/m/<name>.").toJSON() }, { status: 404 });
@@ -90,11 +90,16 @@ export async function startPebble(options: StartPebbleOptions) {
       // Public HTML must not inherit Bun's development Host restrictions from the environment.
       development: options.dev === true ? { hmr: true } : false,
       websocket: {
-        maxPayloadLength: 64 * 1024,
+        maxPayloadLength: Math.max(64 * 1024, ...Object.values(pebble.sockets ?? {}).map(socket => socketSize(socket.maxMessageSize ?? DEFAULT_SOCKET_MESSAGE_SIZE))),
         idleTimeout: 60, sendPings: true,
-        backpressureLimit: 1024 * 1024, closeOnBackpressureLimit: true,
+        // Application handlers own throttling; sync still closes slow consumers in its send helper.
+        backpressureLimit: Math.max(1024 * 1024, ...Object.values(pebble.sockets ?? {}).map(socket => socket.backpressureLimit === undefined ? 2 ** 31 - 1 : socketSize(socket.backpressureLimit))),
+        closeOnBackpressureLimit: Object.keys(pebble.sockets ?? {}).length === 0,
         open(ws) { if (isApplication(ws.data)) appSockets.websocket.open!(ws as any); else sync?.websocket.open!(ws as any); },
-        message(ws, message) { if (isApplication(ws.data)) appSockets.websocket.message(ws as any, message); else sync?.websocket.message(ws as any, message); },
+        message(ws, message) {
+          const limit = isApplication(ws.data) ? socketSize(ws.data.definition.maxMessageSize ?? DEFAULT_SOCKET_MESSAGE_SIZE) : 64 * 1024;
+          if ((typeof message === "string" ? Buffer.byteLength(message) : message.byteLength) > limit) { ws.close(1009, "Message too big"); return; }
+          if (isApplication(ws.data)) appSockets.websocket.message(ws as any, message); else sync?.websocket.message(ws as any, message); },
         close(ws, code, reason) { if (isApplication(ws.data)) appSockets.websocket.close!(ws as any, code, reason); else sync?.websocket.close!(ws as any); },
         drain(ws) { if (isApplication(ws.data)) appSockets.websocket.drain!(ws as any); },
       },
@@ -113,7 +118,7 @@ export async function startPebble(options: StartPebbleOptions) {
     jobs.start();
     let stopping: Promise<void> | undefined;
     return {
-      server, pebble, db: database.db, execute, jobs,
+      server, pebble, stopTimeout: services.stopTimeout, db: database.db, execute, jobs,
       stop() {
         return stopping ??= (async () => {
           clearInterval(storageCleanup);

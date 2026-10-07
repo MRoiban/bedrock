@@ -1,3 +1,4 @@
+import { DEFAULT_SERVICE_STOP_TIMEOUT, MAX_SERVICE_STOP_TIMEOUT } from "../config/hosting";
 import { signIdentity, deriveIdentitySecret } from "../auth/identity";
 import { basename, join, resolve } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
@@ -13,6 +14,7 @@ export interface Child {
   started: number;
   reading: Promise<unknown>;
   requests: number;
+  stopTimeout?: number;
   access: Access;
 }
 interface State { child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number }
@@ -21,7 +23,7 @@ export async function stopChild(child: Child) {
   if (child.process.exitCode === null) {
     try { child.process.send({ op: "stop" }); } catch { child.process.kill("SIGTERM"); }
   }
-  const timer = setTimeout(() => { if (child.process.exitCode === null) child.process.kill("SIGKILL"); }, 3000);
+  const timer = setTimeout(() => { if (child.process.exitCode === null) child.process.kill("SIGKILL"); }, (child.stopTimeout ?? DEFAULT_SERVICE_STOP_TIMEOUT) + 1000);
   try { await child.process.exited; await child.reading; } finally { clearTimeout(timer); }
 }
 
@@ -64,9 +66,9 @@ export class Supervisor {
     const record = this.db.get(name);
     const previous = record?.release === release ? record.previous_release : record?.release;
     const logs = this.logs(name);
-    let ready!: (value: { name: string; port: number }) => void;
+    let ready!: (value: { name: string; port: number; stopTimeout?: number }) => void;
     let failed!: (error: unknown) => void;
-    const readiness = new Promise<{ name: string; port: number }>((resolve, reject) => { ready = resolve; failed = reject; });
+    const readiness = new Promise<{ name: string; port: number; stopTimeout?: number }>((resolve, reject) => { ready = resolve; failed = reject; });
     const processChild = Bun.spawn([process.execPath, join(import.meta.dir, "../runtime/child.ts")], {
       cwd: release, stdin: "ignore", stdout: "pipe", stderr: "pipe",
       env: { ...process.env, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
@@ -74,7 +76,9 @@ export class Supervisor {
         BEDROCK_DEV: this.dev ? "1" : "0",
         BEDROCK_DATA: this.dev ? join(release, ".bedrock") : join(this.home, "pebbles", name, "data"), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) },
       ipc(message: unknown) {
-        const value = message as { name: string; port: number; error?: { code: string; message: string; hint: string } };
+        const value = message as { op?: string; name: string; port: number; stopTimeout?: number; error?: { code: string; message: string; hint: string } };
+        if (Number.isSafeInteger(value.stopTimeout) && value.stopTimeout! >= DEFAULT_SERVICE_STOP_TIMEOUT && value.stopTimeout! <= MAX_SERVICE_STOP_TIMEOUT) child.stopTimeout = value.stopTimeout!;
+        if (value.op === "stop-budget") return;
         if (value.error) failed(new BedrockError(value.error.code, value.error.message, value.error.hint));
         else ready(value);
       },

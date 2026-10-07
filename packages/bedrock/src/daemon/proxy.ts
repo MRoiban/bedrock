@@ -87,7 +87,31 @@ export interface Relay {
   onClose?: (() => void) | undefined;
   downstream?: Bun.ServerWebSocket<Relay>;
   pending: (string | ArrayBuffer)[];
+  pendingBytes?: number;
+  overloaded?: boolean;
   closed?: { code: number; reason: string };
+}
+export const RELAY_BUFFER_LIMIT = 64 * 1024 ** 2;
+const messageBytes = (message: string | ArrayBuffer | Buffer) => typeof message === "string" ? Buffer.byteLength(message) : message.byteLength;
+function overload(relay: Relay) {
+  if (relay.overloaded) return;
+  relay.overloaded = true;
+  relay.pending.length = 0;
+  relay.pendingBytes = 0;
+  relay.closed = { code: 1013, reason: "Slow consumer" };
+  relay.downstream?.close(1013, "Slow consumer");
+  relay.upstream.close(1013, "Slow consumer");
+}
+function sendDownstream(relay: Relay, message: string | ArrayBuffer) {
+  if (relay.overloaded) return;
+  const downstream = relay.downstream!;
+  if (downstream.getBufferedAmount() + messageBytes(message) > RELAY_BUFFER_LIMIT) { overload(relay); return; }
+  const sent = downstream.send(message);
+  if (sent === 0) { overload(relay); return; }
+  if (sent === -1 || downstream.getBufferedAmount() > 1024 * 1024) {
+    // Older Bun versions lack pause/resume; the byte ceiling still bounds their relay.
+    (relay.upstream as WebSocket & { pause?: () => boolean }).pause?.();
+  }
 }
 const closeCode = (code: number) => code === 1005 || code === 1006 || code === 1015 ? 1011 : code;
 
@@ -106,10 +130,13 @@ export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>
   const relay: Relay = { upstream, pending: [] };
   relay.onClose = register?.(relay);
   upstream.onmessage = event => {
-    if (relay.downstream) relay.downstream.send(event.data);
+    if (relay.overloaded) return;
+    if (relay.downstream) sendDownstream(relay, event.data);
     else {
+      const bytes = (relay.pendingBytes ?? 0) + messageBytes(event.data);
+      if (bytes > RELAY_BUFFER_LIMIT || relay.pending.length >= 100) { overload(relay); return; }
+      relay.pendingBytes = bytes;
       relay.pending.push(event.data);
-      if (relay.pending.length > 100) upstream.close(1009, "Too many messages before upgrade");
     }
   };
   upstream.onclose = event => {
@@ -137,14 +164,21 @@ export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>
 }
 
 export const relayWebSocket: Bun.WebSocketHandler<Relay> = {
+  maxPayloadLength: RELAY_BUFFER_LIMIT,
+  backpressureLimit: RELAY_BUFFER_LIMIT, closeOnBackpressureLimit: false,
   open(socket) {
     socket.data.downstream = socket;
-    for (const message of socket.data.pending) socket.send(message);
+    for (const message of socket.data.pending) sendDownstream(socket.data, message);
     socket.data.pending.length = 0;
+    socket.data.pendingBytes = 0;
     if (socket.data.closed) socket.close(socket.data.closed.code, socket.data.closed.reason);
   },
   message(socket, message) {
-    if (socket.data.upstream.readyState === WebSocket.OPEN) socket.data.upstream.send(message);
+    const relay = socket.data;
+    if (relay.overloaded) return;
+    if (relay.upstream.bufferedAmount + messageBytes(message) > RELAY_BUFFER_LIMIT) { overload(relay); return; }
+    if (relay.upstream.readyState === WebSocket.OPEN) relay.upstream.send(message);
   },
+  drain(socket) { (socket.data.upstream as WebSocket & { resume?: () => boolean }).resume?.(); },
   close(socket, code, reason) { socket.data.onClose?.(); socket.data.upstream.close(closeCode(code), reason); },
 };

@@ -649,10 +649,13 @@ import { definePebble, socket, service } from "bedrock";
 export default definePebble({
   name: "host", access: "users",
   services: { counter: service({
+    stopTimeout: 5000,
     start(ctx) { ctx.log("Starting", ctx.dataDir); return { count: 0 }; },
     stop(value) { value.count = 0; },
   }) },
   sockets: { "/api/host": socket<number>({
+    maxMessageSize: "16mb",
+    // Optional: backpressureLimit: "32mb",
     open(ws, ctx) { ws.data.value = ctx.services.counter.count; },
     message(ws, data, ctx) { ws.send(data); },
     close(ws, code, reason, ctx) {},
@@ -675,12 +678,39 @@ Authorization headers. Browser clients use session cookies and ordinary
 Callbacks receive detached contexts; no executor slot lasts for a connection.
 Use `ctx.read`/`ctx.write` for short database work; writes notify sync. Native Bun
 `send`, `getBufferedAmount`, and `drain` expose backpressure. `ws.data.value` is
-application-owned per-connection state (type parameter of `socket<T>`). The
-shared handler limits frames to 64 KiB and buffered output to 1 MiB; large payloads
-need application framing or HTTP. Callback failures log and close with 1011.
-Applications own their protocol, row authorization and reconnect policy.
+application-owned per-connection state (type parameter of `socket<T>`).
+`socket({ maxMessageSize?, backpressureLimit?, ...handlers })` accepts positive
+integer bytes or size strings such as `"16mb"` (binary units). Incoming application
+messages default to 1 MiB. Limits count UTF-8 bytes for text and bytes for binary,
+not characters. The single Bun handler's ceilings accommodate the largest declared
+socket; dispatch enforces each connection's own message limit with 1009
+"Message too big". Bun rejects frames exceeding its overall ceiling before dispatch
+(and may terminate them without a close frame). Sync retains its 64 KiB input
+limit and existing slow-consumer closure behavior.
 
-`service({ start(ctx), stop?(value) })` returns the awaited start value to all
+Application sockets do not close on backpressure by default. `send`, `sendText`
+and `sendBinary` preserve Bun's return values: -1 means queued with backpressure,
+0 means dropped, positive values mean sent bytes. Stop sending on -1, inspect
+`getBufferedAmount()`, and continue from `drain`; applications own this throttling.
+An optional per-socket `backpressureLimit` closes with 1013 "Slow consumer" when
+buffered output exceeds it. Native topic publish/fanout is outside this per-send
+check; use per-connection sends for bounded application protocols. Without a
+configured limit, Bun's output ceiling is 2 GiB minus one; it is not a safe queue
+size to target. Callback failures log and close with 1011. Applications own their
+protocol, row authorization and reconnect policy.
+
+The daemon accepts frames up to 64 MiB and bounds each relay direction's send
+queue to 64 MiB (checked before enqueueing); the pre-upgrade queue is bounded to
+64 MiB and 100 messages. For upstream-to-downstream backpressure it pauses Bun
+client reads and resumes them on downstream drain. Already decoded frames can
+still arrive: exceeding the byte budget closes both sides with 1013 "Slow
+consumer". On older Bun versions without pause/resume, the same close bound
+applies. Downstream-to-upstream sends check `bufferedAmount` and close both sides
+before exceeding the bound. Whole 10 MiB text and binary messages are supported;
+frame larger transfers or use HTTP. The bound covers queued payload bytes, not
+WebSocket framing overhead or the currently decoded input frame.
+
+`service({ start(ctx), stop?(value), stopTimeout?: milliseconds })` returns the awaited start value to all
 function, route, socket and job contexts through `ctx.services`. ServiceContext
 is `{ pebble, dataDir, read, write, log, signal }`; raw SQL invalidation belongs
 inside `write` through its FunctionContext. It has no lifetime transaction.
@@ -690,10 +720,14 @@ start throws hinted `SERVICE_START_FAILED`, aborts the signal and unwinds earlie
 services. Later startup failures also unwind services.
 
 Stopping closes the listener, sends 1012 "Service restart" to sockets, aborts
-the service signal, invokes stops in reverse order within a shared two-second
-deadline, then stops jobs/executor/database. The supervisor preserves its
-three-second child stop deadline and SIGKILL fallback; retired releases first
-get up to three seconds to drain HTTP requests. SIGTERM and IPC stop both run
+the service signal, invokes stops in reverse order within a shared deadline,
+then stops jobs/executor/database. The deadline is the maximum declared
+`stopTimeout`, at least 2000 ms and capped at 30000 ms (positive integer
+milliseconds). It is one budget for all services, not a fresh timeout per stop.
+The child reports this budget before service startup and again at readiness;
+the supervisor allows the budget plus 1000 ms before SIGKILL for stop and swap
+cleanup. The default remains three seconds. Retired releases first get up to
+three seconds to drain HTTP requests. SIGTERM and IPC stop both run
 this cleanup. Crashes/forced kills cannot guarantee cleanup. New release services
 may overlap old ones during a health-gated swap: coordinate shared resources.
 In-memory state such as terminal sessions does not survive deploys/restarts.

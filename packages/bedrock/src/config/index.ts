@@ -1,3 +1,4 @@
+import { socketSize } from "./hosting";
 import { validateDirectories } from "../backup/directories";
 import { validateBucket, validateBuckets } from "../storage/config";
 import { is, Table, getTableName } from "drizzle-orm";
@@ -44,9 +45,12 @@ export function definePebble<const P extends PebbleConfig>(config: P): ResolvedP
   }
   for (const [path, definition] of Object.entries(merged.sockets)) {
     if (!/^\/[^?#]*$/.test(path) || path === "/_bedrock" || path.startsWith("/_bedrock/") || !definition || typeof definition.message !== "function" || [definition.open, definition.close, definition.drain].some(fn => fn !== undefined && typeof fn !== "function")) throw new BedrockError("INVALID_SOCKET", `Invalid socket: ${path}`, "Use socket({ message }) at an absolute path outside /_bedrock.");
+    if (definition.maxMessageSize !== undefined) socketSize(definition.maxMessageSize);
+    if (definition.backpressureLimit !== undefined) socketSize(definition.backpressureLimit);
   }
   for (const [name, definition] of Object.entries(merged.services)) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name) || ["constructor", "prototype", "__proto__"].includes(name) || !definition || typeof definition.start !== "function" || definition.stop !== undefined && typeof definition.stop !== "function") throw new BedrockError("INVALID_SERVICE", `Invalid service: ${name}`, "Use a letter-led name and service({ start, stop? }).");
+    if (definition.stopTimeout !== undefined && (!Number.isSafeInteger(definition.stopTimeout) || definition.stopTimeout <= 0)) throw new BedrockError("INVALID_SERVICE", `Invalid stopTimeout for ${name}.`, "Use a positive integer in milliseconds; the shared service deadline is capped at 30000 ms.");
   }
   validateDirectories(config.backup);
   const tableNames = new Set<string>();

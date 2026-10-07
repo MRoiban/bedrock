@@ -24,3 +24,15 @@ test("service values derive from service definitions for typed handler contexts"
   };
   expect(handler({ services: { host: { answer: 42 } } } as any)).toBe(42);
 });
+
+test("hosting rejects invalid socket byte limits and service stop budgets", () => {
+  for (const value of [0, -1, NaN, Infinity, 1.5, "oops", "0mb", 2 ** 31]) {
+    for (const key of ["maxMessageSize", "backpressureLimit"]) {
+      expect(() => definePebble({ name: "limits", sockets: { "/host": socket({ [key]: value, message() {} }) } })).toThrow();
+    }
+  }
+  for (const stopTimeout of [0, -1, NaN, Infinity, 1.5]) {
+    expect(() => definePebble({ name: "limits", services: { host: service({ stopTimeout, start() {} }) } })).toThrow();
+  }
+  expect(() => definePebble({ name: "limits", sockets: { "/host": socket({ maxMessageSize: "16mb", backpressureLimit: "32mb", message() {} }) } })).not.toThrow();
+});

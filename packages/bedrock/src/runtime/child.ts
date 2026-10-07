@@ -1,9 +1,14 @@
+import { loadPebble } from "./load";
+import { serviceStopTimeout } from "../config/hosting";
 import { startPebble } from "./index";
 import { asBedrockError } from "../error";
 
 try {
-  const running = await startPebble({ dir: process.env.BEDROCK_RELEASE!, dataDir: process.env.BEDROCK_DATA!, port: 0, dev: process.env.BEDROCK_DEV === "1" });
-  process.send?.({ name: running.pebble.name, port: running.server.port });
+  const pebble = await loadPebble(process.env.BEDROCK_RELEASE!);
+  // Startup failures may unwind services before readiness; publish the budget first.
+  process.send?.({ op: "stop-budget", stopTimeout: serviceStopTimeout(pebble.services ?? {}) });
+  const running = await startPebble({ pebble, dir: process.env.BEDROCK_RELEASE!, dataDir: process.env.BEDROCK_DATA!, port: 0, dev: process.env.BEDROCK_DEV === "1" });
+  process.send?.({ name: running.pebble.name, port: running.server.port, stopTimeout: running.stopTimeout });
   let stopping = false;
   const stop = async () => {
     if (stopping) return;

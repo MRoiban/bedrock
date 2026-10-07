@@ -23,7 +23,7 @@ test("real daemon relays application bearer sockets and runs child service stop"
   await Bun.write(join(dir, "pebble.ts"), `
     import { definePebble, socket, service, mutation } from ${JSON.stringify(resolve(import.meta.dir, "../src/config/index.ts"))};
     export default definePebble({ name: "hosting", access: "users", tokens: true,
-      services: { host: service({ start() { return 42; }, async stop() { await Bun.write(${JSON.stringify(join(temp.dir, "stopped"))}, "stopped"); } }) },
+      services: { host: service({ stopTimeout: 5000, start() { return 42; }, async stop() { await Bun.sleep(3300); await Bun.write(${JSON.stringify(join(temp.dir, "stopped"))}, "stopped"); } }) },
       mutations: { mint: mutation(ctx => ctx.tokens.create({ name: "host", permissions: ["socket:/host"] })) },
       sockets: { "/host": socket({ message(ws, data) { ws.send(data); } }) }
     });
@@ -76,3 +76,98 @@ test("real application socket relays close on session expiry and independent rev
     }
   } finally { registry.stop(); await proxy.stop(true); await runtime.stop(); db.close(); temp.cleanup(); }
 });
+
+async function socketLimitsDaemon() {
+  const temp = tempDirectory();
+  const dir = join(temp.dir, "pebble");
+  await Bun.write(join(dir, "pebble.ts"), `
+    import { definePebble, socket } from ${JSON.stringify(resolve(import.meta.dir, "../src/config/index.ts"))};
+    export default definePebble({ name: "limits", access: "public", sync: true,
+      sockets: {
+        "/large": socket({ maxMessageSize: "16mb", message(ws, data) { ws.send(data); } }),
+        "/small": socket({ maxMessageSize: "4kb", message(ws, data) { ws.send(data); } }),
+        "/default": socket({ message(ws, data) { ws.send(data); } }),
+        "/burst": socket({ message(ws) {
+          let buffered = 0, backpressured = false;
+          for (let i = 0; i < 128; i++) {
+            backpressured = ws.send("x".repeat(64 * 1024)) === -1 || backpressured;
+            buffered = Math.max(buffered, ws.getBufferedAmount());
+          }
+          ws.send(JSON.stringify({ buffered, backpressured }));
+        } }),
+        "/bounded": socket({ backpressureLimit: "1kb", message(ws) {
+          for (let i = 0; i < 128; i++) ws.send("x".repeat(64 * 1024));
+        } }),
+      }
+    });
+  `);
+  const daemon = await startDaemon({ home: join(temp.dir, "home"), domain: "localhost", dev: true, port: 0, devPebble: { name: "limits", dir } });
+  const origin = `http://limits.localhost:${daemon.server.port}`;
+  return { daemon, temp, connect: (path: string) => connect(new URL(path, daemon.server.url), { host: new URL(origin).host, origin }) };
+}
+
+test("real daemon echoes a whole 10 MiB text file and binary archive frame", async () => {
+  const fixture = await socketLimitsDaemon();
+  const ws = await fixture.connect("/large");
+  try {
+    const text = "x".repeat(10 * 1024 ** 2);
+    expect(await echo(ws, text)).toBe(text);
+    const bytes = new Uint8Array(10 * 1024 ** 2).fill(255);
+    expect(new Uint8Array(await echo(ws, bytes))).toEqual(bytes);
+  } finally { ws.close(); await fixture.daemon.stop(); fixture.temp.cleanup(); }
+}, 15000);
+
+test("real daemon enforces socket-specific UTF-8 byte limits and the 1 MiB default", async () => {
+  const fixture = await socketLimitsDaemon();
+  try {
+    for (const [path, body] of [["/small", "€".repeat(1400)], ["/default", "x".repeat(1024 ** 2 + 1)]]) {
+      const ws = await fixture.connect(path!);
+      const closed = new Promise<CloseEvent>(resolve => { ws.onclose = resolve; });
+      ws.send(body!);
+      expect(await closed).toMatchObject({ code: 1009, reason: "Message too big" });
+    }
+  } finally { await fixture.daemon.stop(); fixture.temp.cleanup(); }
+}, 15000);
+
+test("real daemon keeps an unconfigured application burst alive for a paused consumer", async () => {
+  const fixture = await socketLimitsDaemon();
+  const ws = await fixture.connect("/burst");
+  let received = 0;
+  const complete = new Promise<{ buffered: number; backpressured: boolean }>((resolve, reject) => {
+    ws.onmessage = event => { if (String(event.data).startsWith("{")) resolve(JSON.parse(String(event.data))); else received++; };
+    ws.onclose = event => reject(new Error(`Burst closed: ${event.code}`));
+  });
+  try {
+    expect((ws as WebSocket & { pause(): boolean }).pause()).toBe(true);
+    ws.send("burst");
+    await Bun.sleep(150);
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    (ws as WebSocket & { resume(): boolean }).resume();
+    const stats = await complete;
+    expect(received).toBe(128);
+    expect(stats.backpressured).toBe(true);
+    expect(stats.buffered).toBeGreaterThan(1024 ** 2);
+
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+  } finally { ws.onclose = null; ws.close(); await fixture.daemon.stop(); fixture.temp.cleanup(); }
+}, 15000);
+
+test("real daemon retains sync's 64 KiB rejection beside a large application socket", async () => {
+  const fixture = await socketLimitsDaemon();
+  try {
+    const ws = await fixture.connect("/_bedrock/ws");
+    const closed = new Promise<CloseEvent>(resolve => { ws.onclose = resolve; });
+    ws.send("x".repeat(64 * 1024 + 1));
+    expect(await closed).toMatchObject({ code: 1009, reason: "Message too big" });
+  } finally { await fixture.daemon.stop(); fixture.temp.cleanup(); }
+}, 15000);
+
+test("real daemon closes application sockets only when their configured output bound is exceeded", async () => {
+  const fixture = await socketLimitsDaemon();
+  try {
+    const ws = await fixture.connect("/bounded");
+    const closed = new Promise<CloseEvent>(resolve => { ws.onclose = resolve; });
+    ws.send("burst");
+    expect(await closed).toMatchObject({ code: 1013, reason: "Slow consumer" });
+  } finally { await fixture.daemon.stop(); fixture.temp.cleanup(); }
+}, 15000);

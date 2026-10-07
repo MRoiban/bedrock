@@ -1,5 +1,5 @@
 import { BedrockError, asBedrockError } from "../error";
-import type { ApplicationSocket, DetachedContext, PebbleConfig, SocketDefinition } from "../config";
+import { socketSize, type ApplicationSocket, type DetachedContext, type PebbleConfig, type SocketDefinition } from "../config";
 import type { SocketData } from "../sync";
 import type { createExecutor } from "./functions";
 import { checkAccess } from "./access";
@@ -11,24 +11,48 @@ export type RuntimeSocketData = SocketData | AppSocketData;
 export function isApplication(data: RuntimeSocketData): data is AppSocketData { return "kind" in data && data.kind === "application"; }
 export function createApplicationSockets(pebble: PebbleConfig, execute: ReturnType<typeof createExecutor>) {
   let accepting = true;
+  const views = new WeakMap<Bun.ServerWebSocket<AppSocketData>, ApplicationSocket>();
+  function application(ws: Bun.ServerWebSocket<AppSocketData>): ApplicationSocket {
+    let view = views.get(ws);
+    if (!view) {
+      const configured = ws.data.definition.backpressureLimit;
+      const limit = configured === undefined ? undefined : socketSize(configured);
+      // Bind native methods to their actual Bun receiver; retain one view across callbacks.
+      view = new Proxy(ws, {
+        get(target, key) {
+          const value = Reflect.get(target, key, target);
+          if (typeof value !== "function") return value;
+          if (key === "send" || key === "sendText" || key === "sendBinary") return (...args: unknown[]) => {
+            if (limit !== undefined && target.getBufferedAmount() > limit) { target.close(1013, "Slow consumer"); return 0; }
+            const sent = value.apply(target, args);
+            if (limit !== undefined && target.getBufferedAmount() > limit) target.close(1013, "Slow consumer");
+            return sent;
+          };
+          return value.bind(target);
+        },
+      }) as ApplicationSocket;
+      views.set(ws, view);
+    }
+    return view;
+  }
   const sockets = new Set<Bun.ServerWebSocket<AppSocketData>>();
   function invoke(ws: Bun.ServerWebSocket<AppSocketData>, callback: (() => unknown) | undefined) {
     if (!callback) return;
     void Promise.resolve().then(callback).catch(error => { console.error("Application socket handler failed", asBedrockError(error, "SOCKET_FAILED", "Check the application socket handler and its read/write callbacks.").toJSON()); ws.close(1011, "Handler failed"); });
   }
   const websocket: Bun.WebSocketHandler<AppSocketData> = {
-    open(ws) { if (!accepting) { ws.close(1012, "Service restart"); return; } sockets.add(ws); invoke(ws, () => ws.data.definition.open?.(ws as ApplicationSocket, ws.data.context)); },
+    open(ws) { if (!accepting) { ws.close(1012, "Service restart"); return; } sockets.add(ws); invoke(ws, () => ws.data.definition.open?.(application(ws), ws.data.context)); },
     message(ws, message) {
       invoke(ws, async () => {
         // Bearer validity is rechecked rather than freezing an expired credential at upgrade.
         const identity = ws.data.token ? await execute.identify(ws.data.request) : { user: ws.data.user, token: null };
         checkAccess(pebble, identity.user);
         requirePermission(identity.token, `socket:${ws.data.path}`);
-        return ws.data.definition.message(ws as ApplicationSocket, message, ws.data.context);
+        return ws.data.definition.message(application(ws), message, ws.data.context);
       });
     },
-    close(ws, code, reason) { sockets.delete(ws); invoke(ws, () => ws.data.definition.close?.(ws as ApplicationSocket, code, reason, ws.data.context)); },
-    drain(ws) { invoke(ws, () => ws.data.definition.drain?.(ws as ApplicationSocket, ws.data.context)); },
+    close(ws, code, reason) { sockets.delete(ws); invoke(ws, () => ws.data.definition.close?.(application(ws), code, reason, ws.data.context)); },
+    drain(ws) { invoke(ws, () => ws.data.definition.drain?.(application(ws), ws.data.context)); },
   };
   return {
     websocket,
