@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { createClient } from "./index";
 import { fakeBrowser } from "./browser-fake";
+import { savePlace } from "./restore";
+import { browserEnvironment } from "./browser";
 
 class FakeSocket {
   static OPEN = 1;
@@ -25,8 +27,8 @@ async function setup(run: (env: ReturnType<typeof fakeBrowser>) => Promise<void>
   globalThis.window = env.window as unknown as Window & typeof globalThis;
   globalThis.document = env.document as unknown as Document;
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
-  globalThis.setTimeout = env.clock.setTimeout;
-  globalThis.clearTimeout = env.clock.clearTimeout;
+  globalThis.setTimeout = env.window.setTimeout;
+  globalThis.clearTimeout = env.window.clearTimeout;
   Math.random = () => 0.5;
   globalThis.fetch = (async () => new Response(null, { status: 426 })) as unknown as typeof fetch;
   try { await run(env); }
@@ -133,3 +135,37 @@ test("a stale client does not reload while pagehide is active", async () => setu
   env.document.emit("visibilitychange"); expect(env.reloads()).toBe(0);
   env.window.emit("pageshow"); expect(env.reloads()).toBe(1); client.close();
 }));
+
+test("a new client restores saved scroll after its first subscription data", async () => setup(env => {
+  savePlace(browserEnvironment()!);
+  env.window.scrollTo(0, 0);
+  const client = createClient({ url: "https://pebble.test", autoReload: false });
+  expect(env.values.has("bedrock:restore")).toBe(true);
+  client.subscribe("notes", undefined, () => {});
+  env.frame(); expect(env.window.scrollY).toBe(0);
+  latest().open(); latest().message({ op: "data", id: "s1", result: [] });
+  env.frame(); expect(env.window.scrollY).toBe(200);
+  expect(env.values.has("bedrock:restore")).toBe(false);
+  client.close(); expect(env.clock.timers.size).toBe(0);
+}));
+
+for (const phase of ["startup", "fields", "scroll"] as const) {
+  test(`a throwing restore during ${phase} leaves a working client and clears saved place`, async () => setup(async env => {
+    savePlace(browserEnvironment()!);
+    if (phase === "startup") env.window.requestAnimationFrame = () => { throw new Error("Broken animation API"); };
+    if (phase === "fields") env.document.querySelectorAll = () => { throw new Error("Broken DOM"); };
+    if (phase === "scroll") Object.defineProperty(env.document, "documentElement", { get() { throw new Error("Broken DOM"); } });
+    const client = createClient({ url: "https://pebble.test", autoReload: false });
+    let data: unknown;
+    client.subscribe("notes", undefined, value => { data = value; });
+    latest().open(); latest().message({ op: "data", id: "s1", result: ["loaded"] });
+    env.frame(); env.clock.advance(2000);
+    expect(data).toEqual(["loaded"]);
+    expect(env.values.has("bedrock:restore")).toBe(false);
+    expect(env.frames.size).toBe(0);
+    const mutation = client.mutate("save", undefined);
+    latest().message({ op: "result", id: "m2", ok: true, value: "saved" });
+    expect(await mutation).toBe("saved");
+    client.close(); expect(env.clock.timers.size).toBe(0);
+  }));
+}

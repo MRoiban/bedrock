@@ -46,10 +46,18 @@ export class FakeField extends FakeTarget {
   get checked() { return this.selected; }
   set checked(value: boolean) { this.selected = value; }
 }
+function hostReceiver(receiver: unknown, owner: object, globalCall = false) {
+  // Window functions also permit bare global calls; Storage methods do not.
+  if (receiver !== owner && !(globalCall && (receiver === undefined || receiver === globalThis))) throw new TypeError("Illegal invocation");
+}
 export function fakeBrowser(page?: string) {
   const clock = new FakeClock();
   const values = new Map<string, string>();
-  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } };
+  const storage = {
+    getItem(key: string) { hostReceiver(this, storage); return values.get(key) ?? null; },
+    setItem(key: string, value: string) { hostReceiver(this, storage); values.set(key, value); },
+    removeItem(key: string) { hostReceiver(this, storage); values.delete(key); },
+  };
   const fields: FakeField[] = [];
   const scroll: { id: string; scrollTop: number; scrollHeight: number; clientHeight: number }[] = [];
   const frames = new Map<number, FrameRequestCallback>();
@@ -67,10 +75,12 @@ export function fakeBrowser(page?: string) {
     performance: { getEntriesByType: () => [{ serverTiming: page ? [{ name: "bedrock-release", description: page }] : [] }] },
     scrollX: 10, scrollY: 200, innerWidth: 500, innerHeight: 500,
     scrollTo(x: number, y: number) { this.scrollX = x; this.scrollY = y; },
-    requestAnimationFrame(fn: FrameRequestCallback) { const id = ++frameId; frames.set(id, fn); return id; },
-    cancelAnimationFrame(id: number) { frames.delete(id); },
+    setTimeout: function (this: unknown, fn: () => void, ms?: number) { hostReceiver(this, window, true); return clock.setTimeout(fn, ms); } as unknown as typeof setTimeout,
+    clearTimeout: function (this: unknown, id: ReturnType<typeof setTimeout>) { hostReceiver(this, window, true); clock.clearTimeout(id); } as typeof clearTimeout,
+    requestAnimationFrame(fn: FrameRequestCallback) { hostReceiver(this, window, true); const id = ++frameId; frames.set(id, fn); return id; },
+    cancelAnimationFrame(id: number) { hostReceiver(this, window, true); frames.delete(id); },
   });
-  const browser = { window, document, storage, now: () => clock.time, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout } as unknown as Browser;
+  const browser = { window, document, storage, now: () => clock.time, setTimeout: (fn: () => void, ms?: number) => window.setTimeout(fn, ms), clearTimeout: (id: ReturnType<typeof setTimeout>) => window.clearTimeout(id) } as unknown as Browser;
   function frame() { const callbacks = [...frames.values()]; frames.clear(); for (const fn of callbacks) fn(clock.time); }
   return { browser, window, document, storage, values, clock, fields, scroll, frame, frames, reloads: () => reloads };
 }
