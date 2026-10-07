@@ -60,7 +60,10 @@ test("pebble tokens enforce every runtime entry point and current access policy"
     const url = new URL("/_bedrock/ws", runtime.server.url); url.protocol = "ws:";
     const ws = new HeaderWebSocket(url, { headers: { authorization: `Bearer ${all.token}` } });
     await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("Token WS rejected")); });
-    const result = new Promise<any>(resolve => { ws.onmessage = event => resolve(JSON.parse(String(event.data))); });
+    const result = new Promise<any>(resolve => { ws.onmessage = event => {
+      const message = JSON.parse(String(event.data));
+      if (message.op === "result") resolve(message);
+    }; });
     ws.send(JSON.stringify({ op: "mut", id: "one", mutation: "who", args: null }));
     expect((await result).value.id).toBe(all.id);
     ws.close();

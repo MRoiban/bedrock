@@ -33,7 +33,8 @@ export async function startPebble(options: StartPebbleOptions) {
       : execute.job(definition.run));
     const files = createFileHandler(pebble, execute, join(database.dataDir, "uploads"));
     await files.cleanup();
-    const sync = pebble.sync === true ? createSync(execute) : undefined;
+    const release = process.env.BEDROCK_RELEASE_ID || `local-${crypto.randomUUID().slice(0, 8)}`;
+    const sync = pebble.sync === true ? createSync(execute, release) : undefined;
     const web = await loadWeb(dir, pebble.web);
     const routes: Record<string, any> = {};
     for (const [key, handler] of Object.entries(pebble.routes ?? {})) {

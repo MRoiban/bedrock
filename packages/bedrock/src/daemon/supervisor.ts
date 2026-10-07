@@ -1,5 +1,5 @@
 import { signIdentity, deriveIdentitySecret } from "../auth/identity";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 import type { Access } from "../config";
 import type { DaemonDatabase, PebbleRecord } from "./db";
@@ -9,6 +9,7 @@ export interface Child {
   process: Bun.Subprocess<"ignore", "pipe", "pipe">;
   port: number;
   release: string;
+  releaseId: string;
   started: number;
   reading: Promise<unknown>;
   requests: number;
@@ -58,6 +59,10 @@ export class Supervisor {
     return state;
   }
   async launch(name: string, release: string): Promise<Child> {
+    const started = Date.now();
+    const releaseId = basename(release) + (this.dev ? `-${started}` : "");
+    const record = this.db.get(name);
+    const previous = record?.release === release ? record.previous_release : record?.release;
     const logs = this.logs(name);
     let ready!: (value: { name: string; port: number }) => void;
     let failed!: (error: unknown) => void;
@@ -65,6 +70,7 @@ export class Supervisor {
     const processChild = Bun.spawn([process.execPath, join(import.meta.dir, "../runtime/child.ts")], {
       cwd: release, stdin: "ignore", stdout: "pipe", stderr: "pipe",
       env: { ...process.env, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
+        BEDROCK_RELEASE_ID: releaseId, BEDROCK_PREVIOUS_RELEASE: previous ? resolve(previous) : "",
         BEDROCK_DEV: this.dev ? "1" : "0",
         BEDROCK_DATA: this.dev ? join(release, ".bedrock") : join(this.home, "pebbles", name, "data"), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) },
       ipc(message: unknown) {
@@ -76,7 +82,7 @@ export class Supervisor {
     const reading = Promise.all([logs.pump(processChild.stdout), logs.pump(processChild.stderr)]);
     // Observe pipe failures immediately; the child is also reaped on every failure path.
     void reading.catch(() => {});
-    const child: Child = { process: processChild, port: 0, release, started: Date.now(), reading, requests: 0, access: "users" };
+    const child: Child = { process: processChild, port: 0, release, releaseId, started, reading, requests: 0, access: "users" };
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const value = await Promise.race([

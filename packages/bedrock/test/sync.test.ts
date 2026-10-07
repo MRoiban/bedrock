@@ -17,7 +17,10 @@ async function socket(url: URL, user: string) {
   const endpoint = new URL("/_bedrock/ws", url);
   endpoint.protocol = "ws:";
   const ws = new HeaderWebSocket(endpoint, { headers: identityHeaders(user) });
-  ws.onmessage = event => messages.push(JSON.parse(String(event.data)));
+  ws.onmessage = event => {
+    const message = JSON.parse(String(event.data));
+    if (message.op !== "hello") messages.push(message);
+  };
   await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = reject; });
   return { ws, messages, send: (message: object) => ws.send(JSON.stringify(message)) };
 }

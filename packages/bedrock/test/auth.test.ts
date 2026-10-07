@@ -41,7 +41,10 @@ test("notes through daemon: local login, signed identity, two isolated live user
     const ws = new HeaderWebSocket(url, { headers: { host, origin, cookie } });
     sockets.push(ws);
     const messages: any[] = [];
-    ws.onmessage = event => messages.push(JSON.parse(String(event.data)));
+    ws.onmessage = event => {
+      const message = JSON.parse(String(event.data));
+      if (message.op !== "hello") messages.push(message);
+    };
     await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error("Proxy upgrade failed")); });
     ws.send(JSON.stringify({ op: "sub", id: "mine", query: "mine", args: null }));
     return { ws, messages };
@@ -70,7 +73,7 @@ test("notes through daemon: local login, signed identity, two isolated live user
     await until(() => a.messages.length === 1 && b.messages.length === 1);
     a.ws.send(JSON.stringify({ op: "mut", id: "add", mutation: "add", args: { body: "Alice private" } }));
     await until(() => a.messages.filter(message => message.op === "data").length === 2);
-    expect(a.messages.at(-1).result[0]).toMatchObject({ ownerId: alice.id, body: "Alice private" });
+    expect(a.messages.filter(message => message.op === "data").at(-1).result[0]).toMatchObject({ ownerId: alice.id, body: "Alice private" });
     const added = await request("/_bedrock/m/add", { method: "POST", body: JSON.stringify({ body: "Bob private" }), headers: { cookie: bobCookie } });
     expect(added.status).toBe(200);
     await until(() => b.messages.length === 2);
