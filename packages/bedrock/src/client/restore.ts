@@ -19,18 +19,24 @@ export function savePlace({ window, document, storage, now }: Browser) {
 }
 export function restorePlace(browser: Browser | undefined) {
   const waiting = new Set<string>();
-  const started = browser?.now() ?? 0;
+  let started = 0;
   let frame: number | undefined, timer: ReturnType<typeof setTimeout> | undefined;
   let sawSubscription = false;
   let place: Place | undefined, scrollingAt: number | undefined, closed = false;
-  if (browser) try {
-    const parsed = JSON.parse(browser.storage.getItem(KEY) ?? "null");
-    if (parsed && parsed.url === browser.window.location.href && browser.now() - parsed.at >= 0 && browser.now() - parsed.at <= 30_000
-      && Number.isFinite(parsed.scrollX) && Number.isFinite(parsed.scrollY) && parsed.fields && parsed.scroll) place = parsed;
-    else browser.storage.removeItem(KEY);
-  } catch { try { browser.storage.removeItem(KEY); } catch {} }
+  function discard() {
+    closed = true; place = undefined;
+    try { browser?.storage.removeItem(KEY); } catch {}
+    try { if (frame !== undefined) browser?.window.cancelAnimationFrame(frame); } catch {}
+    try { if (timer !== undefined) browser?.clearTimeout(timer); } catch {}
+    frame = undefined; timer = undefined;
+  }
+  function guard(fn: () => void) {
+    // Restoring optional page state must never interrupt the app.
+    try { fn(); } catch { discard(); }
+  }
   const restored = new Set<string>();
-  function tick() {
+  function tick() { guard(apply); }
+  function apply() {
     if (!browser || !place || closed) return;
     const { window, document, now } = browser;
     if (frame !== undefined) window.cancelAnimationFrame(frame);
@@ -61,21 +67,27 @@ export function restorePlace(browser: Browser | undefined) {
       const missingFields = Object.keys(place.fields).some(key => !restored.has(key));
       if ((!short && !missingFields) || now() - scrollingAt >= 1000) {
         try { browser.storage.removeItem(KEY); } catch {}
-        if (timer) browser.clearTimeout(timer);
+        if (timer !== undefined) browser.clearTimeout(timer);
         place = undefined;
         return;
       }
     }
     frame = window.requestAnimationFrame(tick);
   }
-  if (browser && place) {
+  guard(() => {
+    if (!browser) return;
+    started = browser.now();
+    const parsed = JSON.parse(browser.storage.getItem(KEY) ?? "null");
+    if (parsed && parsed.url === browser.window.location.href && started - parsed.at >= 0 && started - parsed.at <= 30_000
+      && Number.isFinite(parsed.scrollX) && Number.isFinite(parsed.scrollY) && parsed.fields && parsed.scroll) place = parsed;
+    else { browser.storage.removeItem(KEY); return; }
     frame = browser.window.requestAnimationFrame(tick);
     timer = browser.setTimeout(tick, 2000);
-  }
+  });
   return {
-    subscribe(id: string) { if (browser && browser.now() - started < 2000) { sawSubscription = true; waiting.add(id); } },
+    subscribe(id: string) { guard(() => { if (!closed && browser && browser.now() - started < 2000) { sawSubscription = true; waiting.add(id); } }); },
     data(id: string) { waiting.delete(id); },
     unsubscribe(id: string) { waiting.delete(id); },
-    close() { closed = true; if (frame !== undefined) browser?.window.cancelAnimationFrame(frame); if (timer) browser?.clearTimeout(timer); },
+    close() { guard(() => { closed = true; if (frame !== undefined) browser?.window.cancelAnimationFrame(frame); if (timer !== undefined) browser?.clearTimeout(timer); }); },
   };
 }
