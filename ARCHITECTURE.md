@@ -63,7 +63,7 @@ Public entry points of `bedrock` (package.json `exports`):
 |-------------------|----------|
 | `bedrock`         | `definePebble`, `query`, `mutation`, `bucket`, `job`, `detached`, `plugin`, types; re-exports `drizzle-orm` operators and `drizzle-orm/sqlite-core` table builders |
 | `bedrock/client`  | `createClient()` |
-| `bedrock/react`   | `BedrockProvider`, `useQuery`, `useMutation`, `useUser`, `useUpload` |
+| `bedrock/react`   | `BedrockProvider`, `useQuery`, `useMutation`, `useUser`, `useUpload`, `useRelease` |
 | `bedrock/server`  | `startPebble()` (low-level, used by daemon and tests) |
 | bin `bedrock`     | CLI |
 
@@ -215,6 +215,71 @@ work. Unknown names throw `BedrockError("UNKNOWN_TABLE", message, hint)`.
 
 Without `sync`, the same queries/mutations are callable over plain HTTP:
 `POST /_bedrock/q/<name>` and `POST /_bedrock/m/<name>`.
+
+### Seamless (phase 8)
+
+Deploys, saves, and returning to a tab should be invisible. Nothing here adds UI;
+apps may observe it through the client.
+
+**Release identity.** The supervisor gives each child a release id: the release
+directory basename, plus `-<child start ms>` in dev. It passes it as
+`BEDROCK_RELEASE_ID`; a standalone `startPebble` without it uses `local-<8 random hex>`.
+- The daemon proxy stamps every proxied HTTP response with
+  `x-bedrock-release: <id>` and `Server-Timing: bedrock-release;desc="<id>"`
+  (appended, never replacing app Server-Timing entries). Pebble code cannot spoof them;
+  the proxy overwrites any values set by the child.
+- The sync socket sends `{ op: "hello", release }` as its first message.
+
+**Close codes.** A pebble that is stopping closes sync sockets with 1012 "Service restart".
+Clients reconnect after a uniformly random 100–1000 ms, without counting it as a failed
+attempt. Other closes keep the existing exponential backoff.
+
+**Saves land before they resolve.** For a WS mutation, the server first re-runs that
+socket's subscriptions whose read-set intersects the write-set (no debounce, cancelling
+their pending timers), pushes any changed data, then sends `result`. Other sockets keep
+the ~16 ms debounce. Guarantee: when `mutate()` resolves over WS, every subscription on
+the same client that the mutation changed has already delivered its new data.
+The ordinary write listener must not push the same data to that socket twice.
+
+**Stale tabs reload themselves.** Browser clients (not token clients) know the page's
+release from the navigation entry's `serverTiming` (`bedrock-release`), else the first
+release they observe. They observe releases from `hello` and from `x-bedrock-release` on
+any of their HTTP responses. On mismatch the client is stale:
+- `client.release()` → `{ page, server, stale }`; `client.onRelease(fn)` returns unsubscribe.
+  React: `useRelease()`.
+- With `createClient({ autoReload })` (default `true`), a stale client calls
+  `location.reload()` silently once it is safe: no queued or in-flight mutations, no
+  uploads in progress, and either the tab is hidden or the focused element is not
+  editable (`input`, `textarea`, `select`, `[contenteditable]`). It re-checks on every
+  mutation/upload settle, `focusout`, and `visibilitychange`. `beforeReload?: () => boolean | void`
+  may return `false` to postpone; it is asked again on the next check.
+- Before reloading it saves to `sessionStorage["bedrock:restore"]`
+  `{ url, at, scrollX, scrollY, scroll: {id: top}, fields: {key: value|checked} }`.
+  `scroll` covers elements with an `id` and `data-bedrock-keep-scroll`. Field keys are
+  the element `id`, else `name` + index among same-named fields; skip password, file,
+  and hidden inputs. A new client on the same `url` within 30 s restores fields once
+  their elements exist (setting values through the native setter and dispatching
+  `input`/`change` so React notices), then scroll once the first data of every early
+  subscription has arrived or after 2 s, retrying for up to 1 s while the page is too short.
+  It then deletes the entry. A reload never happens more than once per 10 s.
+
+**Coming back is instant.** The browser client closes its socket on `pagehide`
+so the page can enter the back/forward cache, and reconnects on `pageshow`.
+`online`, and `visibilitychange` to visible, cancel any pending backoff and
+reconnect now with `attempt = 0`. Sent mutations pending at `pagehide` reject
+with the existing disconnected error.
+
+**Static caching (static `web` directories).**
+- `.html` responses: `Cache-Control: no-cache`.
+- Fingerprinted assets (a `-` or `.` followed by 8+ `[A-Za-z0-9_-]` chars containing a
+  digit, right before the extension): `Cache-Control: public, max-age=31536000, immutable`.
+- Everything else: `Cache-Control: no-cache`. All files get a weak `ETag` from size and
+  mtime and answer `If-None-Match` with 304.
+- A fingerprinted asset missing from the current release is served from the previous
+  release's same web directory if present (the supervisor passes
+  `BEDROCK_PREVIOUS_RELEASE`), so tabs still on old code keep loading lazy chunks.
+  HTML is never served from the previous release.
+- Bun HTML-bundle mode keeps Bun's own asset handling.
 
 Future (do not build yet): row-level diffs, optimistic updates.
 
@@ -572,3 +637,4 @@ against end users and the internet, not hostile creators.
 5. **Storage — done** — buckets, fs driver, chunked uploads.
 6. **Tunnel + service + remote ops — done** — Cloudflare setup/supervision, launchd/systemd user services, doctor, creator CLI login, deploy token management.
 7. **Ops — done (7a UI, 7b backups/jobs/plugins/polish)** — remote deploy, backups, jobs, plugins, `@bedrock/ui` (Onyx), docs/llms.txt.
+8. **Seamless — in progress** — release identity, 1012 restarts, saves land before they resolve, stale-tab reload with place restore, instant reconnect + bfcache, static caching.
