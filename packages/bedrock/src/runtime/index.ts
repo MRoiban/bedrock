@@ -17,6 +17,7 @@ import { loadPebble } from "./load";
 export type StartPebbleOptions = ({ dir: string; pebble?: never } | { pebble: PebbleConfig; dir?: string }) & {
   dataDir?: string;
   port?: number;
+  dev?: boolean;
 };
 
 export async function startPebble(options: StartPebbleOptions) {
@@ -73,6 +74,8 @@ export async function startPebble(options: StartPebbleOptions) {
       } catch (error) { return errorResponse(error); }
     };
     const server = Bun.serve<SocketData>({
+      // Public HTML must not inherit Bun's development Host restrictions from the environment.
+      development: options.dev === true ? { hmr: true } : false,
       ...(sync ? { websocket: sync.websocket } : {}),
       maxRequestBodySize: 90 * 1024 ** 2,
       hostname: "127.0.0.1", port: options.port ?? 3000, routes,

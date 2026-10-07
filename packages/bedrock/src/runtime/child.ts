@@ -2,7 +2,7 @@ import { startPebble } from "./index";
 import { asBedrockError } from "../error";
 
 try {
-  const running = await startPebble({ dir: process.env.BEDROCK_RELEASE!, dataDir: process.env.BEDROCK_DATA!, port: 0 });
+  const running = await startPebble({ dir: process.env.BEDROCK_RELEASE!, dataDir: process.env.BEDROCK_DATA!, port: 0, dev: process.env.BEDROCK_DEV === "1" });
   process.send?.({ name: running.pebble.name, port: running.server.port });
   let stopping = false;
   const stop = async () => {

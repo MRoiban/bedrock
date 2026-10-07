@@ -65,6 +65,7 @@ export class Supervisor {
     const processChild = Bun.spawn([process.execPath, join(import.meta.dir, "../runtime/child.ts")], {
       cwd: release, stdin: "ignore", stdout: "pipe", stderr: "pipe",
       env: { ...process.env, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
+        BEDROCK_DEV: this.dev ? "1" : "0",
         BEDROCK_DATA: this.dev ? join(release, ".bedrock") : join(this.home, "pebbles", name, "data"), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) },
       ipc(message: unknown) {
         const value = message as { name: string; port: number; error?: { code: string; message: string; hint: string } };
