@@ -415,3 +415,14 @@ test("a resubscription within a second keeps the open socket", async () => setup
   first(); env.clock.advance(500); client.subscribe("notes", null, () => {}); env.clock.advance(1000);
   expect(latest()).toBe(socket); expect(client.connection().state).toBe("live"); client.close();
 }));
+
+test("a socket that keeps failing while sync answers 426 keeps data live over HTTP", async () => setup(async env => {
+  const seen: unknown[] = [];
+  globalThis.fetch = ((input: string | URL | Request) => Promise.resolve(String(input).endsWith("/ws") ? new Response(null, { status: 426 }) : Response.json({ ok: true, value: "fresh" }))) as unknown as typeof fetch;
+  const client = createClient({ url: "https://pebble.test", autoReload: false });
+  client.subscribe("notes", null, value => seen.push(value));
+  latest().close(); await drain(); expect(client.connection().state).toBe("reconnecting"); expect(seen).toEqual([]);
+  env.clock.advance(400); latest().close(); await drain();
+  expect(client.connection().state).toBe("polling"); expect(seen).toEqual(["fresh"]);
+  env.clock.advance(1300); latest().open(); expect(client.connection().state).toBe("live"); client.close();
+}));

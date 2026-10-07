@@ -51,6 +51,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
   let timer: ReturnType<typeof setTimeout> | undefined;
   let attempt = 0;
   let attempted = false;
+  let refused = 0; // consecutive sockets that closed before opening
   let probing = false;
   let probeGeneration = 0;
   let unavailable = (!!options.token && typeof Bun === "undefined") || options.sync === false || typeof WebSocket === "undefined";
@@ -87,7 +88,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       clearTimeout(timer); timer = undefined;
       clearTimeout(pollTimer); pollTimer = undefined;
       const ws = socket; socket = undefined; ws?.close();
-      attempt = 0; attempted = false; if (connection.state !== "offline") state("idle");
+      attempt = 0; refused = 0; attempted = false; if (connection.state !== "offline") state("idle");
     }, 1000);
   }
   function received(response: Response) {
@@ -221,7 +222,9 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     try {
       const response = await request("/_bedrock/ws", { signal: AbortSignal.timeout(5000) });
       if (closed || suspended || generation !== probeGeneration || quiet()) return;
-      if (response.status !== 426) {
+      // Sync is on, yet the socket keeps failing (a proxy or identity fault): stay live over HTTP meanwhile.
+      if (response.status === 426) { if (refused >= 2 && !polling) fallback(); }
+      else {
         const body = await response.json().catch(() => null);
         if (closed || suspended || generation !== probeGeneration) return;
         if (response.status === 404 && body?.error?.code === "NOT_FOUND") { fallback(true); return; }
@@ -261,7 +264,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       clearTimeout(timeout);
       if (closed || socket !== ws) { ws.close(); return; }
       opened = true;
-      attempt = 0;
+      attempt = 0; refused = 0;
       polling = false; clearTimeout(pollTimer); pollTimer = undefined; state("live");
       for (const [id, sub] of subscriptions) send({ op: "sub", id, query: sub.query, args: sub.args ?? null });
       flush();
@@ -294,7 +297,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
       settled();
       if (closed || suspended || !subscriptions.size && !pending.size) return;
       if (event.code === 1012) { reconnect(true); return; }
-      if (!opened) { void discover(); return; }
+      if (!opened) { refused++; void discover(); return; }
       reconnect();
     };
   }
