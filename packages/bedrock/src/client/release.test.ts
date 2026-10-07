@@ -75,3 +75,21 @@ test("focusout rechecks after focus moves away from the old field", () => {
   env.document.activeElement = null;
   env.clock.advance(0); expect(env.reloads()).toBe(1); tracker.close();
 });
+
+test("dirty application state can veto reload indefinitely even while hidden", () => {
+  const env = fakeBrowser("old");
+  env.document.hidden = true;
+  let dirty = true;
+  const tracker = releaseTracker({ beforeReload: () => !dirty }, env.browser, () => false);
+  tracker.observe("new");
+  for (let day = 0; day < 365; day++) {
+    env.clock.advance(86400000);
+    env.document.emit("visibilitychange");
+    tracker.check();
+  }
+  expect(env.reloads()).toBe(0);
+  expect(env.values.has("bedrock:reload")).toBe(false);
+  dirty = false;
+  tracker.check(); expect(env.reloads()).toBe(1);
+  tracker.close();
+});
