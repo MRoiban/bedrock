@@ -637,4 +637,4 @@ against end users and the internet, not hostile creators.
 5. **Storage — done** — buckets, fs driver, chunked uploads.
 6. **Tunnel + service + remote ops — done** — Cloudflare setup/supervision, launchd/systemd user services, doctor, creator CLI login, deploy token management.
 7. **Ops — done (7a UI, 7b backups/jobs/plugins/polish)** — remote deploy, backups, jobs, plugins, `@bedrock/ui` (Onyx), docs/llms.txt.
-8. **Seamless — in progress** — release identity, 1012 restarts, saves land before they resolve, stale-tab reload with place restore, instant reconnect + bfcache, static caching.
+8. **Seamless — done** — release identity, 1012 restarts, saves land before they resolve, stale-tab reload with place restore, instant reconnect + bfcache, static caching.
