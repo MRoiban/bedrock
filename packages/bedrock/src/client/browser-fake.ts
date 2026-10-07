@@ -71,6 +71,7 @@ export function fakeBrowser(page?: string) {
   });
   const window = Object.assign(new FakeTarget(), {
     Event, sessionStorage: storage,
+    navigator: { onLine: true },
     location: { href: "https://pebble.test/page", reload: () => { reloads++; } },
     performance: { getEntriesByType: () => [{ serverTiming: page ? [{ name: "bedrock-release", description: page }] : [] }] },
     scrollX: 10, scrollY: 200, innerWidth: 500, innerHeight: 500,

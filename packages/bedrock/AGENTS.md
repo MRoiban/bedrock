@@ -241,7 +241,7 @@ keeps the normal CSRF rules and suppresses bearer authentication; signed identit
 wins. Browser extensions needing cross-origin CORS are not yet supported.
 `createClient<typeof pebble>({ url, token, sync: false })` sends Authorization and
 omits cookies for function/storage calls. Bun supports token WebSockets through
-headers; browser token clients use HTTP snapshots because browser WebSockets
+headers; browser token clients use HTTP polling because browser WebSockets
 cannot set Authorization. `fileUrl()` returns a URL only; download it with a
 bearer-authenticated fetch rather than embedding it as a browser image URL.
 
@@ -464,9 +464,9 @@ unsubscribe();
 client.close();
 ```
 
-The client accepts `{ url?, sync?, headers?, token?, autoReload?, beforeReload? }`; url defaults to browser origin.
+The client accepts `{ url?, sync?, pollInterval?, headers?, token?, autoReload?, beforeReload? }`; url defaults to browser origin.
 Pass an absolute URL outside the browser. `sync: false` uses HTTP; without server
-sync, subscriptions deliver one HTTP snapshot. Connections reconnect and resubscribe
+sync, subscriptions poll every 5 seconds (`pollInterval: 0` disables polling). Connections reconnect and resubscribe
 with backoff; uncertain mutations are never automatically replayed. Upload options
 include `onProgress` (0–1), `signal`, `meta`, `uploadId`, and `onUploadId`.
 Browsers report byte progress via XHR; Bun uses fetch boundary progress. Chunked
@@ -474,10 +474,21 @@ uploads hash incrementally and resume missing chunks with a saved upload id. Cli
 server objects. `user()` returns User|null, `loginUrl(returnTo?)` gives a login URL,
 `logout()` signs out. Use ordinary browser cookies, not signed identity headers.
 
+`connection()` returns `{ state, since, attempt }`; state is idle, connecting, live,
+reconnecting, polling, or offline. `onConnection(fn)` observes only state changes
+and returns unsubscribe (no immediate call). Only the runtime's NOT_FOUND 404
+permanently disables sockets; transient failures poll while retrying sockets.
+`mutate()` delivers changed same-client subscription data before resolving over
+WS or HTTP. `fetch(path, init?)` calls same-origin custom routes with client auth,
+observes release headers and blocks stale reload while in flight. HTTP errors
+return the Response; network failures throw REQUEST_FAILED. Successful writes
+refresh subscriptions before returning while polling. `user()` network failures
+throw OFFLINE; a null user is a definitive server answer.
+
 `release()` returns `{ page, server, stale }` (unknown ids are `null`);
 `onRelease(fn)` observes changes and returns an unsubscribe function. `useRelease()`
 returns the same state. Non-token browser clients silently reload stale pages by
-default when mutations/uploads have settled and focus is not editable (or the tab
+default when mutations/custom requests/uploads have settled and focus is not editable (or the tab
 is hidden). Set `autoReload: false` to disable this, or return `false` from
 `beforeReload` to postpone until the next safety check. Reloads preserve form fields
 and scroll for 30 seconds on the same URL; password/file/hidden inputs are excluded.
@@ -507,9 +518,10 @@ createRoot(document.getElementById("root")!).render(
 );
 ```
 
-All hooks need BedrockProvider. `useQuery` returns `{ data, error, isLoading }`;
+All hooks need BedrockProvider. `useQuery` returns `{ data, error, isLoading, connection }`;
 `useMutation` returns `{ mutate, error, isPending }`; `useUser` returns
-`{ user, isLoading }`; `useUpload<typeof pebble>("attachments")` returns
+`{ user, isLoading, error, retry }`; errors preserve the last user and retry with backoff.
+`useConnection()` returns the client connection state. `useUpload<typeof pebble>("attachments")` returns
 `{ upload, progress, error, isUploading }` and passes all upload options through. Args without a schema are `undefined`.
 HTML references `./app.tsx` with a module script; Bun bundles it.
 

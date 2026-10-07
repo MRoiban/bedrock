@@ -10,10 +10,15 @@ export type ClientResult<F extends FunctionDefinition> = JsonResult<FunctionResu
 
 type Queries<P extends PebbleConfig> = NonNullable<P["queries"]>;
 type Mutations<P extends PebbleConfig> = NonNullable<P["mutations"]>;
+export type Connection = { state: "idle" | "connecting" | "live" | "reconnecting" | "polling" | "offline"; since: number; attempt: number };
+
 export interface Client<P extends PebbleConfig = PebbleConfig> {
   query<N extends QueryNames<P>>(name: N, args: FunctionArgs<Queries<P>[N]>): Promise<ClientResult<Queries<P>[N]>>;
   mutate<N extends MutationNames<P>>(name: N, args: FunctionArgs<Mutations<P>[N]>): Promise<ClientResult<Mutations<P>[N]>>;
   subscribe<N extends QueryNames<P>>(name: N, args: FunctionArgs<Queries<P>[N]>, onData: (data: ClientResult<Queries<P>[N]>) => void, onError?: (error: BedrockError) => void): () => void;
+  connection(): Connection;
+  onConnection(fn: (connection: Connection) => void): () => void;
+  fetch(path: string, init?: RequestInit): Promise<Response>;
   user(): Promise<User | null>;
   loginUrl(returnTo?: string): string;
   logout(): Promise<void>;
@@ -30,6 +35,7 @@ export interface ClientOptions {
   url?: string;
   token?: string;
   sync?: boolean;
+  pollInterval?: number;
   /** Extra HTTP headers. WebSocket identity normally comes from session cookies. */
   headers?: HeadersInit;
 }

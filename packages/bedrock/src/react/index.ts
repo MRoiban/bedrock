@@ -1,7 +1,10 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { browserEnvironment } from "../client/browser";
+import { watchConnection } from "./connection";
+import { initialUser, watchUser } from "./user";
 import type { Client, ClientResult } from "../client";
-import type { User, FunctionArgs, PebbleConfig, QueryNames, MutationNames } from "../config/types";
+import type { FunctionArgs, PebbleConfig, QueryNames, MutationNames } from "../config/types";
 import { BedrockError, asBedrockError } from "../error";
 
 const Context = createContext<Client | null>(null);
@@ -28,6 +31,7 @@ function stableJson(value: unknown): string {
 export function useQuery<P extends PebbleConfig, N extends QueryNames<P> = QueryNames<P>>(name: N, args: FunctionArgs<NonNullable<P["queries"]>[N]>) {
   type Data = ClientResult<NonNullable<P["queries"]>[N]>;
   const client = useClient();
+  const connection = useConnection();
   const key = stableJson(args);
   const currentArgs = useRef(args);
   currentArgs.current = args;
@@ -42,8 +46,8 @@ export function useQuery<P extends PebbleConfig, N extends QueryNames<P> = Query
     });
     return () => { active = false; unsubscribe(); };
   }, [client, name, key]);
-  if (state.key !== key || state.name !== name) return { data: undefined, error: undefined, isLoading: true };
-  return { data: state.data, error: state.error, isLoading: state.isLoading };
+  if (state.key !== key || state.name !== name) return { data: undefined, error: undefined, isLoading: true, connection };
+  return { data: state.data, error: state.error, isLoading: state.isLoading, connection };
 }
 export function useMutation<P extends PebbleConfig, N extends MutationNames<P> = MutationNames<P>>(name: N) {
   const client = useClient();
@@ -61,14 +65,25 @@ export function useMutation<P extends PebbleConfig, N extends MutationNames<P> =
 
 export function useUser() {
   const client = useClient();
-  const [state, setState] = useState<{ user: User | null; isLoading: boolean }>({ user: null, isLoading: true });
+  const [state, setState] = useState(initialUser);
+  const controller = useRef<ReturnType<typeof watchUser> | undefined>(undefined);
   useEffect(() => {
-    let active = true;
-    setState({ user: null, isLoading: true });
-    void client.user().then(user => { if (active) setState({ user, isLoading: false }); }, () => { if (active) setState({ user: null, isLoading: false }); });
-    return () => { active = false; };
+    setState(initialUser);
+    const watcher = watchUser(() => client.user(), setState, browserEnvironment());
+    controller.current = watcher;
+    return () => { watcher.close(); controller.current = undefined; };
   }, [client]);
-  return state;
+  const retry = () => controller.current?.retry();
+  return { ...state, retry };
+}
+
+export function useConnection(): import("../client").Connection {
+  const client = useClient();
+  const [connection, setConnection] = useState(client.connection);
+  useEffect(() => {
+    return watchConnection(client, setConnection);
+  }, [client]);
+  return connection;
 }
 
 export function useUpload<P extends PebbleConfig>(bucket: import("../config/types").BucketNames<P>) {
