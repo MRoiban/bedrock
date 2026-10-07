@@ -7,7 +7,7 @@ import { BedrockError, asBedrockError } from "../error";
 import { checkAccess } from "./access";
 import { createTokens, requirePermission, storagePermission, type RequestIdentity } from "./tokens";
 
-export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof openDatabase>) {
+export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof openDatabase>, services: Record<string, any> = {}) {
   const tokens = createTokens(pebble, database.sqlite, database.db);
   let tail: Promise<unknown> = Promise.resolve();
   let closed = false;
@@ -34,7 +34,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         args = result.value;
       }
       const invalidated = new Set<string>();
-      const ctx: FunctionContext = { db: database.db, user, token, tokens: tokens.api(resolved, kind === "mutation"), pebble, storage: null!, request, invalidate(tables) {
+      const ctx: FunctionContext = { services, db: database.db, user, token, tokens: tokens.api(resolved, kind === "mutation"), pebble, storage: null!, request, invalidate(tables) {
         if (kind === "query") throw new BedrockError("READ_ONLY", "Queries cannot invalidate tables.", "Call invalidate inside a mutation, route, or job.");
         for (const table of tables) {
           const name = typeof table === "string" ? table : getTableName(table);
@@ -92,12 +92,12 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
       if (token) checkAccess(pebble, user);
       if (permission) requirePermission(token, permission);
       const slot = async <T>(kind: "query" | "mutation", fn: (ctx: FunctionContext) => T): Promise<Awaited<T>> => {
-        const result = await execute(kind, "detached", null, request, { user, token }, fn);
+        const result = await execute(kind, "detached", null, request, token ? undefined : { user, token }, fn);
         return result.value;
       };
       const unavailable = () => { throw new BedrockError("DETACHED_CONTEXT", "Detached handlers cannot access db, storage, or invalidate directly.", "Use ctx.read(ctx => ...) or ctx.write(ctx => ...) for database and storage work."); };
       const ctx: DetachedContext = {
-        user, token, pebble, request,
+        services, user, token, pebble, request,
         read: fn => slot("query", fn),
         write: fn => slot("mutation", fn),
       };

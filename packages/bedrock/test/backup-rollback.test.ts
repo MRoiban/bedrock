@@ -7,7 +7,7 @@ import { backupSetup } from "../src/backup";
 import { createArchive } from "../src/daemon/archive";
 import { tempDirectory } from "./helpers";
 
-test("daemon CLI detached jobs, backup run/list/restore with files, rollback refusal and explicit force", async () => {
+test("daemon CLI detached jobs, backup run/list/restore with files and directories, rollback refusal and explicit force", async () => {
   const temp = tempDirectory();
   const home = join(temp.dir, "home");
   const dir = join(temp.dir, "source");
@@ -28,7 +28,7 @@ test("daemon CLI detached jobs, backup run/list/restore with files, rollback ref
   await Bun.write(join(dir, "pebble.ts"), `import { definePebble, query, mutation, job, bucket, sqliteTable, text } from "bedrock";
 const items = sqliteTable("items", { id: text("id").primaryKey() });
 const attachments = bucket("attachments", { maxSize: "1mb", access: "public" });
-export default definePebble({ name: "sample", schema: { items }, storage: [attachments],
+export default definePebble({ name: "sample", schema: { items }, storage: [attachments], backup: { directories: ["workspaces"] },
 queries: { list: query(ctx => ctx.db.select().from(items)), files: query(ctx => ctx.storage.list(attachments)) },
 mutations: { add: mutation(ctx => ctx.db.insert(items).values({ id: "manual" }).run()), upload: mutation(ctx => ctx.storage.put(attachments, new Blob(["attachment"]), { name: "test.txt" })) },
 jobs: { sweep: job("0 0 31 2 *", async ctx => { if (ctx.user !== null) throw new Error("expected anonymous job"); await ctx.write(slot => { if (slot.user !== null) throw new Error("expected anonymous slot"); slot.db.insert(items).values({ id: crypto.randomUUID() }).run(); }); }, { transaction: false }) } });`);
@@ -39,16 +39,22 @@ jobs: { sweep: job("0 0 31 2 *", async ctx => { if (ctx.user !== null) throw new
     expect((await command(["jobs", "run", "sample", "sweep"])).body.value.skipped).toBe(false);
     const functionCall = async (kind: string, name: string) => (await (await fetch(new URL(`/_bedrock/${kind}/${name}`, daemon.server.url), { method: "POST", headers: { host: "sample.localhost", origin: "http://sample.localhost" }, body: "null" })).json()).value;
     const file = await functionCall("m", "upload");
+    const workspace = join(home, "pebbles", "sample", "data", "workspaces");
+    await mkdir(join(workspace, "nested/empty"), { recursive: true });
+    await Bun.write(join(workspace, "nested/source.txt"), "workspace source");
     const backup = await command(["backup", "run", "sample"]);
     expect(backup.code).toBe(0);
     expect(backup.body.value).toHaveLength(2);
     expect(await Bun.file(join(temp.dir, "backups", "daemon", "db", `${backup.body.value[1].timestamp.replaceAll(":", "-")}.sqlite.gz`)).exists()).toBe(true);
     expect((await command(["backup", "ls", "sample"])).body.value).toHaveLength(1);
+    expect(backup.body.value[0].directories.workspaces[0].path).toBe("nested/source.txt");
+    await Bun.write(join(workspace, "nested/source.txt"), "changed source");
     await functionCall("m", "add");
     expect(await functionCall("q", "list")).toHaveLength(2);
     expect((await command(["backup", "restore", "sample"])).body.error.code).toBe("CONFIRM_REQUIRED");
     const restored = await command(["backup", "restore", "sample", "--yes"]);
     expect(restored.code).toBe(0);
+    expect(await Bun.file(join(workspace, "nested/source.txt")).text()).toBe("workspace source");
     expect(await Bun.file(join(restored.body.value.previous, "db.sqlite")).exists()).toBe(true);
     expect(await functionCall("q", "list")).toHaveLength(1);
     expect((await functionCall("q", "files"))[0].id).toBe(file.id);

@@ -124,9 +124,10 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           sockets.stop();
           await backups.stop();
           await releases.shutdown();
+          // Keep the relay alive until children send their restart close frames.
+          await supervisor.shutdown();
           await server!.stop(true);
           await tunnel?.stop();
-          await supervisor.shutdown();
           db.close();
         })();
       },

@@ -1,3 +1,4 @@
+import { validateDirectories } from "../backup/directories";
 import { validateBucket, validateBuckets } from "../storage/config";
 import { is, Table, getTableName } from "drizzle-orm";
 import { BedrockError } from "../error";
@@ -6,6 +7,7 @@ import type { Bucket, BucketConfig, PebbleConfig, PluginConfig } from "./types";
 export { job } from "../jobs";
 import { parseCron } from "../jobs/cron";
 
+export * from "./hosting";
 export { detached } from "./detached";
 export { query, mutation } from "./functions";
 export type * from "./types";
@@ -19,7 +21,7 @@ export function validateName(name: string) {
 
 const validated = new WeakSet<object>();
 
-type ResolvedPebble<P extends PebbleConfig> = P & Required<Pick<PebbleConfig, "schema" | "routes" | "jobs">>;
+type ResolvedPebble<P extends PebbleConfig> = P & Required<Pick<PebbleConfig, "schema" | "routes" | "jobs" | "sockets" | "services">>;
 
 export function definePebble<const P extends PebbleConfig>(config: P): ResolvedPebble<P> {
   if (!config || typeof config !== "object") {
@@ -28,18 +30,25 @@ export function definePebble<const P extends PebbleConfig>(config: P): ResolvedP
   if (validated.has(config)) return config as ResolvedPebble<P>;
   validateName(config.name);
   validateBuckets(config.storage);
-  const merged = { schema: { ...config.schema }, routes: { ...config.routes }, jobs: { ...config.jobs } };
+  const merged = { schema: { ...config.schema }, routes: { ...config.routes }, jobs: { ...config.jobs }, sockets: { ...config.sockets }, services: { ...config.services } };
   const names = new Set<string>();
   for (const extension of config.plugins ?? []) {
     if (!extension.name || names.has(extension.name)) throw new BedrockError("PLUGIN_COLLISION", `Duplicate or empty plugin name: ${extension.name}`, "Give each plugin a unique name.");
     names.add(extension.name);
-    for (const kind of ["schema", "routes", "jobs"] as const) {
+    for (const kind of ["schema", "routes", "jobs", "sockets", "services"] as const) {
       for (const [name, value] of Object.entries(extension[kind] ?? {})) {
         if (Object.hasOwn(merged[kind], name)) throw new BedrockError("PLUGIN_COLLISION", `Plugin ${extension.name} duplicates ${kind} entry ${name}.`, "Rename the entry in the plugin or pebble.");
         (merged[kind] as Record<string, unknown>)[name] = value;
       }
     }
   }
+  for (const [path, definition] of Object.entries(merged.sockets)) {
+    if (!/^\/[^?#]*$/.test(path) || path === "/_bedrock" || path.startsWith("/_bedrock/") || !definition || typeof definition.message !== "function" || [definition.open, definition.close, definition.drain].some(fn => fn !== undefined && typeof fn !== "function")) throw new BedrockError("INVALID_SOCKET", `Invalid socket: ${path}`, "Use socket({ message }) at an absolute path outside /_bedrock.");
+  }
+  for (const [name, definition] of Object.entries(merged.services)) {
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name) || ["constructor", "prototype", "__proto__"].includes(name) || !definition || typeof definition.start !== "function" || definition.stop !== undefined && typeof definition.stop !== "function") throw new BedrockError("INVALID_SERVICE", `Invalid service: ${name}`, "Use a letter-led name and service({ start, stop? }).");
+  }
+  validateDirectories(config.backup);
   const tableNames = new Set<string>();
   for (const table of Object.values(merged.schema)) if (is(table, Table)) {
     const name = getTableName(table);

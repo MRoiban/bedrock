@@ -1,3 +1,4 @@
+import { loadPebble } from "../runtime/load";
 import { join, resolve } from "node:path";
 import { atomicWrite, readConfig } from "../daemon/config";
 import type { DaemonDatabase } from "../daemon/db";
@@ -57,10 +58,11 @@ export function createBackups(home: string, db: DaemonDatabase, releases: Releas
       const result = [];
       const names = name ? [name] : db.list().map(record => record.name);
       for (const pebble of names) {
-        releases.record(pebble);
+        const record = releases.record(pebble);
         result.push(await releases.exclusive(pebble, async () => {
           const data = join(home, "pebbles", pebble, "data");
-          const value = await snapshot(destination, pebble, join(data, "db.sqlite"), join(data, "files"));
+          const definition = await loadPebble(record.release);
+          const value = await snapshot(destination, pebble, join(data, "db.sqlite"), join(data, "files"), new Date(), definition.backup);
           await prune(destination, pebble, config.hourly, config.daily);
           return value;
         }));

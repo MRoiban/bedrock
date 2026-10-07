@@ -1,3 +1,5 @@
+import { createServices } from "./services";
+import { createApplicationSockets, isApplication, type RuntimeSocketData } from "./sockets";
 import { createJobs } from "../jobs";
 import { verifyIdentity } from "../auth/identity";
 import { createFileHandler } from "../storage/http";
@@ -24,10 +26,14 @@ export async function startPebble(options: StartPebbleOptions) {
   const dir = resolve(options.dir ?? process.cwd());
   const pebble = options.pebble ? definePebble(options.pebble) : await loadPebble(dir);
   const database = openDatabase(options.dataDir ?? defaultDataDir(pebble.name), pebble.schema, pebble.tokens === true);
+  const services = createServices(pebble.services ?? {});
+  let executor: ReturnType<typeof createExecutor> | undefined;
   try {
     await applyMigrations(database.sqlite, join(dir, "migrations"));
     database.refreshTracking();
-    const execute = createExecutor(pebble, database);
+    const execute = executor = createExecutor(pebble, database, services.values);
+    const serviceContext = await execute.detached(new Request("http://localhost"), ctx => ctx, { user: null });
+    await services.start({ pebble, dataDir: database.dataDir, read: serviceContext.read, write: serviceContext.write, log: (...values) => console.log(`[${pebble.name}]`, ...values) });
     const jobs = createJobs(pebble.jobs ?? {}, (_name, _handler, definition) => definition.transaction === false
       ? execute.detached(new Request("http://localhost/_bedrock/jobs"), definition.run, { user: null })
       : execute.job(definition.run));
@@ -35,6 +41,7 @@ export async function startPebble(options: StartPebbleOptions) {
     await files.cleanup();
     const release = process.env.BEDROCK_RELEASE_ID || `local-${crypto.randomUUID().slice(0, 8)}`;
     const sync = pebble.sync === true ? createSync(execute, release) : undefined;
+    const appSockets = createApplicationSockets(pebble, execute);
     const web = await loadWeb(dir, pebble.web);
     const routes: Record<string, any> = {};
     for (const [key, handler] of Object.entries(pebble.routes ?? {})) {
@@ -74,10 +81,23 @@ export async function startPebble(options: StartPebbleOptions) {
         return Response.json({ ok: false, error: new BedrockError("WEBSOCKET_REQUIRED", "WebSocket upgrade required.", "Open this endpoint with a WebSocket client.").toJSON() }, { status: 426 });
       } catch (error) { return errorResponse(error); }
     };
-    const server = Bun.serve<SocketData>({
+    for (const path of Object.keys(pebble.sockets ?? {})) {
+      routes[path] ??= {};
+      if (routes[path].GET) throw new BedrockError("INVALID_SOCKET", `Socket conflicts with GET route: ${path}`, "Choose a separate socket path.");
+      routes[path].GET = (request: Request, server: Bun.Server<RuntimeSocketData>) => appSockets.upgrade(path, request, server);
+    }
+    const server = Bun.serve<RuntimeSocketData>({
       // Public HTML must not inherit Bun's development Host restrictions from the environment.
       development: options.dev === true ? { hmr: true } : false,
-      ...(sync ? { websocket: sync.websocket } : {}),
+      websocket: {
+        maxPayloadLength: 64 * 1024,
+        idleTimeout: 60, sendPings: true,
+        backpressureLimit: 1024 * 1024, closeOnBackpressureLimit: true,
+        open(ws) { if (isApplication(ws.data)) appSockets.websocket.open!(ws as any); else sync?.websocket.open!(ws as any); },
+        message(ws, message) { if (isApplication(ws.data)) appSockets.websocket.message(ws as any, message); else sync?.websocket.message(ws as any, message); },
+        close(ws, code, reason) { if (isApplication(ws.data)) appSockets.websocket.close!(ws as any, code, reason); else sync?.websocket.close!(ws as any); },
+        drain(ws) { if (isApplication(ws.data)) appSockets.websocket.drain!(ws as any); },
+      },
       maxRequestBodySize: 90 * 1024 ** 2,
       hostname: "127.0.0.1", port: options.port ?? 3000, routes,
       async fetch(request) {
@@ -91,22 +111,28 @@ export async function startPebble(options: StartPebbleOptions) {
     const tokenCleanup = pebble.tokens ? setInterval(() => { void execute.flushTokens().catch(error => console.error("Token usage flush failed", error)); }, 60_000) : undefined;
     tokenCleanup?.unref();
     jobs.start();
-    let stopped = false;
+    let stopping: Promise<void> | undefined;
     return {
       server, pebble, db: database.db, execute, jobs,
-      async stop() {
-        if (stopped) return;
-        stopped = true;
-        clearInterval(storageCleanup);
-        clearInterval(tokenCleanup);
-        sync?.close();
-        await server.stop(true);
-        await jobs.stop();
-        await execute.close();
-        database.close();
+      stop() {
+        return stopping ??= (async () => {
+          clearInterval(storageCleanup);
+          clearInterval(tokenCleanup);
+          const draining = server.stop(false);
+          sync?.close();
+          appSockets.close();
+          await services.stop();
+          await server.stop(true);
+          await draining;
+          await jobs.stop();
+          await execute.close();
+          database.close();
+        })();
       },
     };
   } catch (error) {
+    await services.stop();
+    await executor?.close();
     database.close();
     throw asBedrockError(error, "START_FAILED", "Check the pebble configuration, web entry, migrations, and port.");
   }

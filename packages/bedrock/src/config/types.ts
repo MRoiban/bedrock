@@ -17,7 +17,8 @@ export interface TokenApi {
   revoke(id: string): void;
 }
 
-export interface FunctionContext {
+export interface FunctionContext<S = import("./hosting").ServiceValues> {
+  services: S;
   db: BunSQLiteDatabase<Record<string, unknown>> & { $client: import("bun:sqlite").Database };
   user: User | null;
   readonly token: TokenIdentity | null;
@@ -28,13 +29,14 @@ export interface FunctionContext {
   invalidate: (tables: readonly (string | SQLiteTable)[]) => void;
 }
 
-export interface DetachedContext {
+export interface DetachedContext<S = import("./hosting").ServiceValues> {
+  services: S;
   user: User | null;
   readonly token: TokenIdentity | null;
   pebble: { readonly name: string };
   request: Request;
-  read: <R>(fn: (ctx: FunctionContext) => R) => Promise<Awaited<R>>;
-  write: <R>(fn: (ctx: FunctionContext) => R) => Promise<Awaited<R>>;
+  read: <R>(fn: (ctx: FunctionContext<S>) => R) => Promise<Awaited<R>>;
+  write: <R>(fn: (ctx: FunctionContext<S>) => R) => Promise<Awaited<R>>;
 }
 
 export interface FunctionDefinition<Args = any, Result = any, Input = Args> {
@@ -84,6 +86,8 @@ export type JobDefinition = TransactionalJobDefinition | DetachedJobDefinition;
 export interface PluginConfig {
   name: string;
   schema?: Record<string, unknown>;
+  sockets?: Record<string, import("./hosting").SocketDefinition>;
+  services?: Record<string, import("./hosting").ServiceDefinition>;
   routes?: Record<string, RouteHandler | DetachedRouteDefinition>;
   onQuery?: (ctx: FunctionContext, name: string, args: unknown, next: () => Promise<unknown>) => Promise<unknown>;
   onMutation?: PluginConfig["onQuery"];
@@ -99,7 +103,10 @@ export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends Fun
   storage?: readonly Bucket[];
   sync?: boolean;
   tokens?: boolean;
+  backup?: import("./hosting").DirectoryBackup;
   web?: string;
+  sockets?: Record<string, import("./hosting").SocketDefinition>;
+  services?: Record<string, import("./hosting").ServiceDefinition>;
   routes?: Record<string, RouteHandler | DetachedRouteDefinition>;
   plugins?: readonly PluginConfig[];
   jobs?: Record<string, JobDefinition>;

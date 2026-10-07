@@ -1,3 +1,5 @@
+import { snapshotDirectories, restoreDirectories, type DirectoryManifest } from "./directories";
+import type { DirectoryBackup } from "../config/hosting";
 import { Database } from "bun:sqlite";
 import { mkdtemp, mkdir, rm, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,7 +8,7 @@ import { BedrockError } from "../error";
 import type { BackupTarget } from "./target";
 import { version } from "../../package.json";
 
-export interface Manifest {
+export interface Manifest extends Partial<DirectoryManifest> {
   timestamp: string;
   db: string;
   dbSha256: string;
@@ -18,7 +20,7 @@ export const sha256 = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").upda
 const prefix = (name: string) => name === "_daemon" ? "daemon/" : `pebbles/${name}/`;
 const hasTable = (db: Database, name: string) => !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
 
-export async function snapshot(target: BackupTarget, name: string, databasePath: string, filesDir?: string, now = new Date()): Promise<Manifest> {
+export async function snapshot(target: BackupTarget, name: string, databasePath: string, filesDir?: string, now = new Date(), directories?: DirectoryBackup): Promise<Manifest> {
   const temp = await mkdtemp(join(tmpdir(), "bedrock-backup-"));
   let source: Database | undefined;
   let copy: Database | undefined;
@@ -44,6 +46,7 @@ export async function snapshot(target: BackupTarget, name: string, databasePath:
         manifest.files[file.id] = file.sha256;
       }
     }
+    if (directories) Object.assign(manifest, await snapshotDirectories(target, base, join(databasePath, ".."), directories));
     await target.put(manifest.db, Bun.gzipSync(bytes));
     // Publishing the manifest last makes incomplete uploads invisible to restore.
     await target.put(`${base}manifests/${filename}.json`, new TextEncoder().encode(JSON.stringify(manifest)));
@@ -70,7 +73,7 @@ export async function prune(target: BackupTarget, name: string, hourly = 24, dai
     if (keepHour || keepDay) retained.push(entry);
     else { await target.delete(entry.key); await target.delete(entry.manifest.db); }
   }
-  const blobs = new Set(retained.flatMap(entry => Object.values(entry.manifest.files)));
+  const blobs = new Set(retained.flatMap(entry => [...Object.values(entry.manifest.files), ...Object.values(entry.manifest.directories ?? {}).flat().map(file => file.sha256)]));
   for (const key of await target.list(`${prefix(name)}files/`)) if (!blobs.has(key.split("/").at(-1)!)) await target.delete(key);
   // Failed uploads can leave database objects without manifests.
   const databases = new Set(retained.map(entry => entry.manifest.db));
@@ -100,6 +103,7 @@ export async function restoreData(target: BackupTarget, name: string, dataDir: s
       await mkdir(join(stage, "files", row.bucket), { recursive: true });
       await Bun.write(join(stage, "files", row.bucket, row.id), body);
     }
+    await restoreDirectories(target, prefix(name), stage, manifest);
     db.close(); db = undefined;
     await rename(dataDir, previous);
     try { await rename(stage, dataDir); }

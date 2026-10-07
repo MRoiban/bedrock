@@ -27,9 +27,10 @@ export function createTokens(pebble: PebbleConfig, sqlite: Database, db: Functio
     const [kind, name] = permission.split(":");
     if ((kind === "query" || kind === "mutation") && permission === `${kind}:${name}` && Object.hasOwn((kind === "query" ? pebble.queries : pebble.mutations) ?? {}, name!)) return;
     if (permission.startsWith("route:") && Object.hasOwn(pebble.routes ?? {}, permission.slice(6))) return;
+    if (permission.startsWith("socket:") && Object.hasOwn(pebble.sockets ?? {}, permission.slice(7))) return;
     const file = /^files:([^:]+):(upload|read|delete)$/.exec(permission);
     if (file && pebble.storage?.some(bucket => bucket.name === file[1])) return;
-    throw new BedrockError("INVALID_TOKEN_PERMISSION", `Unknown token permission: ${permission}`, "Use *, query:<registered name>, mutation:<registered name>, route:<registered METHOD /path>, or files:<registered bucket>:upload|read|delete.");
+    throw new BedrockError("INVALID_TOKEN_PERMISSION", `Unknown token permission: ${permission}`, "Use *, query:<registered name>, mutation:<registered name>, route:<registered METHOD /path>, socket:<registered /path>, or files:<registered bucket>:upload|read|delete.");
   }
   function identify(request: Request): RequestIdentity {
     const authorization = request.headers.get("authorization");
