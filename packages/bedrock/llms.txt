@@ -464,7 +464,7 @@ unsubscribe();
 client.close();
 ```
 
-The client accepts `{ url?, sync?, headers?, token? }`; url defaults to browser origin.
+The client accepts `{ url?, sync?, headers?, token?, autoReload?, beforeReload? }`; url defaults to browser origin.
 Pass an absolute URL outside the browser. `sync: false` uses HTTP; without server
 sync, subscriptions deliver one HTTP snapshot. Connections reconnect and resubscribe
 with backoff; uncertain mutations are never automatically replayed. Upload options
@@ -474,10 +474,22 @@ uploads hash incrementally and resume missing chunks with a saved upload id. Cli
 server objects. `user()` returns User|null, `loginUrl(returnTo?)` gives a login URL,
 `logout()` signs out. Use ordinary browser cookies, not signed identity headers.
 
+`release()` returns `{ page, server, stale }` (unknown ids are `null`);
+`onRelease(fn)` observes changes and returns an unsubscribe function. `useRelease()`
+returns the same state. Non-token browser clients silently reload stale pages by
+default when mutations/uploads have settled and focus is not editable (or the tab
+is hidden). Set `autoReload: false` to disable this, or return `false` from
+`beforeReload` to postpone until the next safety check. Reloads preserve form fields
+and scroll for 30 seconds on the same URL; password/file/hidden inputs are excluded.
+Add `id` and `data-bedrock-keep-scroll` to preserve an element's vertical scroll.
+Reloads are limited to once per 10 seconds per tab. Returning from pagehide, going
+online, or making the tab visible reconnects immediately; service restarts retry
+within 100–1000 ms. Call `close()` to remove listeners and stop reconnecting.
+
 ```tsx
 import { createRoot } from "react-dom/client";
 import { createClient } from "bedrock/client";
-import { BedrockProvider, useQuery, useMutation, useUser, useUpload } from "bedrock/react";
+import { BedrockProvider, useQuery, useMutation, useUser, useUpload, useRelease } from "bedrock/react";
 import { AppShell, UserMenu, SignInGate, Button } from "@bedrock/ui";
 import "@bedrock/ui/styles.css";
 import type pebble from "../pebble";

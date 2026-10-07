@@ -11,6 +11,7 @@ test('browser transport reports sent bytes, includes credentials and metadata, a
     upload = { onprogress: null as ((event: { loaded: number }) => void) | null };
     status = 201;
     responseText = JSON.stringify({ id: 'stored' });
+    getResponseHeader(name: string) { return name === "x-bedrock-release" ? "xhr-release" : null; }
     onload: (() => void) | null = null;
     onabort: (() => void) | null = null;
     onerror: (() => void) | null = null;
@@ -23,10 +24,12 @@ test('browser transport reports sent bytes, includes credentials and metadata, a
   }
   globalThis.XMLHttpRequest = FakeXHR as unknown as typeof XMLHttpRequest;
   try {
-    const client = storageClient(new URL('http://pebble.test'), {}, () => false);
+    const releases: (string | null)[] = [];
+    const client = storageClient(new URL('http://pebble.test'), {}, () => false, response => releases.push(response.headers.get('x-bedrock-release')));
     const progress: number[] = [];
     await client.upload('assets', new File(['hello'], 'hello'), { meta: { folder: 'été' }, onProgress: p => progress.push(p) });
     expect(progress).toEqual([0, 0.5, 1, 1]);
+    expect(releases).toEqual(["xhr-release"]);
     expect(instances[0]!.withCredentials).toBe(true);
     expect(instances[0]!.headers.has('origin')).toBe(false);
     expect(JSON.parse(decodeURIComponent(instances[0]!.headers.get('x-bedrock-file-meta')!))).toEqual({ folder: 'été' });

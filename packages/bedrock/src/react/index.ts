@@ -84,3 +84,14 @@ export function useUpload<P extends PebbleConfig>(bucket: import("../config/type
   }
   return { upload, progress, isUploading: count > 0, error };
 }
+
+export function useRelease() {
+  const client = useClient();
+  const [release, setRelease] = useState(client.release);
+  useEffect(() => {
+    const unsubscribe = client.onRelease(setRelease);
+    setRelease(client.release());
+    return unsubscribe;
+  }, [client]);
+  return release;
+}
