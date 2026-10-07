@@ -33,6 +33,7 @@ test("Google OAuth uses PKCE, bound state and mocked token exchange without netw
   try {
     const page = await h.auth.handle(new Request(`${origin}/login?return=https://notes.example.test/`), origin);
     expect(page.headers.get("referrer-policy")).toBe("same-origin");
+    expect(page.headers.get("content-security-policy")).toBe("default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://accounts.google.com; frame-ancestors 'none'; base-uri 'none'");
     expect(await page.text()).toContain("Continue with Google");
     const start = await h.auth.handle(new Request(`${origin}/login?start=1&return=https://notes.example.test/`), origin);
     const google = new URL(start.headers.get("location")!);

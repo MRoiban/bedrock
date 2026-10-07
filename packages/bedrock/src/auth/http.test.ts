@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
-import { validateReturn, cookieToken, requireOrigin, sessionCookie } from "./http";
+import { authPage, validateReturn, cookieToken, requireOrigin, sessionCookie } from "./http";
 import { proxyHeaders } from "../daemon/proxy";
 import { enforceAccess } from "./policy";
 
 const user = { id: "a", email: "Alice@company.test", name: "Alice" };
+test("auth pages default to same-origin form actions", () => {
+  const page = authPage({ title: "Sign in", heading: "Sign in", body: "" });
+  expect(page.headers.get("content-security-policy")).toBe("default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+});
 test("return URLs cannot escape the configured domain", () => {
   expect(validateReturn("https://notes.example.test/a?q=1", "example.test")).toBe("https://notes.example.test/a?q=1");
   for (const url of ["/relative", "http://notes.example.test", "https://example.test", "https://evil-example.test", "https://notes.example.test.evil.test", "https://user@notes.example.test", "https://nested.notes.example.test", "https://notes.example.test:123", "javascript:alert(1)"]) expect(() => validateReturn(url, "example.test")).toThrow();

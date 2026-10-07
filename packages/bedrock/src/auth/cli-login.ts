@@ -26,6 +26,7 @@ export function createCliLogin(config: DaemonConfig, sessions: Sessions, db: Dae
       pending.set(nonce, { hash: session.hash, port, state, expires: Date.now() + 300000 });
       return authPage({
         title: "Authorize CLI", heading: `Authorize CLI on ${escapeHtml(host)}?`,
+        formAction: ["http://127.0.0.1:*"],
         body: `<p>It gets your creator access: it can deploy, restart and delete every pebble on this server.</p><form method="post" action="/cli-login"><input type="hidden" name="nonce" value="${nonce}"><button class="primary">Authorize CLI</button></form><p class="note">Didn’t just run <code>bedrock login</code>? Close this tab.</p>`,
       });
     }

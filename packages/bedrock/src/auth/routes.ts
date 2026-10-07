@@ -80,6 +80,7 @@ export function createAuth(config: DaemonConfig, dev: boolean, sessions: Session
       if (!oauth) throw new BedrockError("OAUTH_NOT_CONFIGURED", "Google sign-in is not configured.", "Run bedrock setup with --google-client-id and --google-client-secret.");
       if (url.searchParams.get("start") !== "1") return authPage({
         title: "Sign in", heading: `Sign in to ${escapeHtml(destination(returnTo))}`,
+        formAction: ["https://accounts.google.com"],
         body: `<p class="host">${escapeHtml(new URL(returnTo).host)}</p><form method="get" action="/login"><input type="hidden" name="return" value="${escapeHtml(returnTo)}"><input type="hidden" name="start" value="1"><button class="google">${GOOGLE_G}Continue with Google</button></form><p class="note">This server receives only your name, email address and profile photo.</p>`,
       });
       for (const [key, login] of pending) if (login.expiresAt <= Date.now()) pending.delete(key);
