@@ -81,8 +81,11 @@ HTML; `init <name> [--template react]` scaffolds in the current empty directory.
 | `tokens` | `true` enables per-user pebble bearer tokens; disabled by default |
 | `web` | Bun HTML entry path, or static directory, relative to pebble directory |
 | `routes` | Bun handlers keyed by `"METHOD /path"`; `/_bedrock/` reserved |
+| `sockets` | Application `socket({ open?, message, close?, drain? })` handlers by absolute path |
+| `services` | Long-lived `service({ start, stop? })` definitions by unique name |
+| `backup` | `{ directories: ["workspaces"], exclude?: ["**/node_modules/**"] }` |
 | `jobs` | Map of `job(cron, handler)` definitions |
-| `plugins` | Array of `plugin({ name, schema?, routes?, jobs?, onQuery?, onMutation? })` |
+| `plugins` | Array of `plugin({ name, schema?, routes?, sockets?, services?, jobs?, onQuery?, onMutation? })` |
 
 `query(fn)`, `query(standardSchema, fn)`, `mutation(fn)`, and
 `mutation(standardSchema, fn)` retain argument/result types. Standard Schema v1
@@ -93,7 +96,7 @@ JSON-serializable: Dates cross the wire as strings, `undefined` becomes `null`.
 Handlers receive `FunctionContext`:
 
 ```ts
-{ db, user, token, tokens, pebble, storage, request, invalidate }
+{ db, user, token, tokens, pebble, storage, request, invalidate, services }
 ```
 
 `db` is Drizzle over `bun:sqlite`; builders/operators are re-exported from
@@ -230,8 +233,9 @@ or revoke another user's token. Disabled APIs throw `TOKENS_DISABLED`.
 jobs always get null. Expiry is an optional future Unix millisecond timestamp.
 
 Permissions default to deny: `*`, `query:<name>`, `mutation:<name>`,
-`route:<exact METHOD /path-pattern>`, and `files:<bucket>:upload|read|delete`.
-Targets must exist; plugins' merged routes count. Chunk operations require upload,
+`route:<exact METHOD /path-pattern>`, `socket:<registered /path>`, and
+`files:<bucket>:upload|read|delete`.
+Targets must exist; plugins' merged routes and sockets count. Chunk operations require upload,
 and WS sync requires `*`. Grants supplement user, row, and bucket authorization;
 current pebble access policies still apply to the stored user snapshot. Invalid,
 expired, or revoked tokens return JSON 401 with a new-token hint.
@@ -440,11 +444,73 @@ handler → B after → A after. Returning without `next()` short-circuits. Hook
 only declared queries/mutations (not jobs, routes, or storage HTTP operations).
 A thrown hook rolls back the whole transaction. A query hook is read-only too.
 
-Plugin schema/routes/jobs merge into the pebble's normal maps. Duplicate plugin
+Plugin schema/routes/jobs/sockets/services merge into the pebble's normal maps. Duplicate plugin
 names, schema export keys, SQL table names, route keys, or job names throw with
 repair hints. Plugin tables migrate with `bedrock db generate`; do not migrate
 inside hooks. The real tested example is `examples/plugins/audit-log.ts` in the
 repository. Plugin routes need your own row/role authorization like other routes.
+
+## Application sockets and long-lived services
+
+Pebbles and plugins may declare application sockets independently of sync:
+
+```ts
+import { definePebble, socket, service } from "bedrock";
+export default definePebble({
+  name: "host", access: "users",
+  services: { counter: service({
+    start(ctx) { ctx.log("Starting", ctx.dataDir); return { count: 0 }; },
+    stop(value) { value.count = 0; },
+  }) },
+  sockets: { "/api/host": socket<number>({
+    open(ws, ctx) { ws.data.value = ctx.services.counter.count; },
+    message(ws, data, ctx) { ws.send(data); },
+    close(ws, code, reason, ctx) {},
+    drain(ws, ctx) {},
+  }) },
+});
+```
+
+Socket paths are absolute and outside `/_bedrock`; duplicate plugin socket paths
+and service names fail configuration validation. A socket cannot share a GET
+route. One Bun WebSocket handler dispatches sync and application connections by
+socket data kind. Upgrades use the sync identity/access checks and require token
+`socket:<registered path>` or `*`. Bearer validity is checked on messages and
+read/write slots; daemon session sockets are revalidated every five minutes and
+closed with 4001 on expiry/revocation (logout closes them immediately). The daemon
+relays application text/binary frames and close codes, and Bun clients can send
+Authorization headers. Browser clients use session cookies and ordinary
+`new WebSocket(new URL("/api/host", origin.replace(/^http/, "ws")))`.
+
+Callbacks receive detached contexts; no executor slot lasts for a connection.
+Use `ctx.read`/`ctx.write` for short database work; writes notify sync. Native Bun
+`send`, `getBufferedAmount`, and `drain` expose backpressure. `ws.data.value` is
+application-owned per-connection state (type parameter of `socket<T>`). The
+shared handler limits frames to 64 KiB and buffered output to 1 MiB; large payloads
+need application framing or HTTP. Callback failures log and close with 1011.
+Applications own their protocol, row authorization and reconnect policy.
+
+`service({ start(ctx), stop?(value) })` returns the awaited start value to all
+function, route, socket and job contexts through `ctx.services`. ServiceContext
+is `{ pebble, dataDir, read, write, log, signal }`; raw SQL invalidation belongs
+inside `write` through its FunctionContext. It has no lifetime transaction.
+Services start in map declaration order (pebble entries, then plugins in array
+order), after migrations and before HTTP/health and child readiness. A failed
+start throws hinted `SERVICE_START_FAILED`, aborts the signal and unwinds earlier
+services. Later startup failures also unwind services.
+
+Stopping closes the listener, sends 1012 "Service restart" to sockets, aborts
+the service signal, invokes stops in reverse order within a shared two-second
+deadline, then stops jobs/executor/database. The supervisor preserves its
+three-second child stop deadline and SIGKILL fallback; retired releases first
+get up to three seconds to drain HTTP requests. SIGTERM and IPC stop both run
+this cleanup. Crashes/forced kills cannot guarantee cleanup. New release services
+may overlap old ones during a health-gated swap: coordinate shared resources.
+In-memory state such as terminal sessions does not survive deploys/restarts.
+`ServicesOf<typeof pebble>` derives service values; annotate
+`FunctionContext<ServicesOf<typeof pebble>>` or `DetachedContext<...>` (using a
+separate services definition to avoid circular inference) for checked handler
+service names/results. Helper callbacks otherwise retain the open service map.
 
 ## Browser client and React
 
@@ -492,6 +558,18 @@ default when mutations/custom requests/uploads have settled and focus is not edi
 is hidden). Set `autoReload: false` to disable this, or return `false` from
 `beforeReload` to postpone until the next safety check. Reloads preserve form fields
 and scroll for 30 seconds on the same URL; password/file/hidden inputs are excluded.
+For dirty editor state, keep the veto true for as long as needed, including
+hidden tabs. There is no forced timeout:
+
+```ts
+const client = createClient({ beforeReload: () => !editor.hasUnsavedChanges() });
+// Or autoReload: false; observe client.onRelease and let the app reload manually.
+```
+
+The callback is synchronous and rechecked on the next safety event/request
+settlement. Saving can issue a client mutation/fetch to trigger that recheck;
+applications that need complete control should use autoReload: false.
+
 Add `id` and `data-bedrock-keep-scroll` to preserve an element's vertical scroll.
 Reloads are limited to once per 10 seconds per tab. Returning from pagehide, going
 online, or making the tab visible reconnects immediately; service restarts retry
@@ -631,6 +709,18 @@ Manifests publish last. Retention keeps the newest snapshot per hour/day (UTC)
 and collects blobs unreferenced by retained manifests. Failed uploads may leave
 orphans until the next successful pruning pass. A concurrent file deletion may
 fail a live snapshot; the daemon logs it and retries at the next interval.
+
+Configure plain directory trees with
+`definePebble({ backup: { directories: ["workspaces"], exclude: ["**/node_modules/**"] }, ... })`.
+Roots are relative to dataDir; no absolute/dot-segment/backslash paths, overlapping
+roots or reserved db.sqlite/files/uploads. Symlinks/special files are skipped;
+empty directories and file modes/mtimes are recorded. Directory SHA-256 blobs
+share the per-pebble files namespace, work with disk/R2, and are kept by retention
+GC while any retained manifest references them. Restore verifies size/checksum
+and recreates the trees in the staged data directory. Snapshots are best effort:
+files may change independently during a walk, with no quiesce or consistency
+across files; a concurrent deletion can fail the snapshot. The hash covers the
+bytes actually read. Old manifests without directories remain restorable.
 
 `backup run [pebble]` also snapshots the daemon identity DB. `backup run` backs up
 all registered pebbles and records full success for scheduling. Doctor checks the

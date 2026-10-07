@@ -61,7 +61,7 @@ Public entry points of `bedrock` (package.json `exports`):
 
 | Import            | Contents |
 |-------------------|----------|
-| `bedrock`         | `definePebble`, `query`, `mutation`, `bucket`, `job`, `detached`, `plugin`, types; re-exports `drizzle-orm` operators and `drizzle-orm/sqlite-core` table builders |
+| `bedrock`         | `definePebble`, `query`, `mutation`, `bucket`, `job`, `detached`, `socket`, `service`, `plugin`, types; re-exports `drizzle-orm` operators and `drizzle-orm/sqlite-core` table builders |
 | `bedrock/client`  | `createClient()`, `Connection`, client types |
 | `bedrock/react`   | `BedrockProvider`, `useQuery`, `useMutation`, `useUser`, `useUpload`, `useRelease`, `useConnection` |
 | `bedrock/server`  | `startPebble()` (low-level, used by daemon and tests) |
@@ -120,7 +120,7 @@ export default definePebble({
 Rules:
 - `query(fn)` / `query(schema, fn)` and `mutation(fn)` / `mutation(schema, fn)`. Args are validated with the Standard Schema if given.
 - `tokens: true` opts into per-user bearer tokens; disabled by default.
-- Function context: `{ db, user, token, tokens, pebble, storage, request, invalidate }`. `user` is `null` when anonymous.
+- Function context: `{ db, user, token, tokens, pebble, storage, request, invalidate, services }`. `user` is `null` when anonymous.
 - Queries are read-only (enforced: run inside a read transaction). Mutations run inside a write transaction.
 - Types flow end-to-end: the client infers query/mutation names, args and results from `typeof pebble`.
 
@@ -181,11 +181,12 @@ Permissions default to deny, and creation validates registered targets:
 - `query:<name>` / `mutation:<name>`: that HTTP function.
 - `route:<METHOD> <path-pattern>`: the exact registered route key, including
   detached routes and plugin routes.
+- `socket:<path>`: the registered application socket path, including plugins.
 - `files:<bucket>:upload|read|delete`: built-in storage endpoints; all chunk
   operations, including status, require upload.
 
 Missing grants yield 403 `FORBIDDEN` with a hint naming the needed permission.
-WS upgrades require `*`; token validity and access are checked again for WS
+Sync WS upgrades require `*`; application WS upgrades require `socket:<path>` or `*`; token validity and access are checked again for WS
 function operations. Token permissions supplement handler and bucket policies.
 Usage timestamps accumulate in memory and flush at most once per minute per
 token, on a mutation or periodic internal mutation slot. SQLite writes never
@@ -230,7 +231,7 @@ directory basename, plus `-<child start ms>` in dev. It passes it as
   the proxy overwrites any values set by the child.
 - The sync socket sends `{ op: "hello", release }` as its first message.
 
-**Close codes.** A pebble that is stopping closes sync sockets with 1012 "Service restart".
+**Close codes.** A pebble that is stopping closes sync and application sockets with 1012 "Service restart".
 Clients reconnect after a uniformly random 100–1000 ms, without counting it as a failed
 attempt. Other closes keep the existing exponential backoff.
 
@@ -255,7 +256,7 @@ any of their HTTP responses. On mismatch the client is stale:
   custom `client.fetch()` requests or uploads in progress, and either the tab is hidden or the focused element is not
   editable (`input`, `textarea`, `select`, `[contenteditable]`). It re-checks on every
   mutation/custom-request/upload settle, `focusout`, and `visibilitychange`. `beforeReload?: () => boolean | void`
-  may return `false` to postpone; it is asked again on the next check.
+  may return `false` to postpone indefinitely, including hidden tabs; it is asked again on the next check. There is no forced reload deadline.
 - Before reloading it saves to `sessionStorage["bedrock:restore"]`
   `{ url, at, scrollX, scrollY, scroll: {id: top}, fields: {key: value|checked} }`.
   `scroll` covers elements with an `id` and `data-bedrock-keep-scroll`. Field keys are
@@ -588,7 +589,7 @@ ctx.db.$client.exec("DELETE FROM audit_log WHERE created_at < 0");
 ctx.invalidate([auditLog]);
 ```
 
-- Plugin schema/routes/jobs merge into the pebble. Duplicate plugin names, export
+- Plugin schema/routes/jobs/sockets/services merge into the pebble. Duplicate plugin names, export
   keys, SQL table names, route keys, and job names fail with repair hints.
   Plugin tables are included in the pebble's normal `bedrock db generate` flow.
 - Middleware wraps validated query/mutation arguments inside their transaction,
@@ -626,7 +627,7 @@ jobs: { refresh: job("0 * * * *", async ctx => {
 }, { transaction: false }) },
 ```
 
-`DetachedContext` exposes `{ user, token, pebble, request, read, write }`, without direct
+`DetachedContext` exposes `{ user, token, pebble, request, read, write, services }`, without direct
 `db`, `storage`, or `invalidate`; accessing those throws a repair-hinted
 `BedrockError`. `read(fn)` and `write(fn)` resolve the callback's value in short
 queued slots with the same FunctionContext and transaction/storage/tracking
@@ -638,6 +639,68 @@ Detached routes retain daemon access gating and signed user identity, just like
 ordinary routes. Jobs keep `user: null` in every slot, process-local overlap
 protection, scheduling, and `bedrock jobs run`. Existing routes/jobs remain
 transactional by default.
+
+### Application sockets and long-lived services
+
+Pebbles and plugins may declare application sockets independently of sync:
+
+```ts
+import { definePebble, socket, service } from "bedrock";
+export default definePebble({
+  name: "host", access: "users",
+  services: { counter: service({
+    start(ctx) { ctx.log("Starting", ctx.dataDir); return { count: 0 }; },
+    stop(value) { value.count = 0; },
+  }) },
+  sockets: { "/api/host": socket<number>({
+    open(ws, ctx) { ws.data.value = ctx.services.counter.count; },
+    message(ws, data, ctx) { ws.send(data); },
+    close(ws, code, reason, ctx) {},
+    drain(ws, ctx) {},
+  }) },
+});
+```
+
+Socket paths are absolute and outside `/_bedrock`; duplicate plugin socket paths
+and service names fail configuration validation. A socket cannot share a GET
+route. One Bun WebSocket handler dispatches sync and application connections by
+socket data kind. Upgrades use the sync identity/access checks and require token
+`socket:<registered path>` or `*`. Bearer validity is checked on messages and
+read/write slots; daemon session sockets are revalidated every five minutes and
+closed with 4001 on expiry/revocation (logout closes them immediately). The daemon
+relays application text/binary frames and close codes, and Bun clients can send
+Authorization headers. Browser clients use session cookies and ordinary
+`new WebSocket(new URL("/api/host", origin.replace(/^http/, "ws")))`.
+
+Callbacks receive detached contexts; no executor slot lasts for a connection.
+Use `ctx.read`/`ctx.write` for short database work; writes notify sync. Native Bun
+`send`, `getBufferedAmount`, and `drain` expose backpressure. `ws.data.value` is
+application-owned per-connection state (type parameter of `socket<T>`). The
+shared handler limits frames to 64 KiB and buffered output to 1 MiB; large payloads
+need application framing or HTTP. Callback failures log and close with 1011.
+Applications own their protocol, row authorization and reconnect policy.
+
+`service({ start(ctx), stop?(value) })` returns the awaited start value to all
+function, route, socket and job contexts through `ctx.services`. ServiceContext
+is `{ pebble, dataDir, read, write, log, signal }`; raw SQL invalidation belongs
+inside `write` through its FunctionContext. It has no lifetime transaction.
+Services start in map declaration order (pebble entries, then plugins in array
+order), after migrations and before HTTP/health and child readiness. A failed
+start throws hinted `SERVICE_START_FAILED`, aborts the signal and unwinds earlier
+services. Later startup failures also unwind services.
+
+Stopping closes the listener, sends 1012 "Service restart" to sockets, aborts
+the service signal, invokes stops in reverse order within a shared two-second
+deadline, then stops jobs/executor/database. The supervisor preserves its
+three-second child stop deadline and SIGKILL fallback; retired releases first
+get up to three seconds to drain HTTP requests. SIGTERM and IPC stop both run
+this cleanup. Crashes/forced kills cannot guarantee cleanup. New release services
+may overlap old ones during a health-gated swap: coordinate shared resources.
+In-memory state such as terminal sessions does not survive deploys/restarts.
+`ServicesOf<typeof pebble>` derives service values; annotate
+`FunctionContext<ServicesOf<typeof pebble>>` or `DetachedContext<...>` (using a
+separate services definition to avoid circular inference) for checked handler
+service names/results. Helper callbacks otherwise retain the open service map.
 
 ### Built-in backups
 
@@ -667,6 +730,24 @@ integrity and DB/file SHA-256, stages and swaps data directories, preserves
 can apply newer migrations. The two renames occur while stopped; a host crash
 between them requires recovering the preserved directory. Release code, config,
 and secrets need separate backups; daemon identity restore is offline.
+
+Pebbles can opt plain trees into the same backup target:
+`backup: { directories: ["workspaces"], exclude: ["**/node_modules/**"] }`.
+Roots are relative to dataDir, nonoverlapping and outside reserved db.sqlite,
+files and uploads; absolute paths, dot segments and backslashes are rejected.
+The walker skips symlinks and special files, records regular files and empty
+directories, and hashes exactly the bytes read. Glob exclusions match paths
+relative to dataDir (including the configured root). The manifest adds
+`directories: { [root]: [{ path, sha256, size, mode, mtimeMs }] }` and
+`emptyDirs: { [root]: [relativePath] }` (empty string denotes the root).
+Blobs share `pebbles/<name>/files/<sha256>` with bucket files on fs and R2, and
+retention GC includes both references. Restore validates paths/checksums/size,
+recreates directories and restores file modes/mtimes in the staged data tree.
+Older manifests remain compatible. `backup run`, `ls`, and `restore` include
+these trees; the run loads the selected release's backup configuration.
+Directory snapshots are best effort while services are live: no quiesce hook,
+no multi-file consistency guarantee, metadata may precede changed bytes, and
+concurrent deletion can fail a snapshot. Keep transactional state in SQLite.
 
 Rollback refuses target code missing applied migrations unless `--force`; its
 hint points to backup restore. `bedrock --version` prints package version; `bun

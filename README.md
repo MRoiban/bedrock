@@ -2,7 +2,7 @@
 
 One home server for your small projects, called **pebbles**. Bun runs each pebble
 in its own process; SQLite and files stay on your disk. Google login, live queries,
-uploads, jobs, plugins, backups, and a Cloudflare Tunnel come built in.
+uploads, jobs, application WebSockets, long-lived services, plugins, backups, and a Cloudflare Tunnel come built in.
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for the contract and
 [the author API reference](packages/bedrock/AGENTS.md) when building a pebble.
@@ -137,6 +137,27 @@ writes from a mutation, job, or route. Prefer registered Drizzle table objects
 (`ctx.invalidate([items])`); SQL names (`ctx.invalidate(["items"])`) also work.
 See the [author reference](packages/bedrock/AGENTS.md#live-queries-and-explicit-invalidation)
 for the raw SQL escape hatch.
+
+## Application hosts
+
+```ts
+import { socket, service } from "bedrock";
+// Inside definePebble or plugin:
+services: { host: service({ start(ctx) { return { ready: true }; }, stop(value) {} }) },
+sockets: { "/api/host": socket({ message(ws, data, ctx) { ws.send(data); } }) },
+```
+
+Services start before health/readiness and stop in reverse order within a bounded
+drain window. Handlers access `ctx.services`; detached `ctx.read`/`ctx.write`
+keep long-lived work outside database transactions. Application sockets use the
+pebble access policy and optional `socket:/api/host` token grants.
+
+Add `backup: { directories: ["workspaces"], exclude: ["**/node_modules/**"] }`
+to preserve plain data trees through the disk/R2 backup commands. Snapshots are
+best effort while live; symlinks are skipped. In-memory sessions do not survive
+a deployment. Editors can veto stale-tab reload indefinitely with
+`createClient({ beforeReload: () => !dirty })`. See [the author guide](packages/bedrock/AGENTS.md#application-sockets-and-long-lived-services)
+for lifecycle, browser connections and typed contexts.
 
 ## Operations
 
