@@ -62,8 +62,8 @@ Public entry points of `bedrock` (package.json `exports`):
 | Import            | Contents |
 |-------------------|----------|
 | `bedrock`         | `definePebble`, `query`, `mutation`, `bucket`, `job`, `detached`, `plugin`, types; re-exports `drizzle-orm` operators and `drizzle-orm/sqlite-core` table builders |
-| `bedrock/client`  | `createClient()` |
-| `bedrock/react`   | `BedrockProvider`, `useQuery`, `useMutation`, `useUser`, `useUpload`, `useRelease` |
+| `bedrock/client`  | `createClient()`, `Connection`, client types |
+| `bedrock/react`   | `BedrockProvider`, `useQuery`, `useMutation`, `useUser`, `useUpload`, `useRelease`, `useConnection` |
 | `bedrock/server`  | `startPebble()` (low-level, used by daemon and tests) |
 | bin `bedrock`     | CLI |
 
@@ -194,7 +194,7 @@ that they cannot observe another slot's uncommitted changes.
 
 `createClient({ url, token })` sends the bearer on HTTP function and storage
 requests with `credentials: "omit"`. Bun supports bearer WS headers; browser
-WebSockets cannot supply them, so token clients in browsers use HTTP snapshots.
+WebSockets cannot supply them, so token clients in browsers use HTTP polling.
 CORS for cross-origin browser extensions is a follow-up.
 
 ## 6. Sync (reactive queries)
@@ -237,8 +237,11 @@ attempt. Other closes keep the existing exponential backoff.
 **Saves land before they resolve.** For a WS mutation, the server first re-runs that
 socket's subscriptions whose read-set intersects the write-set (no debounce, cancelling
 their pending timers), pushes any changed data, then sends `result`. Other sockets keep
-the ~16 ms debounce. Guarantee: when `mutate()` resolves over WS, every subscription on
-the same client that the mutation changed has already delivered its new data.
+the ~16 ms debounce. Guarantee: When mutate() resolves, over WS or HTTP, every subscription on the same client that the mutation changed has already delivered its new data.
+HTTP mutations refresh every active subscription in parallel (`Promise.allSettled`)
+before resolving, including queued mutations falling back to HTTP and clients with
+polling disabled. Refresh errors reach subscriptions without rejecting a committed
+mutation.
 The ordinary write listener must not push the same data to that socket twice.
 
 **Stale tabs reload themselves.** Browser clients (not token clients) know the page's
@@ -249,9 +252,9 @@ any of their HTTP responses. On mismatch the client is stale:
   React: `useRelease()`.
 - With `createClient({ autoReload })` (default `true`), a stale client calls
   `location.reload()` silently once it is safe: no queued or in-flight mutations, no
-  uploads in progress, and either the tab is hidden or the focused element is not
+  custom `client.fetch()` requests or uploads in progress, and either the tab is hidden or the focused element is not
   editable (`input`, `textarea`, `select`, `[contenteditable]`). It re-checks on every
-  mutation/upload settle, `focusout`, and `visibilitychange`. `beforeReload?: () => boolean | void`
+  mutation/custom-request/upload settle, `focusout`, and `visibilitychange`. `beforeReload?: () => boolean | void`
   may return `false` to postpone; it is asked again on the next check.
 - Before reloading it saves to `sessionStorage["bedrock:restore"]`
   `{ url, at, scrollX, scrollY, scroll: {id: top}, fields: {key: value|checked} }`.
@@ -281,7 +284,62 @@ with the existing disconnected error.
   HTML is never served from the previous release.
 - Bun HTML-bundle mode keeps Bun's own asset handling.
 
-Future (do not build yet): row-level diffs, optimistic updates.
+**Connection and HTTP freshness.** `ClientOptions.pollInterval?: number` defaults to
+5000 ms; 0 preserves one-shot HTTP subscriptions. `client.connection(): Connection`
+and `client.onConnection(fn: (c: Connection) => void): () => void` expose
+`{ state: "idle" | "connecting" | "live" | "reconnecting" | "polling" | "offline",
+since: number, attempt: number }`. `since` is Date.now() when the state last changed;
+`attempt` counts consecutive failed socket attempts and is 0 when live. Listeners
+are not called immediately and only fire when state changes. `idle` means no
+subscriptions or pending mutations and nothing open; `connecting` is the first
+socket attempt, `live` an open socket, `reconnecting` backoff/retries, and `polling`
+HTTP subscription freshness. Browser `navigator.onLine === false` or a rejected
+HTTP fetch puts the client offline; the next HTTP response (including an HTTP
+error) or socket open restores its transport state, unless the browser still
+reports offline. Closing the client releases timers, sockets and listeners.
+
+After a failed handshake, a GET probe to `/_bedrock/ws` distinguishes outcomes:
+426 retries WS with exponential backoff capped at 30 seconds; only a JSON 404
+with `error.code === "NOT_FOUND"` permanently disables WS. Explicit `sync: false`,
+missing WebSocket support, and browser token clients also permanently use HTTP.
+401/403 report the remote error to every subscription once per distinct code until
+success, keep retrying WS, and do not enable polling. Other failures, including
+400, 5xx, network errors and timeouts, temporarily poll while retrying WS. On open,
+polling stops and subscriptions resubscribe over WS; pending HTTP work completes.
+Online, visible and pageshow events retry immediately, including temporary polling.
+
+Each HTTP subscription queries immediately, then joins sequential polling ticks
+with at most one tick in flight. Polling pauses while the document is hidden;
+becoming visible immediately runs a tick and resumes the interval. Results deliver
+only when their JSON serialization differs from the last delivered result. WS
+messages retain their existing delivery behavior. Network failures mark offline
+and keep ticking; subscription HTTP errors are reported once per distinct code,
+reset on success. Unsubscribing the last subscription closes unused transport.
+
+**Custom requests.** `client.fetch(path: string, init?: RequestInit): Promise<Response>`
+resolves paths against the client URL, accepts absolute same-origin URLs and rejects
+other origins with `INVALID_ARGS`. It merges caller headers, sets Origin and the
+same auth as built-in requests (bearer plus omitted credentials for token clients,
+otherwise included credentials), observes release headers, and prevents stale-tab
+reload until it settles. HTTP errors return the Response unchanged; network errors
+throw `REQUEST_FAILED` and mark offline. Successful methods other than GET/HEAD
+refresh active subscriptions over HTTP before returning only while polling; WS
+route writes are already pushed by the server.
+
+**React identity and freshness.** `useConnection(): Connection` initializes from
+`client.connection()` and subscribes through `onConnection`. `useQuery()` returns
+`{ data, error, isLoading, connection }`; new data clears an earlier query error.
+`client.user()` returns a real server User or null, throws remote errors unchanged,
+and throws `OFFLINE` when its fetch rejects (including aborts/timeouts).
+`useUser()` returns `{ user: User | null, isLoading: boolean,
+error: BedrockError | undefined, retry: () => void }`. Loading ends at the first
+answer or error. Errors preserve the last known user (initially null) and retry
+at 1, 2, 4, 8, 16, then 30 seconds repeatedly. Online, becoming visible, and retry()
+attempt immediately; overlapping retry requests coalesce into one next attempt.
+A successful answer clears error and resets backoff. Effects clean up retries and
+ignore late answers after unmount or client replacement. There is no onUser API.
+
+Future (do not build yet): row-level diffs, optimistic updates, caches shared across clients.
 
 ## 7. Storage
 

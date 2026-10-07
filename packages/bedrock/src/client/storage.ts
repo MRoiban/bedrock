@@ -5,7 +5,7 @@ import { BedrockError, asBedrockError } from '../error';
 export interface UploadOptions { onProgress?: (progress: number) => void; signal?: AbortSignal; meta?: unknown; uploadId?: string; onUploadId?: (id: string) => void }
 const SINGLE_LIMIT = 90 * 1024 ** 2;
 const CHUNK_SIZE = 32 * 1024 ** 2;
-export function storageClient(base: URL, options: ClientOptions, isClosed: () => boolean, received: (response: Response) => void = () => {}, uploading: (change: number) => void = () => {}) {
+export function storageClient(base: URL, options: ClientOptions, isClosed: () => boolean, received: (response: Response) => void = () => {}, uploading: (change: number) => void = () => {}, failed: () => void = () => {}) {
   const fileUrl = (bucket: string, id: string) => new URL(`/_bedrock/files/${encodeURIComponent(bucket)}/${encodeURIComponent(id)}`, base).href;
   async function send(path: string, method: string, body?: BodyInit, signal?: AbortSignal, extra?: HeadersInit, progress?: (bytes: number) => void) {
     if (isClosed()) throw new BedrockError('CLIENT_CLOSED', 'The client is closed.', 'Create a new client.');
@@ -15,7 +15,9 @@ export function storageClient(base: URL, options: ClientOptions, isClosed: () =>
     headers.set('origin', base.origin);
     new Headers(extra).forEach((value, key) => headers.set(key, value));
     try {
-      const response = typeof XMLHttpRequest !== 'undefined' && body instanceof Blob ? await xhr(new URL(path, base), method, headers, body, !options.token, signal, progress) : await fetch(new URL(path, base), { method, headers, credentials: options.token ? 'omit' : 'include', ...(body === undefined ? {} : { body }), ...(signal ? { signal } : {}) });
+      let response: Response;
+      try { response = typeof XMLHttpRequest !== 'undefined' && body instanceof Blob ? await xhr(new URL(path, base), method, headers, body, !options.token, signal, progress) : await fetch(new URL(path, base), { method, headers, credentials: options.token ? 'omit' : 'include', ...(body === undefined ? {} : { body }), ...(signal ? { signal } : {}) }); }
+      catch (error) { failed(); throw error; }
       received(response);
       if (response.status === 204) return;
       const result = await response.json();
