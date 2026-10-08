@@ -104,6 +104,8 @@ export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends Fun
   sync?: boolean;
   tokens?: boolean;
   backup?: import("./hosting").DirectoryBackup;
+  /** HTTP body ceiling in bytes (default 90 MiB, maximum 1 TiB). Stream large custom bodies. */
+  maxRequestBodySize?: number;
   web?: string;
   sockets?: Record<string, import("./hosting").SocketDefinition>;
   services?: Record<string, import("./hosting").ServiceDefinition>;

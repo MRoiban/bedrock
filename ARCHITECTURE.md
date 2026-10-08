@@ -814,3 +814,5 @@ against end users and the internet, not hostile creators.
 6. **Tunnel + service + remote ops — done** — Cloudflare setup/supervision, launchd/systemd user services, doctor, creator CLI login, deploy token management.
 7. **Ops — done (7a UI, 7b backups/jobs/plugins/polish)** — remote deploy, backups, jobs, plugins, `@bedrock/ui` (Onyx), docs/llms.txt.
 8. **Seamless — done** — release identity, 1012 restarts, saves land before they resolve, stale-tab reload with place restore, instant reconnect + bfcache, static caching.
+
+Custom HTTP routes may set `definePebble({ maxRequestBodySize: bytes })` (positive integer, default 90 MiB, maximum 1 TiB). The daemon ceiling is 1 TiB and forwards request bodies as streams; custom routes must stream them to bound memory. Storage bucket limits remain separate. Application sockets retain the original URL and headers before upgrade, including on Bun 1.2.

@@ -103,7 +103,7 @@ export async function startPebble(options: StartPebbleOptions) {
         close(ws, code, reason) { if (isApplication(ws.data)) appSockets.websocket.close!(ws as any, code, reason); else sync?.websocket.close!(ws as any); },
         drain(ws) { if (isApplication(ws.data)) appSockets.websocket.drain!(ws as any); },
       },
-      maxRequestBodySize: 90 * 1024 ** 2,
+      maxRequestBodySize: pebble.maxRequestBodySize ?? 90 * 1024 ** 2,
       hostname: "127.0.0.1", port: options.port ?? 3000, routes,
       async fetch(request) {
         if (web.staticResponse && ["GET", "HEAD"].includes(request.method)) return web.staticResponse(request);

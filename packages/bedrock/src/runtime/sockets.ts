@@ -58,13 +58,15 @@ export function createApplicationSockets(pebble: PebbleConfig, execute: ReturnTy
     websocket,
     async upgrade(path: string, request: Request, server: Bun.Server<RuntimeSocketData>) {
       try {
-        const identity = await execute.identify(request);
+        // Bun 1.2 consumes the upgrade Request; retain immutable admission metadata.
+        const original = new Request(request.url, { method: request.method, headers: new Headers(request.headers) });
+        const identity = await execute.identify(original);
         checkAccess(pebble, identity.user);
         requirePermission(identity.token, `socket:${path}`);
         // Returning the detached context releases the tracking promise immediately.
-        const context = await execute.detached(request, ctx => ctx, identity);
+        const context = await execute.detached(original, ctx => ctx, identity);
         if (!accepting) throw new BedrockError("PEBBLE_STOPPED", "The pebble is stopping.", "Reconnect to the next release.");
-        if (server.upgrade(request, { data: { ...identity, request, kind: "application", path, definition: pebble.sockets![path]!, context } })) return;
+        if (server.upgrade(request, { data: { ...identity, request: original, kind: "application", path, definition: pebble.sockets![path]!, context } })) return;
         return new Response("WebSocket upgrade required", { status: 426 });
       } catch (error) { return errorResponse(error); }
     },

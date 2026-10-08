@@ -119,3 +119,34 @@ test("socket and service writes notify sync without occupying a lifetime executo
     await until(3); expect(values[2]).toEqual([{ id: "socket" }, { id: "service" }]);
   } finally { ws.close(); host.close(); await runtime.stop(); temp.cleanup(); }
 });
+
+test("socket context retains upgrade URL and headers after Bun consumes request", async () => {
+  const temp = tempDirectory();
+  const runtime = await startPebble({ dir: temp.dir, dataDir: temp.dir, port: 0, pebble: { name: "original", sockets: {
+    "/host": socket({ open(ws, ctx) { ws.data.value = { url: ctx.request.url, header: ctx.request.headers.get("x-original") }; }, message(ws, _body, ctx) { ws.send(JSON.stringify({ value: ws.data.value, url: ctx.request.url })); } })
+  } } });
+  try {
+    const url = new URL('/host?workspace=original', runtime.server.url);
+    const ws = await connect(url, { 'x-original': 'retained' });
+    const result = JSON.parse(await echo(ws, 'inspect'));
+    expect(new URL(result.value.url).searchParams.get('workspace')).toBe('original');
+    expect(result.value.header).toBe('retained'); expect(result.url).toBe(result.value.url); ws.close();
+  } finally { await runtime.stop(); temp.cleanup(); }
+});
+
+test('custom HTTP limit accepts streamed bodies above the default 90 MiB', async () => {
+  const temp = tempDirectory();
+  const runtime = await startPebble({ dir: temp.dir, dataDir: temp.dir, port: 0, pebble: { name: 'streamed', maxRequestBodySize: 100 * 1024 ** 2,
+    routes: { 'PUT /large': async request => {
+      let bytes = 0; const reader = request.body!.getReader();
+      for (;;) { const item = await reader.read(); if (item.done) break; bytes += item.value.length; }
+      return Response.json({ bytes });
+    } }
+  } });
+  try {
+    let remaining = 91 * 1024 ** 2;
+    const body = new ReadableStream({ pull(controller) { if (!remaining) { controller.close(); return; } const size = Math.min(65536, remaining); remaining -= size; controller.enqueue(new Uint8Array(size)); } });
+    const response = await fetch(new URL('/large', runtime.server.url), { method: 'PUT', body });
+    expect(response.status).toBe(200); expect(await response.json()).toEqual({ bytes: 91 * 1024 ** 2 });
+  } finally { await runtime.stop(); temp.cleanup(); }
+});

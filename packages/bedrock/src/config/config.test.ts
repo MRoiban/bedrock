@@ -49,3 +49,8 @@ test("BedrockError has stable JSON and a repair hint", () => {
   const error = new BedrockError("OOPS", "Something broke", "Try again");
   expect(JSON.parse(JSON.stringify(error))).toEqual({ code: "OOPS", message: "Something broke", hint: "Try again" });
 });
+
+test("custom HTTP body ceiling is bounded and opt-in", () => {
+  expect(definePebble({ name: 'large', maxRequestBodySize: 1024 ** 4 }).maxRequestBodySize).toBe(1024 ** 4);
+  for (const maxRequestBodySize of [0, -1, 0.5, Infinity, 1024 ** 4 + 1]) expect(() => definePebble({ name: 'large', maxRequestBodySize })).toThrow('Invalid maxRequestBodySize');
+});

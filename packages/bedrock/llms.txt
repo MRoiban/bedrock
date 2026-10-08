@@ -810,3 +810,5 @@ returns value/read/write sets. `startDaemon({ home: temporaryHome })` comes from
 - Expecting rollback to undo schema/data or a backup to contain release code.
   Keep source/config backups too, inspect migrations, and test restores.
 - Testing against ~/.bedrock or real Cloudflare/R2. Use temp directories and mocks.
+
+Custom HTTP routes may set `definePebble({ maxRequestBodySize: bytes })` (positive integer, default 90 MiB, maximum 1 TiB). The daemon ceiling is 1 TiB and forwards request bodies as streams; custom routes must stream them to bound memory. Storage bucket limits remain separate. Application sockets retain the original URL and headers before upgrade, including on Bun 1.2.

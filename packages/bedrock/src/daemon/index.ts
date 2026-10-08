@@ -45,7 +45,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
     const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups, config);
     const notFound = () => new Response("Pebble not found. Deploy it with bedrock deploy, or check its hostname.", { status: 404 });
     server = Bun.serve<Relay>({
-      hostname: "127.0.0.1", port: config.port, maxRequestBodySize: 256 * 1024 * 1024,
+      hostname: "127.0.0.1", port: config.port, maxRequestBodySize: 1024 ** 4,
       websocket: relayWebSocket,
       async fetch(request, server) {
         try {

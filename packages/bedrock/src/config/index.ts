@@ -30,6 +30,7 @@ export function definePebble<const P extends PebbleConfig>(config: P): ResolvedP
   }
   if (validated.has(config)) return config as ResolvedPebble<P>;
   validateName(config.name);
+  if (config.maxRequestBodySize !== undefined && (!Number.isSafeInteger(config.maxRequestBodySize) || config.maxRequestBodySize <= 0 || config.maxRequestBodySize > 1024 ** 4)) throw new BedrockError("INVALID_CONFIG", "Invalid maxRequestBodySize.", "Use a positive integer byte limit up to 1 TiB; stream custom request bodies.");
   validateBuckets(config.storage);
   const merged = { schema: { ...config.schema }, routes: { ...config.routes }, jobs: { ...config.jobs }, sockets: { ...config.sockets }, services: { ...config.services } };
   const names = new Set<string>();
