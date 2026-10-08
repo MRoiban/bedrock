@@ -1,3 +1,6 @@
+import { buildInfo } from "../version";
+import { updateCheckout } from "../self-update";
+import { requireUpdateService, scheduleUpdateRestart } from "../service/update-restart";
 import { createBackups } from "../backup";
 import { dashboard, signOut } from "./dashboard";
 import { TunnelSupervisor } from "../tunnel/supervisor";
@@ -18,7 +21,7 @@ import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
 
-export interface StartDaemonOptions { home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string }
+export interface StartDaemonOptions { home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
   const home = resolve(options.home ?? bedrockHome());
@@ -42,7 +45,18 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   let server: Bun.Server<Relay> | undefined;
   try {
     await localToken(home, db);
-    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups, config);
+    let updating = false;
+    const maintenance = options.maintenance ?? { info: await buildInfo(), async update() {
+      if (updating) throw new BedrockError("UPDATE_BUSY", "A self-update is already in progress or awaiting restart.", "Wait for the daemon to restart before retrying.");
+      updating = true;
+      try {
+        await requireUpdateService({ home });
+        const result = await updateCheckout();
+        await scheduleUpdateRestart({ home });
+        return result;
+      } catch (error) { updating = false; throw error; }
+    } };
+    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups, config, maintenance);
     const notFound = () => new Response("Pebble not found. Deploy it with bedrock deploy, or check its hostname.", { status: 404 });
     server = Bun.serve<Relay>({
       hostname: "127.0.0.1", port: config.port, maxRequestBodySize: 1024 ** 4,

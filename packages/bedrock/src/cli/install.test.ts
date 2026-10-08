@@ -30,8 +30,16 @@ test("self-update fast-forwards checkout, installs dependencies and requests ser
   const temp = tempDirectory();
   const calls: string[][] = [];
   try {
-    await Bun.write(join(temp.dir, "install.sh"), "#!/bin/sh\n");
-    expect(await selfUpdate({ checkout: temp.dir, run: async (args, options) => { expect(options?.cwd).toBe(temp.dir); calls.push(args); return ""; }, restart: async () => ({ restarted: true }) })).toMatchObject({ updated: true, restarted: true });
+    let head = "a".repeat(40);
+    expect(await selfUpdate({ checkout: temp.dir, run: async (args, options) => {
+      if (args.includes("--show-toplevel")) return temp.dir;
+      if (args.includes("HEAD") && args.includes("rev-parse")) return head;
+      if (args.includes("symbolic-ref")) return "main";
+      if (args.includes("status")) return "";
+      expect(options?.cwd).toBe(temp.dir); calls.push(args);
+      if (args.includes("pull")) head = "b".repeat(40);
+      return "";
+    }, restart: async () => ({ restarted: true }) })).toMatchObject({ updated: true, restarted: true, from: "a".repeat(40), to: "b".repeat(40) });
     expect(calls).toEqual([["git", "pull", "--ff-only"], [process.execPath, "install"]]);
   } finally { temp.cleanup(); }
 });
@@ -45,6 +53,6 @@ test.skipIf(process.platform !== "win32")("Windows installer repeats safely and 
     for (let i = 0; i < 2; i++) {
       expect(await run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(root, "install.ps1")], { env })).toContain("Next: bedrock setup");
     }
-    expect(await run([join(bin, "bedrock.exe"), "--version"], { env })).toBe("0.1.0");
+    expect(await run([join(bin, "bedrock.exe"), "--version"], { env })).toContain("bedrock 0.1.0");
   } finally { temp.cleanup(); }
 }, 30000);

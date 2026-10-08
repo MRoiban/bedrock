@@ -650,7 +650,7 @@ CSS for app layouts. The bundled CSS includes utilities used by components only.
 ## Host operations and backups
 
 From `packages/bedrock`, `bun link` registers the `bedrock` bin globally. Ensure
-Bun's bin directory is on PATH. `bedrock --version` prints the package version.
+Bun's bin directory is on PATH. `bedrock --version` prints local package/checkout identity, platform, architecture and Bun version; `--json` exposes version, commit, branch, dirty, platform, arch and bun. Git fields are null outside a checkout.
 All commands support `--json` (one object; doctor returns a checks array).
 Errors carry `code`, `message`, `hint`; failures set exit code 1.
 
@@ -670,7 +670,8 @@ bedrock dev
 bedrock deploy             # prints/opens URL; --no-open disables opening
 bedrock whoami
 bedrock status --json
-bedrock self-update        # git pull --ff-only, bun install, service restart
+bedrock self-update        # local clean checkout: git pull --ff-only, bun install, service restart
+bedrock self-update --remote # logged-in daemon: update, restart, poll new boot/commit (120 s)
 bedrock backup run
 bedrock backup ls notes --json
 bedrock backup restore notes --at 2026-10-06T03:00:00.000Z --yes
@@ -770,7 +771,25 @@ compatible code before restoring an older schema. Releases, config and credentia
 are not included in snapshots. Daemon DB recovery requires an offline procedure;
 there is no live daemon identity restore command.
 
+Status reports boot-time `{ version, commit, branch, dirty, platform, arch, bun }`,
+`instanceId` (new per daemon boot), and `features`: sockets, services,
+directory-backups, chunked-uploads. Human status prints this beside the daemon URL;
+JSON includes all fields. Deploy checks sockets/services in the pebble and plugins
+and directory backups before archiving/upload; absent features mean an old daemon.
+Doctor warns on a local daemon missing sockets/services.
+
+Remote self-update requires an installed service and a clean source checkout;
+pebble bearer tokens are rejected by the daemon's deploy-token authorization.
+POST returns `{ from, to, updated, output }` with redacted Git/Bun output and
+schedules a restart after a two-second response-flush delay. Concurrent requests
+are refused until restart. Windows launches the delayed PowerShell restart via CIM
+Win32_Process.Create, outside the Scheduled Task tree reaped by taskkill /T;
+macOS/Linux use a detached Bun helper. Startup restores running/restarting pebbles,
+leaving stopped ones stopped. A failed install/restart may leave an advanced Git
+checkout. Older daemons need one server-local update before this endpoint exists.
+
 Daemon API (Bearer creator deploy token): GET `/api/pebbles`, GET `/api/status`,
+POST `/api/self-update`;
 POST `/api/deploy?name=<name>` (tar.gz); POST `/api/pebbles/<name>/start|stop|restart|rollback`
 (`?force=true` for rollback); GET `/api/pebbles/<name>/logs?follow=true`;
 DELETE `/api/pebbles/<name>?confirm=true`; GET/POST `/api/tokens`,

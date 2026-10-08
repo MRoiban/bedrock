@@ -787,7 +787,7 @@ no multi-file consistency guarantee, metadata may precede changed bytes, and
 concurrent deletion can fail a snapshot. Keep transactional state in SQLite.
 
 Rollback refuses target code missing applied migrations unless `--force`; its
-hint points to backup restore. `bedrock --version` prints package version; `bun
+hint points to backup restore. `bedrock --version` prints local package/checkout identity, platform and Bun; `bun
 link` from packages/bedrock registers the CLI on PATH.
 
 ### Trust model

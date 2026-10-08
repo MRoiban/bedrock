@@ -1,3 +1,5 @@
+import { formatBuild } from "../version";
+import { checkDaemonFeatures } from "../features";
 import { openBrowser, readCredentials, type Credentials } from "./credentials";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -92,18 +94,19 @@ export async function daemonCommand(command: string, args: string[], json: boole
     const daemon = await connection(flags);
     const value = (await (await call(flags, "/api/status")).json()).value;
     const pebbles = value.pebbles.map((pebble: { name: string }) => ({ ...pebble, url: value.domain === "localhost" ? `http://${pebble.name}.localhost:${new URL(daemon.url).port}` : `https://${pebble.name}.${value.domain}` }));
-    if (!json) { console.log(`Daemon: ${daemon.url}\nUser: ${value.user ?? "creator deploy token"}\n${pebbles.map((pebble: { name: string; url: string }) => `${pebble.name}  ${pebble.url}`).join("\n") || "No pebbles yet. Run bedrock new my-app."}`); return; }
-    return { command, daemon: daemon.url, user: value.user, pebbles };
+    if (!json) { console.log(`Daemon  ${daemon.url} · ${formatBuild(value)}\nUser: ${value.user ?? "creator deploy token"}\n${pebbles.map((pebble: { name: string; url: string }) => `${pebble.name}  ${pebble.url}`).join("\n") || "No pebbles yet. Run bedrock new my-app."}`); return; }
+    return { command, daemon: daemon.url, ...value, pebbles };
   }
   if (command === "deploy") {
     if (positionals.length > 1) invalid();
     const dir = resolve(name ?? process.cwd());
     const pebble = await loadPebble(dir);
+    const status = (await (await call(flags, "/api/status")).json()).value;
+    checkDaemonFeatures(pebble, status);
     const temp = await mkdtemp(join(tmpdir(), "bedrock-deploy-"));
     try {
       const archive = join(temp, "pebble.tar.gz");
       await createArchive(dir, archive);
-      const status = (await (await call(flags, "/api/status")).json()).value;
       const first = !status.pebbles.some((record: { name: string }) => record.name === pebble.name);
       const result = await (await call(flags, `/api/deploy?name=${pebble.name}`, { method: "POST", body: Bun.file(archive), headers: { "content-type": "application/gzip" } })).json();
       const domain = status.domain ?? new URL((await connection(flags)).url).hostname.replace(/^bedrock\./, "");

@@ -1,3 +1,5 @@
+import type { BuildInfo } from "../version";
+import { daemonFeatures } from "../features";
 import { tokenHash } from "./db";
 import { validateName } from "../config";
 import { BedrockError, asBedrockError } from "../error";
@@ -15,7 +17,8 @@ export function daemonError(error: unknown) {
     : typed.code === "UPSTREAM_UNAVAILABLE" ? 502 : 500;
   return Response.json({ ok: false, error: typed.toJSON() }, { status });
 }
-export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Supervisor, tunnelStatus = () => ({ running: false, pid: null as number | null }), backups?: ReturnType<typeof import("../backup").createBackups>, config?: import("./config").DaemonConfig) {
+export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Supervisor, tunnelStatus = () => ({ running: false, pid: null as number | null }), backups?: ReturnType<typeof import("../backup").createBackups>, config?: import("./config").DaemonConfig, maintenance?: { info: BuildInfo; update: () => Promise<unknown> }) {
+  const instanceId = crypto.randomUUID();
   return async (request: Request) => {
     const token = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
     if (!token || !db.accepts(token)) throw new BedrockError("UNAUTHORIZED", "A valid deploy token is required.", "Run bedrock login for the remote server, pass a valid --token, or restart the local daemon to restore its admin token.");
@@ -40,12 +43,14 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
     } else if (request.method === "GET" && url.pathname === "/api/pebbles") {
       value = db.list().map(record => ({ ...record, port: supervisor.child(record.name)?.port ?? null, pid: supervisor.child(record.name)?.process.pid ?? null }));
     } else if (request.method === "GET" && url.pathname === "/api/status") {
-      value = { domain: config?.domain, user: db.tokenEmail(token) ?? "server creator token", creatorSignedIn: !!config?.creators.some(email => db.db.query("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.email=? AND s.expires_at>? LIMIT 1").get(email, Date.now())), tunnel: tunnelStatus(), pebbles: await Promise.all(db.list().map(async record => {
+      value = { ...maintenance?.info, instanceId, features: daemonFeatures, domain: config?.domain, user: db.tokenEmail(token) ?? "server creator token", creatorSignedIn: !!config?.creators.some(email => db.db.query("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.email=? AND s.expires_at>? LIMIT 1").get(email, Date.now())), tunnel: tunnelStatus(), pebbles: await Promise.all(db.list().map(async record => {
         const child = supervisor.child(record.name);
         let healthy = false;
         if (child) try { healthy = (await fetch(`http://127.0.0.1:${child.port}/_bedrock/health`, { signal: AbortSignal.timeout(2000) })).ok; } catch {}
         return { name: record.name, status: record.status, healthy };
       })) };
+    } else if (request.method === "POST" && url.pathname === "/api/self-update" && maintenance) {
+      value = await maintenance.update();
     } else if (request.method === "GET" && url.pathname === "/api/tokens") value = db.tokens();
     else if (request.method === "DELETE" && /^\/api\/tokens\/(current|[a-f0-9]{64})$/.test(url.pathname)) {
       const id = url.pathname.split("/").at(-1)!;

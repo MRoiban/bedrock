@@ -21,7 +21,7 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
     add("creators", config.creators.length ? "pass" : "fail", `${config.creators.length} creator(s).`, "Set at least one creator email in config.json.");
     add("google", config.google ? "pass" : "warn", config.google ? "Google OAuth configured." : "Google OAuth is not configured.", "Run bedrock setup google.");
   } else for (const name of ["domain", "creators", "google"]) add(name, "warn", "Skipped: configuration unavailable.", "Repair config.json and retry doctor.", true);
-  let status: { tunnel: { running: boolean }; pebbles: { name: string; status: string; healthy: boolean }[] } | null = null;
+  let status: { features?: string[]; tunnel: { running: boolean }; pebbles: { name: string; status: string; healthy: boolean }[] } | null = null;
   try {
     const state = await Bun.file(join(home, "daemon.json")).json().catch(() => null);
     const port = state?.port ?? config?.port;
@@ -30,6 +30,7 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
     if (!response.ok) throw new Error("daemon unreachable");
     status = (await response.json()).value;
     if (!status || !Array.isArray(status.pebbles)) throw new Error("invalid status");
+    add("daemon-features", status.features?.includes("sockets") && status.features?.includes("services") ? "pass" : "warn", `Daemon features: ${status.features?.join(", ") ?? "not reported (old daemon)"}.`, "Run bedrock self-update --remote to update the server.");
     add("daemon", "pass", "Local daemon is reachable.", "Use bedrock service status to inspect automatic startup.");
   } catch { add("daemon", "fail", "Local daemon is unreachable.", "Run bedrock daemon or bedrock service install."); }
   if (config?.backup) {

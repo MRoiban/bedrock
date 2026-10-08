@@ -111,8 +111,42 @@ install the [official package](https://developers.cloudflare.com/cloudflare-one/
 `--enable-linger` authorizes Linux startup without login. `--skip-sign-in` defers
 only the final browser check; doctor still runs.
 
-`bedrock self-update` pulls the checkout with `git pull --ff-only`, installs updated
-dependencies, and restarts an installed service. Keep the checkout in place.
+## Updating a remote server
+
+After `bedrock login <domain>`, run:
+
+```sh
+bedrock status
+bedrock self-update --remote
+bedrock self-update --remote --json  # machine-readable result and redacted Git/Bun output
+```
+
+Status reports the daemon's boot-time package version, checkout commit/branch and
+dirty state, platform/architecture, Bun version, and supported features. Git fields
+are null for installations outside a checkout. `bedrock --version` reports the
+local CLI's identity. Deploy refuses unsupported sockets, services (including
+plugins), or directory backups before uploading, with an update hint. Doctor warns
+when the local daemon does not advertise sockets/services.
+
+Remote update requires a creator deploy token, an installed daemon service, and a
+clean source checkout. It runs `git pull --ff-only` and `bun install` on the server,
+returns `{ from, to, updated, output }`, then schedules service restart after a
+two-second response-flush delay. The CLI polls for the new daemon boot and target
+commit for up to 120 seconds. Running/restarting pebbles are restored on startup;
+stopped pebbles stay stopped. An already-current checkout is also restarted.
+Untracked files count as dirty. Divergent Git history must be resolved on the
+server. If dependency installation or restart fails, Git may already have advanced;
+inspect the server checkout and service logs before retrying.
+
+Windows uses a CIM-created PowerShell helper outside the Scheduled Task's process
+tree, so the existing `taskkill /T` restart cannot kill its own helper. macOS/Linux
+use a detached Bun helper calling launchctl/systemctl. Windows restart has unit
+coverage with fake launchers; it still needs validation on a real Windows host.
+An older daemon without this endpoint must first be updated on the server via a
+relayed `bedrock self-update` command; remote update cannot bootstrap itself.
+
+`bedrock self-update` updates the local checkout and restarts an installed service.
+Keep the checkout in place.
 
 ## Jobs and live queries
 
