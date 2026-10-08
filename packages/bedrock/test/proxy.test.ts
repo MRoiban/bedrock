@@ -142,3 +142,12 @@ test("proxy stamps release identity, removes spoofed timing entries, and preserv
     expect(await response.text()).toBe("ok");
   } finally { await upstream.stop(true); }
 });
+
+for (const status of [401, 403]) test(`WebSocket proxy preserves bearer admission ${status} instead of a retryable outage`, async () => {
+  const upstream = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => Response.json({ error: { code: status === 401 ? 'UNAUTHENTICATED' : 'FORBIDDEN' } }, { status }) });
+  const proxy = Bun.serve<Relay>({ hostname: '127.0.0.1', port: 0, websocket: relayWebSocket, async fetch(request, server) { try { return await proxyWebSocket(request, server, upstream.port!); } catch (error) { return daemonError(error); } } });
+  try {
+    const response = await fetch(proxy.url, { headers: { upgrade: 'websocket', authorization: 'Bearer brk_revoked' } });
+    expect(response.status).toBe(status); expect((await response.json()).error.code).toBe(status === 401 ? 'UNAUTHENTICATED' : 'FORBIDDEN');
+  } finally { await proxy.stop(true); await upstream.stop(true); }
+});

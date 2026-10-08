@@ -159,7 +159,21 @@ export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>
     });
     if (!upgraded) { upstream.close(); return new Response("WebSocket upgrade failed", { status: 400 }); }
     return undefined;
-  } catch (error) { upstream.close(); throw error; }
+  } catch (error) {
+    upstream.close();
+    // Bun's WebSocket error hides the rejected upgrade's HTTP status. A plain
+    // GET on a registered socket performs the same admission check without
+    // opening a socket, preserving bearer denial for native reconnect clients.
+    if (headers.get("authorization")?.startsWith("Bearer brk_")) {
+      try {
+        const check = new URL(url); check.protocol = "http:";
+        const response = await fetch(check, { headers, signal: AbortSignal.timeout(2500), redirect: "manual" });
+        if (response.status === 401 || response.status === 403) return response;
+        await response.body?.cancel();
+      } catch { /* Preserve the original connection failure when admission is unavailable. */ }
+    }
+    throw error;
+  }
   finally { clearTimeout(timer); }
 }
 
