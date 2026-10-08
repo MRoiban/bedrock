@@ -7,6 +7,7 @@ export function enforceAccess(access: Access = "public", user: User | null, crea
   const email = user.email?.toLowerCase() ?? "";
   const allowed = access === "users" || (access === "creators"
     ? creators.some(entry => entry.toLowerCase() === email)
-    : access.allow.some(entry => entry.startsWith("@") ? email.endsWith(entry.toLowerCase()) : email === entry.toLowerCase()));
+    // "creators" in an allow-list admits the server's configured creators alongside listed emails/domains.
+    : access.allow.some(entry => entry === "creators" ? creators.some(creator => creator.toLowerCase() === email) : entry.startsWith("@") ? email.endsWith(entry.toLowerCase()) : email === entry.toLowerCase()));
   if (!allowed) throw new BedrockError("FORBIDDEN", "This account cannot access the pebble.", "Sign in with an email permitted by the pebble's access policy.");
 }

@@ -73,7 +73,7 @@ HTML; `init <name> [--template react]` scaffolds in the current empty directory.
 | Field | Meaning |
 | --- | --- |
 | `name` | 1–32 lowercase letters, digits, hyphens; `auth`, `bedrock`, `www` reserved |
-| `access` | `"public"` (default), `"users"`, `"creators"`, or `{ allow: ["a@x.com", "@company.com"] }` |
+| `access` | `"public"` (default), `"users"`, `"creators"`, or `{ allow: ["a@x.com", "@company.com", "creators"] }` (`"creators"` admits the server's creators) |
 | `schema` | Named Drizzle SQLite tables; `_bedrock_` SQL names reserved |
 | `queries`, `mutations` | Maps of named `query(...)` / `mutation(...)` definitions |
 | `storage` | Array of standalone registered bucket objects |

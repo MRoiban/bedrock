@@ -26,7 +26,7 @@ test("daemon discovers access at health check and enforces every policy before c
     return callback.headers.getSetCookie().find(cookie => cookie.startsWith("bedrock_session="))!.split(";")[0]!;
   };
   try {
-    for (const [name, access] of Object.entries({ open: "public", members: "users", makers: "creators", team: { allow: ["@company.test", "guest@other.test"] } })) {
+    for (const [name, access] of Object.entries({ open: "public", members: "users", makers: "creators", team: { allow: ["@company.test", "guest@other.test"] }, crew: { allow: ["creators", "guest@other.test"] } })) {
       const dir = join(temp.dir, name);
       await Bun.write(join(dir, "pebble.ts"), `import { definePebble, query, detached } from "bedrock";
 export default definePebble({ name: "${name}", access: ${JSON.stringify(access)},
@@ -52,6 +52,9 @@ routes: { "GET /page": () => new Response("permitted"), "GET /detached": detache
     expect((await request("team.example.test", "/page", { headers: { cookie: member } })).status).toBe(200);
     expect((await request("team.example.test", "/page", { headers: { cookie: guest } })).status).toBe(200);
     expect((await request("team.example.test", "/page", { headers: { cookie: creator } })).status).toBe(403);
+    expect((await request("crew.example.test", "/page", { headers: { cookie: creator } })).status).toBe(200);
+    expect((await request("crew.example.test", "/page", { headers: { cookie: guest } })).status).toBe(200);
+    expect((await request("crew.example.test", "/page", { headers: { cookie: member, accept: "text/html" } })).status).toBe(403);
     for (const [name, cookie, status] of [
       ["open", "", 200], ["members", "", 401], ["members", guest, 200],
       ["makers", creator, 200], ["makers", member, 403],

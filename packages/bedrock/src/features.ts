@@ -1,7 +1,7 @@
 import type { PebbleConfig } from "./config";
 import { BedrockError } from "./error";
 
-export const daemonFeatures = ["sockets", "services", "directory-backups", "chunked-uploads", "chunked-uploads-cancel"];
+export const daemonFeatures = ["sockets", "services", "directory-backups", "chunked-uploads", "chunked-uploads-cancel", "access-allow-creators"];
 export function requiredFeatures(pebble: PebbleConfig): string[] {
   const required = new Set<string>();
   for (const config of [pebble, ...(pebble.plugins ?? [])]) {
@@ -9,6 +9,7 @@ export function requiredFeatures(pebble: PebbleConfig): string[] {
     if (Object.keys(config.services ?? {}).length) required.add("services");
   }
   if (pebble.backup?.directories?.length) required.add("directory-backups");
+  if (typeof pebble.access === "object" && pebble.access.allow.includes("creators")) required.add("access-allow-creators");
   return [...required];
 }
 export function checkDaemonFeatures(pebble: PebbleConfig, status: { features?: string[] }) {
