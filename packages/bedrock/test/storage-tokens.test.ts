@@ -31,11 +31,12 @@ test('storage tokens enforce upload/read/delete permissions on every single and 
     const start = await f.call(upload.token, '/uploads', 'POST', startBody);
     expect(start.status).toBe(201);
     const { uploadId } = await start.json(), path = `/uploads/${uploadId}`;
-    for (const [suffix, method, body] of [['/0', 'PUT', 'hello'], ['', 'GET', undefined], ['/complete', 'POST', undefined]] as const) {
+    for (const [suffix, method, body] of [['/0', 'PUT', 'hello'], ['', 'GET', undefined], ['', 'DELETE', undefined], ['/complete', 'POST', undefined]] as const) {
       const denied = await f.call(read.token, path + suffix, method, body);
       expect(denied.status).toBe(403);
       expect((await denied.json()).error.hint).toContain('files:assets:upload');
     }
+    expect((await f.call(del.token, path, 'DELETE')).status).toBe(403);
     expect((await f.call(upload.token, path + '/0', 'PUT', 'hello')).status).toBe(204);
     expect((await (await f.call(upload.token, path)).json()).received).toEqual([0]);
     const complete = await f.call(upload.token, path + '/complete', 'POST');

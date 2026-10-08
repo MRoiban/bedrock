@@ -76,6 +76,10 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
             return upload;
           });
           const upload = result.value as Awaited<ReturnType<typeof uploads.load>>;
+          if (method === 'DELETE' && parts.length === 3) {
+            await uploads.remove(uploadId);
+            return new Response(null, { status: 204 });
+          }
           if (method === 'GET' && parts.length === 3) return Response.json(await uploads.status(uploadId, upload));
           if (action === 'complete' && method === 'POST' && parts.length === 4) {
             const input = request.body ? await request.json() : {};

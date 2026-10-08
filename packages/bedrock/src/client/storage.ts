@@ -25,11 +25,21 @@ export function storageClient(base: URL, options: ClientOptions, isClosed: () =>
       return result;
     } catch (error) { throw asBedrockError(error, 'UPLOAD_FAILED', 'Check your connection and retry the file request.'); }
   }
+  async function cancelUpload(bucket: string, uploadId: string) {
+    try {
+      await send(`/_bedrock/files/${encodeURIComponent(bucket)}/uploads/${encodeURIComponent(uploadId)}`, 'DELETE', undefined, AbortSignal.timeout(10000));
+    } catch (error) {
+      // Already completed, cancelled or expired uploads have nothing left to remove.
+      if (!(error instanceof BedrockError) || error.code !== 'UPLOAD_NOT_FOUND') throw error;
+    }
+  }
   return {
     fileUrl,
+    cancelUpload,
     async deleteFile(bucket: string, id: string) { await send(fileUrl(bucket, id), 'DELETE'); },
     async upload(bucket: string, file: File, uploadOptions: UploadOptions = {}): Promise<FileMetadata> {
       uploading(1);
+      let knownUploadId = uploadOptions.uploadId;
       try {
         const { onProgress, signal, meta, onUploadId } = uploadOptions;
         let encodedMeta: string | undefined;
@@ -55,11 +65,11 @@ export function storageClient(base: URL, options: ClientOptions, isClosed: () =>
             const status = await send(`${path}/uploads/${uploadId}`, 'GET', undefined, signal);
             if (status.size !== file.size) throw new BedrockError('UPLOAD_PROTOCOL', 'Resume file size differs from the upload.', 'Select the original file.');
             chunkSize = status.chunkSize; received = status.received;
-          } catch (error) { if (!(error instanceof BedrockError) || error.code !== 'UPLOAD_NOT_FOUND') throw error; uploadId = undefined; }
+          } catch (error) { if (!(error instanceof BedrockError) || error.code !== 'UPLOAD_NOT_FOUND') throw error; uploadId = undefined; knownUploadId = undefined; }
         }
         if (!uploadId) {
           const started = await send(`${path}/uploads`, 'POST', JSON.stringify({ name: file.name, mime: file.type || 'application/octet-stream', size: file.size, meta }), signal, { 'content-type': 'application/json' });
-          uploadId = started.uploadId; chunkSize = started.chunkSize;
+          uploadId = started.uploadId; knownUploadId = uploadId; chunkSize = started.chunkSize;
         }
         onUploadId?.(uploadId!);
         const hash = new Sha256();
@@ -78,6 +88,13 @@ export function storageClient(base: URL, options: ClientOptions, isClosed: () =>
           report(offset + chunk.size);
         }
         return await send(`${path}/uploads/${uploadId}/complete`, 'POST', JSON.stringify({ sha256: hash.digest() }), signal, { 'content-type': 'application/json' });
+      } catch (error) {
+        if (uploadOptions.signal?.aborted && knownUploadId) {
+          // Cleanup has its own signal: the aborted transfer signal cannot send DELETE.
+          // Offline cleanup is best effort; retain the original upload error.
+          await cancelUpload(bucket, knownUploadId).catch(() => {});
+        }
+        throw error;
       } finally { uploading(-1); }
     },
   };

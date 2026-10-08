@@ -24,6 +24,7 @@ export interface Client<P extends PebbleConfig = PebbleConfig> {
   logout(): Promise<void>;
   upload(bucket: import("../config/types").BucketNames<P>, file: File, options?: import("./storage").UploadOptions): Promise<import("../config/types").FileMetadata>;
   fileUrl(bucket: import("../config/types").BucketNames<P>, id: string): string;
+  cancelUpload(bucket: import("../config/types").BucketNames<P>, uploadId: string): Promise<void>;
   deleteFile(bucket: import("../config/types").BucketNames<P>, id: string): Promise<void>;
   release(): import("./release").Release;
   onRelease(fn: (release: import("./release").Release) => void): () => void;

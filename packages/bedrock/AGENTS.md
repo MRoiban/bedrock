@@ -336,7 +336,7 @@ Tokens and upload hooks compose: a ShareX-style upload route can use a pebble
 token granting `files:assets:upload`, while `admit` and `onStored` record
 `ctx.token.id` with the uploaded file. Staged uploads retain the same user and
 token across authorization and commit slots; every slot checks permissions.
-Chunk status (`GET .../uploads/<uid>`) requires upload permission too.
+Chunk status (`GET .../uploads/<uid>`) and cancellation (`DELETE .../uploads/<uid>`) require upload permission too, rather than file delete permission.
 Token clients omit cookies on fetch and XHR; browser session uploads retain them.
 
 For example, with an app-defined `used(db, ownerId)` performing `SUM(size)`,
@@ -377,7 +377,14 @@ Chunk protocol: `POST .../uploads` with `{ name, mime?, size, sha256?, meta? }`
 returns `{ uploadId, chunkSize }`. `PUT .../uploads/<uid>/<n>` sends sequential
 32 MiB chunks (last may be shorter); replacement is atomic. `GET .../uploads/<uid>`
 returns `{ uploadId, size, chunkSize, received: number[] }`, listing only complete
-chunks, with the same user/bucket authorization. `POST .../uploads/<uid>/complete`
+chunks, with the same user/bucket authorization. `DELETE .../uploads/<uid>`
+uses that same authorization, waits for active chunk writes through the per-upload
+serialization lock, and removes the manifest and all chunk files. Success is 204;
+a repeat, expired handle, or already-completed upload returns 404
+`UPLOAD_NOT_FOUND`. Completion and cancellation share the lock: if completion wins,
+the committed file remains; if cancellation wins, completion returns 404 and no
+file is created. Cancellation never removes completed files or another user's
+upload. `POST .../uploads/<uid>/complete`
 accepts no body or `{ sha256 }`. Digests are lowercase hex SHA-256; if declared at
 start or completion, each must match the assembled bytes or completion throws
 `UPLOAD_CHECKSUM_MISMATCH`. Size is always verified. Upload state expires after
@@ -570,7 +577,14 @@ sync, subscriptions poll every 5 seconds (`pollInterval: 0` disables polling). C
 with backoff; uncertain mutations are never automatically replayed. Upload options
 include `onProgress` (0–1), `signal`, `meta`, `uploadId`, and `onUploadId`.
 Browsers report byte progress via XHR; Bun uses fetch boundary progress. Chunked
-uploads hash incrementally and resume missing chunks with a saved upload id. Client methods take bucket **names**, not
+uploads hash incrementally and resume missing chunks with a saved upload id.
+`client.cancelUpload(bucket, uploadId)` explicitly removes an unfinished upload,
+accepting `UPLOAD_NOT_FOUND` as already gone for safe retries. An explicit signal
+abort with a known upload id sends cancellation using a separate, non-aborted
+signal (10-second timeout); cleanup failures preserve the original transfer error.
+If offline, retry cancelUpload with the saved id later. Transient request failures
+preserve manifests/chunks for resume and never automatically cancel. A completion
+that won the cancellation race remains a completed file. Client methods take bucket **names**, not
 server objects. `user()` returns User|null, `loginUrl(returnTo?)` gives a login URL,
 `logout()` signs out. Use ordinary browser cookies, not signed identity headers.
 
@@ -773,7 +787,7 @@ there is no live daemon identity restore command.
 
 Status reports boot-time `{ version, commit, branch, dirty, platform, arch, bun }`,
 `instanceId` (new per daemon boot), and `features`: sockets, services,
-directory-backups, chunked-uploads. Human status prints this beside the daemon URL;
+directory-backups, chunked-uploads, chunked-uploads-cancel. Human status prints this beside the daemon URL;
 JSON includes all fields. Deploy checks sockets/services in the pebble and plugins
 and directory backups before archiving/upload; absent features mean an old daemon.
 Doctor warns on a local daemon missing sockets/services.

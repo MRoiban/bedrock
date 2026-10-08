@@ -129,3 +129,52 @@ for (const token of [undefined, 'brk_test']) test(`fetch upload and resume prese
     expect(calls.slice(-3)).toEqual(['POST /_bedrock/files/assets/uploads', 'PUT /_bedrock/files/assets/uploads/new/0', 'POST /_bedrock/files/assets/uploads/new/complete']);
   } finally { globalThis.fetch = original; globalThis.XMLHttpRequest = originalXHR; }
 });
+
+for (const token of [undefined, 'brk_test']) test(`explicit abort cancels a known upload using a fresh signal and ${token ? 'token' : 'session'} auth`, async () => {
+  const original = globalThis.fetch, originalXHR = globalThis.XMLHttpRequest;
+  globalThis.XMLHttpRequest = undefined as unknown as typeof XMLHttpRequest;
+  const controller = new AbortController();
+  const methods: string[] = [];
+  let entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  globalThis.fetch = (async (_input: URL, init: RequestInit) => {
+    methods.push(init.method!);
+    expect(new Headers(init.headers).get('authorization')).toBe(token ? `Bearer ${token}` : null);
+    expect(init.credentials).toBe(token ? 'omit' : 'include');
+    if (init.method === 'GET') return Response.json({ size: 5, chunkSize: 32 * 1024 ** 2, received: [] });
+    if (init.method === 'PUT') {
+      entered();
+      return await new Promise<Response>((_, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true }));
+    }
+    expect(init.method).toBe('DELETE');
+    expect(init.signal).not.toBe(controller.signal);
+    expect(init.signal!.aborted).toBe(false);
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+  try {
+    const client = storageClient(new URL('http://pebble.test'), token ? { token } : {}, () => false);
+    const pending = client.upload('assets', new File(['hello'], 'hello'), { uploadId: 'saved', signal: controller.signal });
+    await ready;
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: 'UPLOAD_FAILED' });
+    expect(methods).toEqual(['GET', 'PUT', 'DELETE']);
+  } finally { globalThis.fetch = original; globalThis.XMLHttpRequest = originalXHR; }
+});
+
+test('abort cleanup errors preserve the original transfer error and explicit cancellation remains retryable', async () => {
+  const original = globalThis.fetch;
+  const controller = new AbortController();
+  controller.abort(new Error('explicit abort'));
+  let attempts = 0;
+  globalThis.fetch = (async (_input: URL, init: RequestInit) => {
+    expect(init.method).toBe('DELETE');
+    if (++attempts === 1) throw new Error('offline cleanup');
+    return Response.json({ error: { code: 'UPLOAD_NOT_FOUND', message: 'gone', hint: 'gone' } }, { status: 404 });
+  }) as typeof fetch;
+  try {
+    const client = storageClient(new URL('http://pebble.test'), {}, () => false);
+    await expect(client.upload('assets', new File(['hello'], 'hello'), { uploadId: 'saved', signal: controller.signal })).rejects.toThrow('explicit abort');
+    await client.cancelUpload('assets', 'saved');
+    expect(attempts).toBe(2);
+  } finally { globalThis.fetch = original; }
+});
