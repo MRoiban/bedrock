@@ -152,3 +152,19 @@ test("repeated fast failures become crashed and stop cancels automatic restarts"
     expect((await h.list())[0]!.status).toBe("stopped");
   } finally { await h.cleanup(); }
 }, 25000);
+
+test("dev-auth daemon keeps deployed service data outside release directories across redeploy", async () => {
+  const h = await harness(true);
+  try {
+    const dir = join(h.temp.dir, "service-data"); await mkdir(dir);
+    await Bun.write(join(dir, 'package.json'), JSON.stringify({ name: 'service-data', type: 'module', dependencies: { bedrock: '*' } }));
+    await Bun.write(join(dir, 'pebble.ts'), `import { definePebble, service } from "bedrock";
+import { join } from "node:path";
+export default definePebble({name:"sample",access:"public",services:{data:service({async start(ctx){const file=join(ctx.dataDir,"persisted.txt");if(!await Bun.file(file).exists())await Bun.write(file,crypto.randomUUID());return {dir:ctx.dataDir,value:await Bun.file(file).text()};}})},routes:{"GET /data":(_r,_s,ctx)=>Response.json(ctx.services.data)}});`);
+    expect((await h.deploy('sample', dir)).status).toBe(200);
+    const first = await (await h.request('sample.localhost', '/data')).json();
+    expect(first.dir).toBe(join(h.home, 'pebbles/sample/data'));
+    expect((await h.deploy('sample', dir)).status).toBe(200);
+    expect(await (await h.request('sample.localhost', '/data')).json()).toEqual(first);
+  } finally { await h.cleanup(); }
+}, 30000);

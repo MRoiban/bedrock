@@ -110,7 +110,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
     });
     if (options.devPebble) {
       if (!dev) throw new BedrockError("INVALID_DEV_DOMAIN", "A dev pebble requires development mode.", "Use bedrock dev.");
-      const child = await supervisor.launch(options.devPebble.name, options.devPebble.dir);
+      const child = await supervisor.launch(options.devPebble.name, options.devPebble.dir, true);
       supervisor.activate(options.devPebble.name, child);
     } else await supervisor.restore();
     await atomicWrite(join(home, "daemon.json"), JSON.stringify({ port: server.port, domain: config.domain }) + "\n");

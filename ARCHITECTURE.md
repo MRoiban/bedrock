@@ -146,6 +146,9 @@ authorization is **per pebble**.
   - `{ allow: ["a@x.com", "@company.com"] }` — emails or whole domains.
   - `"creators"` — only the bedrock creators list (from daemon config).
 - Unauthenticated page requests to a protected pebble redirect to `auth.<domain>/login?return=...`; API/WS requests get 401.
+- A localhost daemon may use dev email authentication while accepting deployments.
+  Deployed releases retain data under the daemon home across redeploy/restart;
+  only an explicitly attached dev source uses its source-local `.bedrock` directory.
 - **Dev mode** (`bedrock dev`): no Google. A local login page lets you pick any email. Agents must be able to test auth flows without credentials.
 
 ### Pebble tokens

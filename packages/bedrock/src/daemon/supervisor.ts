@@ -15,6 +15,7 @@ export interface Child {
   reading: Promise<unknown>;
   requests: number;
   stopTimeout?: number;
+  devSource?: boolean;
   access: Access;
 }
 interface State { child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number }
@@ -60,7 +61,7 @@ export class Supervisor {
     if (!state) { state = { failures: 0, generation: 0 }; this.states.set(name, state); }
     return state;
   }
-  async launch(name: string, release: string): Promise<Child> {
+  async launch(name: string, release: string, devSource = false): Promise<Child> {
     const started = Date.now();
     const releaseId = basename(release) + (this.dev ? `-${started}` : "");
     const record = this.db.get(name);
@@ -73,8 +74,8 @@ export class Supervisor {
       cwd: release, stdin: "ignore", stdout: "pipe", stderr: "pipe",
       env: { ...process.env, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
         BEDROCK_RELEASE_ID: releaseId, BEDROCK_PREVIOUS_RELEASE: previous ? resolve(previous) : "",
-        BEDROCK_DEV: this.dev ? "1" : "0",
-        BEDROCK_DATA: this.dev ? join(release, ".bedrock") : join(this.home, "pebbles", name, "data"), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) },
+        BEDROCK_DEV: devSource ? "1" : "0",
+        BEDROCK_DATA: devSource ? join(release, ".bedrock") : join(this.home, "pebbles", name, "data"), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) },
       ipc(message: unknown) {
         const value = message as { op?: string; name: string; port: number; stopTimeout?: number; error?: { code: string; message: string; hint: string } };
         if (Number.isSafeInteger(value.stopTimeout) && value.stopTimeout! >= DEFAULT_SERVICE_STOP_TIMEOUT && value.stopTimeout! <= MAX_SERVICE_STOP_TIMEOUT) child.stopTimeout = value.stopTimeout!;
@@ -86,7 +87,7 @@ export class Supervisor {
     const reading = Promise.all([logs.pump(processChild.stdout), logs.pump(processChild.stderr)]);
     // Observe pipe failures immediately; the child is also reaped on every failure path.
     void reading.catch(() => {});
-    const child: Child = { process: processChild, port: 0, release, releaseId, started, reading, requests: 0, access: "users" };
+    const child: Child = { process: processChild, port: 0, release, releaseId, devSource, started, reading, requests: 0, access: "users" };
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const value = await Promise.race([
@@ -128,8 +129,8 @@ export class Supervisor {
     const generation = state.generation;
     state.timer = setTimeout(() => {
       delete state.timer;
-      const work = this.launch(name, child.release).then(next => {
-        if (this.stopping || state.generation !== generation || (!this.dev && this.db.get(name)?.status !== "restarting")) return stopChild(next);
+      const work = this.launch(name, child.release, child.devSource).then(next => {
+        if (this.stopping || state.generation !== generation || (!child.devSource && this.db.get(name)?.status !== "restarting")) return stopChild(next);
         this.activate(name, next, false);
         this.db.status(name, "running");
       }).catch(error => {
