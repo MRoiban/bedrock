@@ -1,3 +1,5 @@
+import { createSecrets } from "./secrets";
+import type { User } from "../config";
 import { DEFAULT_SERVICE_STOP_TIMEOUT, MAX_SERVICE_STOP_TIMEOUT } from "../config/hosting";
 import { signIdentity, deriveIdentitySecret } from "../auth/identity";
 import { basename, join, resolve } from "node:path";
@@ -35,6 +37,8 @@ export async function retireChild(child: Child) {
 }
 
 export class Supervisor {
+  apiUrl = "";
+  private serviceRequests = new Map<string, { resolve: (value: unknown) => void; reject: (error: unknown) => void }>();
   private states = new Map<string, State>();
   private loggers = new Map<string, PebbleLogs>();
   private stopping = false;
@@ -55,6 +59,20 @@ export class Supervisor {
     if (!body.ok) throw new BedrockError(body.error.code, body.error.message, body.error.hint);
     return body.value;
   }
+  async serviceTokens(name: string, user: User, input?: unknown, id?: string) {
+    const child = this.child(name);
+    if (!child) throw new BedrockError("PEBBLE_STOPPED", `${name} is not running.`, "Start the pebble before managing service tokens.");
+    const requestId = crypto.randomUUID();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const response = new Promise<unknown>((resolve, reject) => {
+      this.serviceRequests.set(requestId, { resolve, reject });
+      timer = setTimeout(() => reject(new BedrockError("SERVICE_TOKEN_TIMEOUT", "Service token operation timed out.", "Check pebble logs and retry; a timed-out creation may have committed.")), 15000);
+    });
+    try {
+      child.process.send({ op: "service-token", requestId, user, input, id });
+      return await Promise.race([response, child.process.exited.then(() => { throw new BedrockError("PEBBLE_STOPPED", "The pebble stopped during token management.", "Start the pebble and retry."); })]);
+    } finally { clearTimeout(timer); this.serviceRequests.delete(requestId); }
+  }
   child(name: string) { return this.states.get(name)?.child; }
   private state(name: string) {
     let state = this.states.get(name);
@@ -70,17 +88,26 @@ export class Supervisor {
     let ready!: (value: { name: string; port: number; stopTimeout?: number }) => void;
     let failed!: (error: unknown) => void;
     const readiness = new Promise<{ name: string; port: number; stopTimeout?: number }>((resolve, reject) => { ready = resolve; failed = reject; });
+    const secretEnv = await createSecrets(this.home).env(name);
+    logs.protect(Object.values(secretEnv));
+    const requests = this.serviceRequests;
     const processChild = Bun.spawn([process.execPath, join(import.meta.dir, "../runtime/child.ts")], {
       cwd: release, stdin: "ignore", stdout: "pipe", stderr: "pipe",
-      env: { ...process.env, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
+      env: { ...process.env, ...secretEnv, BEDROCK_API_URL: this.apiUrl, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
         BEDROCK_RELEASE_ID: releaseId, BEDROCK_PREVIOUS_RELEASE: previous ? resolve(previous) : "",
         BEDROCK_DEV: devSource ? "1" : "0",
         BEDROCK_DATA: devSource ? join(release, ".bedrock") : join(this.home, "pebbles", name, "data"), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) },
       ipc(message: unknown) {
-        const value = message as { op?: string; name: string; port: number; stopTimeout?: number; error?: { code: string; message: string; hint: string } };
+        const value = message as { requestId?: string; value?: unknown; op?: string; name: string; port: number; stopTimeout?: number; error?: { code: string; message: string; hint: string } };
+        if (value.op === "service-token-result" && value.requestId) {
+          const pending = requests.get(value.requestId);
+          if (value.error) pending?.reject(new BedrockError(value.error.code, logs.redact(value.error.message), logs.redact(value.error.hint)));
+          else pending?.resolve(value.value);
+          return;
+        }
         if (Number.isSafeInteger(value.stopTimeout) && value.stopTimeout! >= DEFAULT_SERVICE_STOP_TIMEOUT && value.stopTimeout! <= MAX_SERVICE_STOP_TIMEOUT) child.stopTimeout = value.stopTimeout!;
         if (value.op === "stop-budget") return;
-        if (value.error) failed(new BedrockError(value.error.code, value.error.message, value.error.hint));
+        if (value.error) failed(new BedrockError(value.error.code, logs.redact(value.error.message), logs.redact(value.error.hint)));
         else ready(value);
       },
     });

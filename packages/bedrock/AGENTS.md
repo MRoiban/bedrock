@@ -187,7 +187,7 @@ not slide the 30-day session expiry.
 
 Creators and their code are trusted. Pebbles have no OS isolation and can access
 server files as the daemon user. Security boundaries protect against end users
-and the internet, not hostile creators. Deploy tokens grant full daemon management.
+and the internet, not hostile creators. Unscoped deploy tokens grant full daemon management; scoped tokens grant only named actions on matching pebble globs.
 
 
 ### Pebble tokens for native clients
@@ -845,3 +845,40 @@ returns value/read/write sets. `startDaemon({ home: temporaryHome })` comes from
 - Testing against ~/.bedrock or real Cloudflare/R2. Use temp directories and mocks.
 
 Custom HTTP routes may set `definePebble({ maxRequestBodySize: bytes })` (positive integer, default 90 MiB, maximum 1 TiB). The daemon ceiling is 1 TiB and forwards request bodies as streams; custom routes must stream them to bound memory. Storage bucket limits remain separate. Application sockets retain the original URL and headers before upgrade, including on Bun 1.2.
+
+### Secrets, scoped deploy tokens and service tokens
+
+```sh
+bedrock secrets ls upty --json
+printf '%s' "$DISCORD_TOKEN" | bedrock secrets set upty DISCORD_TOKEN --restart
+bedrock secrets unset upty DISCORD_TOKEN --restart
+bedrock token create --name manager --pebbles "upty,bot-*" --actions deploy,lifecycle,logs,secrets,status,service-tokens --json
+```
+
+GET/PUT `/api/pebbles/:name/secrets` return `{ secrets: [{ name, updatedAt }] }`
+without values. PUT accepts `{ set?: Record<string,string>, unset?: string[],
+restart?: boolean }`, even before first deploy (restart requires a deployment).
+Names match `^[A-Z][A-Z0-9_]{0,63}$`; runtime and OS environment controls are
+reserved. Values come from stdin or a hidden prompt, never CLI argv. Secrets are
+private `$BEDROCK_HOME/pebbles/<name>/secrets.json`, outside releases/data and
+excluded from DB/directory backups; back up credentials separately. Every launch
+receives them in its environment and receives `BEDROCK_API_URL` pointing to the
+loopback daemon API. Restart checks replacement health before retiring the old
+child; a failed restart leaves the secret update saved.
+
+POST `/api/tokens` optionally accepts `{ name, scope: { pebbles: ["upty", "bot-*"],
+actions: ["deploy", "lifecycle", "logs", "secrets", "status", "service-tokens"] } }`.
+Scoped tokens cannot manage tokens, self-update, backups, jobs, host/config, or
+unmatched pebbles (403 `FORBIDDEN`). Status/list endpoints filter matching pebbles.
+`token ls` shows scope; unscoped tokens retain full access.
+
+POST `/api/pebbles/:name/service-tokens` with `{ name, permissions: string[] }`
+returns `{ id, token }` directly; DELETE the same path plus `/:id` returns
+`{ revoked: true }`. Target must be running with `tokens: true`. Tokens are
+ordinary pebble `brk_` tokens owned by the calling deploy token's creator, minted
+through child IPC in an executor mutation slot with `ctx.tokens.create` permission
+validation. Ownerless local/legacy tokens get 403 `TOKEN_OWNER_REQUIRED`: use a
+creator login token to create the scoped deploy token. `TOKENS_DISABLED` and
+`PEBBLE_STOPPED` return 409; `INVALID_TOKEN_PERMISSION` returns 400. These new
+endpoints return direct objects, while existing daemon endpoints retain
+`{ ok: true, value }`; errors retain `{ ok: false, error: { code, message, hint } }`.

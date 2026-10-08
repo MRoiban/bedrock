@@ -3,6 +3,14 @@ import { join } from "node:path";
 
 export class PebbleLogs {
   readonly path: string;
+  private secrets = new Set<string>();
+  protect(values: string[]) {
+    for (const value of values) if (value) { this.secrets.add(value); this.secrets.add(JSON.stringify(value).slice(1, -1)); }
+  }
+  redact(value: string) {
+    for (const secret of [...this.secrets].sort((a, b) => b.length - a.length)) value = value.replaceAll(secret, "[REDACTED]");
+    return value;
+  }
   private listeners = new Set<(chunk: Uint8Array) => void>();
   private followers = new Set<() => void>();
   constructor(home: string, name: string, private limit = 10 * 1024 * 1024, directory?: string, filename = "pebble.log") {
@@ -11,6 +19,7 @@ export class PebbleLogs {
     this.path = join(dir, filename);
   }
   write(chunk: Uint8Array) {
+    if (this.secrets.size) chunk = new TextEncoder().encode(this.redact(new TextDecoder().decode(chunk)));
     // Split oversized chunks so a noisy child cannot bypass rotation.
     for (let offset = 0; offset < chunk.length; offset += this.limit) {
       const part = chunk.subarray(offset, offset + this.limit);
@@ -26,7 +35,23 @@ export class PebbleLogs {
     }
   }
   async pump(stream: ReadableStream<Uint8Array>) {
-    for await (const chunk of stream) this.write(chunk);
+    const decoder = new TextDecoder();
+    let pending = "";
+    for await (const chunk of stream) {
+      if (!this.secrets.size) { this.write(chunk); continue; }
+      pending += decoder.decode(chunk, { stream: true });
+      pending = this.redact(pending);
+      let boundary = pending.length;
+      // Only retain a suffix that could become a secret in the next pipe chunk.
+      for (const secret of this.secrets) {
+        for (let length = Math.min(secret.length - 1, pending.length); length > 0; length--) {
+          if (pending.endsWith(secret.slice(0, length))) { boundary = Math.min(boundary, pending.length - length); break; }
+        }
+      }
+      if (boundary) { this.write(new TextEncoder().encode(pending.slice(0, boundary))); pending = pending.slice(boundary); }
+    }
+    pending += decoder.decode();
+    if (pending) this.write(new TextEncoder().encode(pending));
   }
   tail(lines = 100) {
     if (!existsSync(this.path)) return "";
@@ -35,7 +60,7 @@ export class PebbleLogs {
       const size = fstatSync(fd).size;
       const buffer = Buffer.alloc(Math.min(size, 256 * 1024));
       readSync(fd, buffer, 0, buffer.length, Math.max(0, size - buffer.length));
-      return buffer.toString("utf8").split("\n").slice(-lines - 1).join("\n");
+      return this.redact(buffer.toString("utf8")).split("\n").slice(-lines - 1).join("\n");
     } finally { closeSync(fd); }
   }
   async response(follow: boolean, signal: AbortSignal) {

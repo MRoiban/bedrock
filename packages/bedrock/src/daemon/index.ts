@@ -67,7 +67,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           const target = hostTarget(host, config.domain);
           const url = new URL(request.url);
           const origin = `${dev || host.split(":")[0]!.endsWith(".localhost") ? "http" : "https"}://${host}`;
-          if (target === "bedrock") {
+          if (target === "bedrock" || host.split(":")[0] === "127.0.0.1" && url.pathname.startsWith("/api/")) {
             if (request.method === "GET" && url.pathname === "/") return dashboard(request, origin, config, db, sessions, dev);
             if (request.method === "POST" && url.pathname === "/sign-out") return signOut(auth.logout(request, origin));
             if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
@@ -122,6 +122,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       },
       error: daemonError,
     });
+    supervisor.apiUrl = `http://127.0.0.1:${server.port}`;
     if (options.devPebble) {
       if (!dev) throw new BedrockError("INVALID_DEV_DOMAIN", "A dev pebble requires development mode.", "Use bedrock dev.");
       const child = await supervisor.launch(options.devPebble.name, options.devPebble.dir, true);

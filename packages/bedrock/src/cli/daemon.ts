@@ -17,7 +17,7 @@ function parse(args: string[], hint: string) {
     const arg = args[i]!;
     if (["--yes", "--force", "--no-open", "-f"].includes(arg)) flags[arg] = "true";
     else if (arg.startsWith("--")) {
-      if (!["--port", "--url", "--token"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, hint);
+      if (!["--port", "--url", "--token", "--name", "--pebbles", "--actions"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, hint);
       flags[arg] = args[++i]!;
     } else positionals.push(arg);
   }
@@ -71,13 +71,13 @@ export async function daemonCommand(command: string, args: string[], json: boole
   const usage: Record<string, string> = {
     daemon: "[--port <port>]", deploy: "[dir] [--no-open]", ls: "", logs: "<name> [-f]",
     start: "<name>", stop: "<name>", restart: "<name>", rollback: "<name> [--force]",
-    rm: "<name> --yes", token: "create|ls|revoke <id>", whoami: "", status: "",
+    rm: "<name> --yes", token: "create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id>", whoami: "", status: "",
   };
   const hint = `Use bedrock ${command}${usage[command] ? ` ${usage[command]}` : ""}${command === "daemon" ? "" : " [--url <url>] [--token <token>]"} [--json].`;
   const { positionals, flags } = parse(args, hint);
   const name = positionals[0];
   const invalid = () => { throw new BedrockError("INVALID_ARGS", `Invalid arguments for ${command}.`, hint); };
-  const allowed = command === "rollback" ? ["--url", "--token", "--force"] : command === "daemon" ? ["--port"] : command === "deploy" ? ["--url", "--token", "--no-open"] : command === "logs" ? ["--url", "--token", "-f"] : command === "rm" ? ["--url", "--token", "--yes"] : ["--url", "--token"];
+  const allowed = command === "rollback" ? ["--url", "--token", "--force"] : command === "daemon" ? ["--port"] : command === "deploy" ? ["--url", "--token", "--no-open"] : command === "logs" ? ["--url", "--token", "-f"] : command === "rm" ? ["--url", "--token", "--yes"] : command === "token" ? ["--url", "--token", "--name", "--pebbles", "--actions"] : ["--url", "--token"];
   if (Object.keys(flags).some(key => !allowed.includes(key))) invalid();
   if (command === "daemon") {
     if (positionals.length) invalid();
@@ -126,9 +126,12 @@ export async function daemonCommand(command: string, args: string[], json: boole
   }
   if (command === "token") {
     if (!name || !["create", "ls", "revoke"].includes(name) || positionals.length !== (name === "revoke" ? 2 : 1)) invalid();
+    if (name !== "create" && ["--name", "--pebbles", "--actions"].some(key => flags[key])) invalid();
+    if (!!flags["--pebbles"] !== !!flags["--actions"]) invalid();
+    const input = { ...(flags["--name"] ? { name: flags["--name"] } : {}), ...(flags["--pebbles"] ? { scope: { pebbles: flags["--pebbles"].split(","), actions: flags["--actions"]!.split(",") } } : {}) };
     const id = positionals[1];
     if (name === "revoke" && !/^[a-f0-9]{64}$/.test(id ?? "")) invalid();
-    return { command: `token ${name}`, ...(await (await call(flags, name === "revoke" ? `/api/tokens/${id}` : "/api/tokens", { method: name === "create" ? "POST" : name === "revoke" ? "DELETE" : "GET" })).json()) };
+    return { command: `token ${name}`, ...(await (await call(flags, name === "revoke" ? `/api/tokens/${id}` : "/api/tokens", { method: name === "create" ? "POST" : name === "revoke" ? "DELETE" : "GET", ...(name === "create" ? { headers: { "content-type": "application/json" }, body: JSON.stringify(input) } : {}) })).json()) };
   }
   if (positionals.length !== 1) invalid();
   const path = `/api/pebbles/${encodeURIComponent(name!)}`;

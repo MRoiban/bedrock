@@ -23,7 +23,7 @@ test("setup is idempotent and daemon migrations/tokens support later schema exte
     first.close();
     const second = await openDaemonDatabase(temp.dir);
     expect(second.accepts(token)).toBe(true);
-    expect(second.db.query("SELECT name FROM _bedrock_migrations").all()).toHaveLength(3);
+    expect(second.db.query("SELECT name FROM _bedrock_migrations").all()).toHaveLength(4);
     second.close();
   } finally { temp.cleanup(); }
 });

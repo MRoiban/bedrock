@@ -1,3 +1,4 @@
+import { handleServiceToken } from "./service-tokens";
 import { loadPebble } from "./load";
 import { serviceStopTimeout } from "../config/hosting";
 import { startPebble } from "./index";
@@ -18,7 +19,10 @@ try {
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
-  process.on("message", message => { if ((message as { op?: string })?.op === "stop") void stop(); });
+  process.on("message", message => {
+    if ((message as { op?: string })?.op === "stop") void stop();
+    else if ((message as { op?: string })?.op === "service-token") void handleServiceToken(running.execute, message).then(value => process.send?.(value));
+  });
   process.on("disconnect", stop);
 } catch (error) {
   const typed = asBedrockError(error).toJSON();

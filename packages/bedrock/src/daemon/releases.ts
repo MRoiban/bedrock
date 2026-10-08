@@ -90,11 +90,22 @@ export class Releases {
       return this.record(name);
     });
   }
+  // Same code, new environment: retain routing to the old child until health succeeds.
+  async restart(name: string) {
+    const record = this.record(name);
+    const old = this.supervisor.child(name);
+    const child = await this.supervisor.launch(name, record.release, old?.devSource);
+    try { this.supervisor.activate(name, child); this.db.status(name, "running"); }
+    catch (error) { await stopChild(child); throw error; }
+    if (old) await retireChild(old).catch(error => this.warn(name, error));
+    return this.record(name);
+  }
   async control(name: string, action: string) {
     return this.exclusive(name, async () => {
       const record = this.record(name);
-      if (action === "stop" || action === "restart") await this.supervisor.stop(name);
-      if (action === "start" || action === "restart") await this.supervisor.start(record);
+      if (action === "restart") return this.restart(name);
+      if (action === "stop") await this.supervisor.stop(name);
+      if (action === "start") await this.supervisor.start(record);
       return this.record(name);
     });
   }

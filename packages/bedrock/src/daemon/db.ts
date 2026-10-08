@@ -1,3 +1,6 @@
+import { validateTokenScope, type TokenScope } from "./token-scope";
+import type { User } from "../config";
+import { BedrockError } from "../error";
 import { Database } from "bun:sqlite";
 import { mkdir } from "node:fs/promises";
 import { privateFile } from "../private-file";
@@ -16,7 +19,7 @@ export async function openDaemonDatabase(home: string, migrations = join(import.
     db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     await applyMigrations(db, migrations);
     return {
-      db,
+      db, home,
       list: () => db.query("SELECT * FROM pebbles ORDER BY name").all() as PebbleRecord[],
       get: (name: string) => db.query("SELECT * FROM pebbles WHERE name=?").get(name) as PebbleRecord | null,
       save(record: PebbleRecord) {
@@ -26,12 +29,20 @@ export async function openDaemonDatabase(home: string, migrations = join(import.
       status: (name: string, status: string) => db.query("UPDATE pebbles SET status=? WHERE name=?").run(status, name),
       remove: (name: string) => db.query("DELETE FROM pebbles WHERE name=?").run(name),
       accepts: (token: string) => !!db.query("SELECT hash FROM deploy_tokens WHERE hash=?").get(tokenHash(token)),
-      tokens: () => db.query("SELECT hash AS id, created_at AS createdAt FROM deploy_tokens ORDER BY created_at").all(),
+      tokens: () => (db.query("SELECT hash AS id, created_at AS createdAt, name, scope, user_id AS userId FROM deploy_tokens ORDER BY created_at").all() as { scope: string | null }[]).map(row => ({ ...row, scope: row.scope ? JSON.parse(row.scope) as TokenScope : null })),
+      tokenScope: (token: string) => {
+        const row = db.query("SELECT scope FROM deploy_tokens WHERE hash=?").get(tokenHash(token)) as { scope: string | null } | null;
+        return row?.scope ? JSON.parse(row.scope) as TokenScope : null;
+      },
+      tokenOwner: (token: string) => db.query("SELECT u.id, u.email, u.name, COALESCE(u.avatar_url, '') AS avatarUrl FROM deploy_tokens t JOIN users u ON u.id=t.user_id WHERE t.hash=?").get(tokenHash(token)) as User | null,
       revokeToken: (id: string) => db.query("DELETE FROM deploy_tokens WHERE hash=?").run(id).changes > 0,
       tokenEmail: (token: string) => (db.query("SELECT email FROM deploy_tokens WHERE hash=?").get(tokenHash(token)) as { email: string | null } | null)?.email,
-      createToken(email?: string) {
+      createToken(email?: string, options: { name?: string; scope?: unknown; userId?: string } = {}) {
+        const scope = validateTokenScope(options.scope);
+        if (options.name !== undefined && (typeof options.name !== "string" || !options.name.trim())) throw new BedrockError("INVALID_ARGS", "Invalid token name.", "Supply a nonempty token name.");
+        const owner = options.userId ?? (email ? (db.query("SELECT id FROM users WHERE email=?").get(email) as { id: string } | null)?.id : undefined);
         const token = `br_${crypto.randomUUID().replaceAll("-", "")}${crypto.randomUUID().replaceAll("-", "")}`;
-        db.query("INSERT INTO deploy_tokens (hash, created_at, email) VALUES (?, ?, ?)").run(tokenHash(token), Date.now(), email ?? null);
+        db.query("INSERT INTO deploy_tokens (hash, created_at, email, name, scope, user_id) VALUES (?, ?, ?, ?, ?, ?)").run(tokenHash(token), Date.now(), email ?? null, options.name ?? null, scope ? JSON.stringify(scope) : null, owner ?? null);
         return token;
       },
       close: () => db.close(true),

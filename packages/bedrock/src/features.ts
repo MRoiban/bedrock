@@ -1,7 +1,7 @@
 import type { PebbleConfig } from "./config";
 import { BedrockError } from "./error";
 
-export const daemonFeatures = ["sockets", "services", "directory-backups", "chunked-uploads", "chunked-uploads-cancel", "access-allow-creators"];
+export const daemonFeatures = ["sockets", "services", "directory-backups", "chunked-uploads", "chunked-uploads-cancel", "access-allow-creators", "pebble-secrets", "scoped-deploy-tokens", "service-tokens"];
 export function requiredFeatures(pebble: PebbleConfig): string[] {
   const required = new Set<string>();
   for (const config of [pebble, ...(pebble.plugins ?? [])]) {

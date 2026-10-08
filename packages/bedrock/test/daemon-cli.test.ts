@@ -35,6 +35,12 @@ test("daemon CLI uses local credentials, honors explicit flags, and reports one 
     expect((await command(["deploy", "examples/notes"])).code).toBe(0);
     expect((await command(["rollback", "notes"])).code).toBe(0);
     expect((await command(["token", "create"])).value.value.token).toStartWith("br_");
+    const scoped = await command(["token", "create", "--name", "manager", "--pebbles", "notes,bot-*", "--actions", "deploy,lifecycle,logs,secrets,status,service-tokens"]);
+    expect(scoped.code).toBe(0);
+    const scopes = (await command(["token", "ls"])).value.value;
+    expect(scopes.find((row: { name: string }) => row.name === "manager").scope).toEqual({ pebbles: ["notes", "bot-*"], actions: ["deploy", "lifecycle", "logs", "secrets", "status", "service-tokens"] });
+    expect((await command(["token", "create", "--pebbles", "notes"])).value.error.code).toBe("INVALID_ARGS");
+    expect((await command(["secrets", "ls", "notes"], { BEDROCK_TOKEN: scoped.value.value.token })).value.secrets).toEqual([]);
     expect((await command(["rm", "notes"])).value.error.code).toBe("CONFIRM_REQUIRED");
     expect((await command(["rm", "notes", "--yes"])).code).toBe(0);
     expect((await command(["rm", "notes", "--yes"])).value.value.deleted).toBe(false);

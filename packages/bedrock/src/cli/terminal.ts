@@ -2,7 +2,7 @@ import { createInterface } from "node:readline/promises";
 import { openBrowser } from "./credentials";
 import { BedrockError } from "../error";
 
-export async function promptSecret(label = "Cloudflare API token") {
+export async function promptSecret(label = "Cloudflare API token", trim = true) {
   if (!process.stdin.isTTY || !process.stdin.setRawMode) throw new BedrockError("SECRET_MISSING", `No ${label} was provided.`, "Pass the secret explicitly; noninteractive commands cannot prompt.");
   process.stderr.write(`${label} (hidden): `);
   return new Promise<string>((resolve, reject) => {
@@ -10,7 +10,7 @@ export async function promptSecret(label = "Cloudflare API token") {
     const cleanup = () => { process.stdin.setRawMode(false); process.stdin.pause(); process.stdin.off("data", data); process.stderr.write("\n"); };
     const data = (chunk: Buffer) => {
       for (const char of chunk.toString()) {
-        if (char === "\r" || char === "\n") { cleanup(); resolve(token.trim()); return; }
+        if (char === "\r" || char === "\n") { cleanup(); resolve(trim ? token.trim() : token); return; }
         if (char === "\x03" || char === "\x04") { cleanup(); reject(new BedrockError("CANCELLED", "Token entry cancelled.", `Retry when you have the ${label}.`)); return; }
         if (char === "\x7f" || char === "\b") token = token.slice(0, -1);
         else if (char >= " ") token += char;

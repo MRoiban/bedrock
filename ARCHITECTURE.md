@@ -447,6 +447,7 @@ $BEDROCK_HOME (default ~/.bedrock)
   pebbles/<name>/
     releases/<ts>/   deployed code (kept: last 3)
     current -> releases/<ts>  (directory junction on Windows)
+    secrets.json    private environment secrets, outside releases and data (0600 / owner ACL)
     data/db.sqlite, data/files/
     logs/            stdout/stderr, rotated
 ```
@@ -509,14 +510,123 @@ $BEDROCK_HOME (default ~/.bedrock)
   its matching origin. Tokens are never forwarded through HTTP redirects.
 - `bedrock logout` revokes the saved token remotely before deleting credentials;
   offline failure retains credentials for retry. `bedrock token create|ls|revoke <id>`
-  manages hashed deploy tokens; ls returns IDs and creation times, never raw tokens.
-  Creator deploy tokens grant full daemon operations, including token management.
+  manages hashed deploy tokens; ls returns IDs, names, creation times, owner user IDs and scope, never raw tokens.
+  Unscoped creator deploy tokens grant full daemon operations, including token management.
 - `bedrock doctor` checks Bun, local daemon/configuration, domain/creators, OAuth,
   cloudflared installation/process, tunnel ingress/DNS via the API when a transient
   API token is available, wildcard resolution via Cloudflare DoH, available disk,
   each pebble's live health, and backup age (warn when > 2× interval). Offline DNS and unavailable API credentials are
   skipped warnings; any failed check sets exit code 1. `doctor --json` emits an
   array of checks `{name, status: pass|warn|fail, message, hint, skipped?}`.
+
+### Pebble secrets and delegated administration
+
+The daemon provides these bearer-authenticated endpoints. Unlike older daemon
+operations using `{ ok: true, value }`, successful secrets and service-token
+responses use the direct shapes below; errors use `{ ok: false, error: { code,
+message, hint } }`. Responses containing secrets metadata or raw tokens are
+`Cache-Control: no-store`.
+
+- `GET /api/pebbles/:name/secrets` → `{ secrets: [{ name, updatedAt }] }`, sorted
+  by name. Never returns values. Works before a pebble is deployed; an absent
+  file returns an empty list.
+- `PUT /api/pebbles/:name/secrets` accepts `{ set?: Record<string,string>,
+  unset?: string[], restart?: boolean }` and returns the same metadata shape.
+  All input is validated before writing; set is applied before unset. Secret
+  names match `^[A-Z][A-Z0-9_]{0,63}$`; values are exact strings without NUL.
+  `BEDROCK_*`, `BUN_*`, `NODE_*`, `LD_*`, `DYLD_*` and operating-system environment
+  controls are reserved. The exact additional reserved names are `PATH`, `HOME`,
+  `USER`, `SHELL`, `TMPDIR`, `TMP`, `TEMP`, `SYSTEMROOT`, `WINDIR`, `COMSPEC`,
+  `PATHEXT`, `ENV`, `BASH_ENV`, `IFS`, `CDPATH`, `SHELLOPTS`, `APPDATA`,
+  `LOCALAPPDATA`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `SYSTEMDRIVE`.
+
+Secrets live at `$BEDROCK_HOME/pebbles/<name>/secrets.json`, mapping names to
+`{ value, updatedAt }` (Unix milliseconds). Writes use a private atomic temporary
+file and rename. POSIX permissions are 0600; Windows uses the shared private-file
+owner/SYSTEM ACL helper before publication. Reads also enforce private-file
+permissions. This file is outside releases and data, so deploy, rollback and
+restore preserve it. Database and configured-directory backups exclude it, like
+backup/Cloudflare credentials; back it up separately as a credential file.
+Deleting a deployed pebble removes it along with the pebble directory.
+
+Every child launch reads the current secrets, overlays the inherited environment,
+then assigns reserved Bedrock environment values. This covers deploy swaps,
+restart, rollback, daemon restoration and crash recovery. Children also receive
+`BEDROCK_API_URL=http://127.0.0.1:<actual-daemon-port>`; loopback `/api/` requests
+reach the authenticated daemon API without a Host override. This URL conveys no
+credentials; a pebble must explicitly supply its own deploy bearer.
+Daemon-managed pebble logs redact configured values and JSON-escaped variants,
+including values split across UTF-8 pipe chunks; rotated values remain protected
+for the logger's lifetime. Creators remain trusted and must not deliberately
+encode secrets into application responses or other files.
+
+`restart: true` requires an existing deployed pebble. The normal restart now
+launches and health-checks a replacement before switching routing and retiring
+the old child, while retaining release/rollback selection. The old child keeps
+serving on failed startup. Secret changes remain saved if restart fails, and
+will be used on the next successful launch. Secret changes and service-token
+operations share the per-pebble deploy/lifecycle exclusion lock; concurrent work
+returns 409 `PEBBLE_BUSY`. Without restart, the current child retains its previous
+environment until its next launch.
+
+CLI (all accept `--json`, `--url` and `--token`):
+
+```sh
+bedrock secrets ls upty --json
+printf '%s' "$DISCORD_TOKEN" | bedrock secrets set upty DISCORD_TOKEN --restart
+bedrock secrets set upty DISCORD_TOKEN   # hidden prompt on a terminal
+bedrock secrets unset upty DISCORD_TOKEN OTHER_SECRET --restart
+bedrock token create --name manager --pebbles "upty,bot-*" \
+  --actions deploy,lifecycle,logs,secrets,status,service-tokens --json
+bedrock token ls --json
+```
+
+Secret set accepts exactly one name, reads the value from stdin or a hidden
+prompt, preserves whitespace, and never accepts a value on argv. Unset accepts
+one or more names. Secret commands return only metadata.
+
+Deploy tokens gain nullable `name`, JSON `scope` and `user_id` columns through
+migration 0003. Existing email-bearing tokens have their owner backfilled from
+`users`; creator login records the owning user on new tokens. Tokens created
+through `POST /api/tokens` inherit the calling token's owner; callers cannot
+choose another owner. Its optional body is `{ name?, scope?: { pebbles: string[],
+actions: string[] } }`. Null scope retains full access. Scoped creation requires
+both nonempty arrays. Pebble globs use full-name matching with `*` (any sequence)
+and `?` (one character), lowercase letters, digits and hyphens only. Actions are:
+
+- `deploy`: POST deploy, including a first deploy, for matching names.
+- `lifecycle`: start, stop, restart, rollback and confirmed deletion.
+- `logs`: read and follow logs.
+- `secrets`: read and update secrets (including requested restart).
+- `status`: GET `/api/pebbles` and `/api/status`, filtered to matching pebbles.
+  Status retains daemon version/features/domain needed by deploy clients; it
+  omits tunnel information and does not disclose creator session presence.
+- `service-tokens`: create and revoke target pebble tokens.
+
+Scoped tokens receive 403 `FORBIDDEN` with a repair hint for missing actions,
+unmatched pebbles, token management, self-update, backups, jobs, host/config and
+all other ungranted endpoints. There is no scoped route granting global admin.
+`GET /api/tokens` / `token ls` return scope as an object or null.
+
+`POST /api/pebbles/:name/service-tokens` accepts `{ name, permissions: string[] }`
+and returns `{ id, token }` (the raw `brk_` token once).
+`DELETE /api/pebbles/:name/service-tokens/:id` returns `{ revoked: true }`;
+repeat revocation of an owned token is idempotent. The running target must declare
+`tokens: true`; otherwise it returns 409 `TOKENS_DISABLED` (or 409
+`PEBBLE_STOPPED` if not running). The supervisor sends the owning creator user
+and operation through parent/child IPC. The child invokes `ctx.tokens.create`
+or `revoke` in an executor mutation slot, with identical validation, hashing,
+ownership and transaction rules to ordinary pebble tokens. No daemon SQLite
+connection writes to the pebble DB. Invalid registered permissions return 400
+`INVALID_TOKEN_PERMISSION`; wrong ownership returns 403 `FORBIDDEN`.
+
+Ownerless legacy/manual/local admin tokens cannot mint or revoke service tokens:
+403 `TOKEN_OWNER_REQUIRED` instructs the caller to use a creator login token
+and create the scoped token from it. This avoids inventing a creator identity.
+IPC failure on child exit returns `PEBBLE_STOPPED`; 15-second timeouts return
+`SERVICE_TOKEN_TIMEOUT`. A timed-out creation may have committed, so callers
+must not assume that no token was created. Ordinary pebble tokens remain in
+`data/db.sqlite` and are included in database backups.
 
 ## 9. Cloudflare Tunnel
 
