@@ -2,8 +2,8 @@
 
 Requires Bun ≥ 1.2, TypeScript and ESM. Run everything with Bun: the package ships
 TypeScript source. `pebble.ts` default-exports `definePebble(...)` and is the single
-source of truth. The repository's `ARCHITECTURE.md` is the implementation contract.
-This reference also ships as `llms.txt`.
+source of truth. The repository's `ARCHITECTURE.md` holds principles;
+`docs/reference.md` holds implementation detail. This guide ships in the package; `llms.txt` is a short index.
 
 ## A complete pebble
 
@@ -53,7 +53,6 @@ export default definePebble({
     count: job("0 3 * * *", ({ db }) => { console.log(`Notes: ${db.select().from(notes).all().length}`); }),
   },
   routes: { "GET /api/health": () => new Response("ok") },
-  plugins: [],
   // Add web: "./web/index.html" when you have a frontend.
 });
 ```
@@ -85,7 +84,6 @@ HTML; `init <name> [--template react]` scaffolds in the current empty directory.
 | `services` | Long-lived `service({ start, stop?, stopTimeout? })` definitions by unique name |
 | `backup` | `{ directories: ["workspaces"], exclude?: ["**/node_modules/**"] }` |
 | `jobs` | Map of `job(cron, handler)` definitions |
-| `plugins` | Array of `plugin({ name, schema?, routes?, sockets?, services?, jobs?, onQuery?, onMutation? })` |
 
 `query(fn)`, `query(standardSchema, fn)`, `mutation(fn)`, and
 `mutation(standardSchema, fn)` retain argument/result types. Standard Schema v1
@@ -121,8 +119,8 @@ HTTP: `POST /_bedrock/q/<name>` or `POST /_bedrock/m/<name>`, with JSON argument
 
 ## Schema and migrations
 
-`bedrock db generate` makes an automatic Drizzle config from the pebble's merged
-schema, including plugin tables even when they are not separately exported from
+`bedrock db generate` makes an automatic Drizzle config from the pebble's registered
+schema, including imported tables even when they are not separately exported from
 `pebble.ts`. `bedrock db plan` previews pending SQL; `bedrock db migrate` applies
 it locally. Dev/deploy apply migrations automatically. Commit both SQL and metadata.
 Never edit applied SQL: checksums are recorded in `_bedrock_migrations`. Put each
@@ -132,6 +130,8 @@ Deploy keeps the last three code releases. `bedrock rollback notes` switches cod
 not data; it refuses a target missing applied migrations. `--force` bypasses the
 check when you have established compatibility. Restore a matching backup for
 schema recovery; restarting the current code applies its pending migrations.
+
+Custom HTTP routes may set `definePebble({ maxRequestBodySize: bytes })` (positive integer, default 90 MiB, maximum 1 TiB). The daemon ceiling is 1 TiB and forwards request bodies as streams; custom routes must stream them to bound memory. Storage bucket limits remain separate. Application sockets retain the original URL and headers before upgrade, including on Bun 1.2.
 
 ### Detached routes and jobs
 
@@ -151,12 +151,11 @@ jobs: { refresh: job("0 * * * *", async ctx => {
 }, { transaction: false }) },
 ```
 
-`DetachedContext` has `{ user, token, pebble, request, read, write }`. Direct `db`,
+`DetachedContext` has `{ user, token, pebble, request, read, write, services }`. Direct `db`,
 `storage`, and `invalidate` access throws `BedrockError` with a read/write hint.
 `read(fn)` is a queued read-only transaction; `write(fn)` is a queued write
 transaction with storage effects and sync notification after commit. Callbacks
-receive `FunctionContext` and resolve their returned value; plugin query/mutation
-middleware does not wrap them. Await every slot and never retain its context or
+receive `FunctionContext` and resolve their returned value. Await every slot and never retain its context or
 perform slow network I/O inside it. A failed write rolls back only that slot;
 earlier committed slots survive a later handler error. Route access gating and
 identity stay the same; jobs retain `user: null`, scheduling, manual CLI runs,
@@ -235,7 +234,7 @@ jobs always get null. Expiry is an optional future Unix millisecond timestamp.
 Permissions default to deny: `*`, `query:<name>`, `mutation:<name>`,
 `route:<exact METHOD /path-pattern>`, `socket:<registered /path>`, and
 `files:<bucket>:upload|read|delete`.
-Targets must exist; plugins' merged routes and sockets count. Chunk operations require upload,
+Targets must exist in the registered maps. Chunk operations require upload,
 and WS sync requires `*`. Grants supplement user, row, and bucket authorization;
 current pebble access policies still apply to the stored user snapshot. Invalid,
 expired, or revoked tokens return JSON 401 with a new-token hint.
@@ -394,7 +393,7 @@ start or completion, each must match the assembled bytes or completion throws
 
 ```ts
 import { job, lt } from "bedrock";
-// inside definePebble or plugin:
+// inside definePebble:
 jobs: { prune: job("0 3 * * *", async ctx => {
   ctx.db.delete(notes).where(lt(notes.createdAt, Date.now() - 30 * 86400000)).run();
 }) },
@@ -418,48 +417,36 @@ bedrock jobs ls notes --json
 bedrock jobs run notes prune --json
 ```
 
-These use creator-authorized daemon APIs. The runtime jobs endpoint accepts only
-the daemon's signed service identity; it is not an end-user mutation API.
+These use creator-authorized daemon APIs. The daemon sends `jobs.list` and
+`jobs.run` (with `{ name }`) over child IPC, using `{ op, requestId, ...payload }`.
+Replies are `{ op: "reply", requestId, value | error }`; stop is `{ op: "stop" }`
+without a reply. Service-token operations use the same channel. Unknown
+`/_bedrock/*` HTTP paths return the JSON 404; jobs have no HTTP control route.
 
-## Plugins
+## Composition
+
+Composition uses ordinary TypeScript modules. Export maps from a module and spread
+them into the pebble; the same pattern works for sockets and services:
 
 ```ts
-import { plugin, sqliteTable, text, integer, job, lt } from "bedrock";
-const audit = sqliteTable("audit_log", {
-  id: text("id").primaryKey(), action: text("action").notNull(),
-  createdAt: integer("created_at").notNull(),
+import { definePebble } from "bedrock";
+import * as audit from "./audit";
+
+export default definePebble({
+  name: "notes",
+  schema: { ...audit.schema },
+  routes: { ...audit.routes },
+  jobs: { ...audit.jobs },
 });
-export const auditLog = plugin({
-  name: "audit-log", schema: { audit },
-  routes: { "GET /api/audit": (_request, _server, ctx) => Response.json(ctx.db.select().from(audit).all()) },
-  jobs: { pruneAudit: job("0 3 * * *", ctx => {
-    ctx.db.delete(audit).where(lt(audit.createdAt, Date.now() - 30 * 86400000)).run();
-  }) },
-  async onQuery(ctx, name, args, next) { return next(); },
-  async onMutation(ctx, name, args, next) {
-    const value = await next();
-    ctx.db.insert(audit).values({ id: crypto.randomUUID(), action: name, createdAt: Date.now() }).run();
-    return value;
-  },
-});
-// definePebble({ plugins: [auditLog], ... })
 ```
 
-Query/mutation middleware has `(ctx, name, validatedArgs, next)`;
-`next(): Promise<unknown>`. Plugins compose in array order: A before → B before →
-handler → B after → A after. Returning without `next()` short-circuits. Hooks wrap
-only declared queries/mutations (not jobs, routes, or storage HTTP operations).
-A thrown hook rolls back the whole transaction. A query hook is read-only too.
-
-Plugin schema/routes/jobs/sockets/services merge into the pebble's normal maps. Duplicate plugin
-names, schema export keys, SQL table names, route keys, or job names throw with
-repair hints. Plugin tables migrate with `bedrock db generate`; do not migrate
-inside hooks. The real tested example is `examples/plugins/audit-log.ts` in the
-repository. Plugin routes need your own row/role authorization like other routes.
+Choose distinct map keys: later object spreads overwrite earlier keys before
+Bedrock sees them. Register each table once; duplicate SQL table names throw
+`DUPLICATE_TABLE` with a repair hint.
 
 ## Application sockets and long-lived services
 
-Pebbles and plugins may declare application sockets independently of sync:
+Pebbles may declare application sockets independently of sync:
 
 ```ts
 import { definePebble, socket, service } from "bedrock";
@@ -481,9 +468,9 @@ export default definePebble({
 });
 ```
 
-Socket paths are absolute and outside `/_bedrock`; duplicate plugin socket paths
-and service names fail configuration validation. A socket cannot share a GET
-route. One Bun WebSocket handler dispatches sync and application connections by
+Socket paths are absolute and outside `/_bedrock`; service names must be
+letter-led identifiers, excluding `constructor`, `prototype` and `__proto__`.
+A socket cannot share a GET route. One Bun WebSocket handler dispatches sync and application connections by
 socket data kind. Upgrades use the sync identity/access checks and require token
 `socket:<registered path>` or `*`. Bearer validity is checked on messages and
 read/write slots; daemon session sockets are revalidated every five minutes and
@@ -531,9 +518,8 @@ WebSocket framing overhead or the currently decoded input frame.
 function, route, socket and job contexts through `ctx.services`. ServiceContext
 is `{ pebble, dataDir, read, write, log, signal }`; raw SQL invalidation belongs
 inside `write` through its FunctionContext. It has no lifetime transaction.
-Services start in map declaration order (pebble entries, then plugins in array
-order), after migrations and before HTTP/health and child readiness. A failed
-start throws hinted `SERVICE_START_FAILED`, aborts the signal and unwinds earlier
+Services start in map declaration order, after migrations and before HTTP/health
+and child readiness. A failed start throws hinted `SERVICE_START_FAILED`, aborts the signal and unwinds earlier
 services. Later startup failures also unwind services.
 
 Stopping closes the listener, sends 1012 "Service restart" to sockets, aborts
@@ -788,7 +774,7 @@ there is no live daemon identity restore command.
 Status reports boot-time `{ version, commit, branch, dirty, platform, arch, bun }`,
 `instanceId` (new per daemon boot), and `features`: sockets, services,
 directory-backups, chunked-uploads, chunked-uploads-cancel. Human status prints this beside the daemon URL;
-JSON includes all fields. Deploy checks sockets/services in the pebble and plugins
+JSON includes all fields. Deploy checks sockets/services in the pebble
 and directory backups before archiving/upload; absent features mean an old daemon.
 Doctor warns on a local daemon missing sockets/services.
 
@@ -818,21 +804,66 @@ Low-level tests can import `startPebble` from `bedrock/server`, call
 returns value/read/write sets. `startDaemon({ home: temporaryHome })` comes from
 `bedrock/daemon`. Always use temporary BEDROCK_HOME/dataDir/credential paths in tests.
 
+### Secrets, scoped deploy tokens and service tokens
+
+```sh
+bedrock secrets ls upty --json
+printf '%s' "$DISCORD_TOKEN" | bedrock secrets set upty DISCORD_TOKEN --restart
+bedrock secrets unset upty DISCORD_TOKEN --restart
+bedrock token create --name manager --pebbles "upty,bot-*" --actions deploy,lifecycle,logs,secrets,status,service-tokens --json
+```
+
+GET/PUT `/api/pebbles/:name/secrets` return
+`{ ok: true, value: { secrets: [{ name, updatedAt }] } }` without secret values.
+PUT accepts `{ set?: Record<string,string>, unset?: string[],
+restart?: boolean }`, even before first deploy (restart requires a deployment).
+Names match `^[A-Z][A-Z0-9_]{0,63}$`; runtime and OS environment controls are
+reserved. Values come from stdin or a hidden prompt, never CLI argv. Secrets are
+private `$BEDROCK_HOME/pebbles/<name>/secrets.json`, outside releases/data and
+excluded from DB/directory backups; back up credentials separately. Every launch
+receives an allow-listed host environment, then pebble secrets, then reserved
+`BEDROCK_*` values, including `BEDROCK_API_URL` pointing to the loopback daemon API.
+The allow-list contains runtime/OS essentials, locale (`LC_*` included), proxy
+and certificate settings, matched case-insensitively. Supply credentials through
+`bedrock secrets`, never the daemon/service environment. Attached dev sources
+(`bedrock dev`) inherit the developer's full shell environment before these overlays.
+Restart checks replacement health before retiring the old child; a failed restart leaves the secret update saved.
+
+POST `/api/tokens` optionally accepts `{ name, scope: { pebbles: ["upty", "bot-*"],
+actions: ["deploy", "lifecycle", "logs", "secrets", "status", "service-tokens"] } }`.
+Scoped tokens cannot manage tokens, self-update, backups, jobs, host/config, or
+unmatched pebbles (403 `FORBIDDEN`). Status/list endpoints filter matching pebbles.
+`token ls` shows scope; unscoped tokens retain full access.
+
+POST `/api/pebbles/:name/service-tokens` with `{ name, permissions: string[] }`
+returns `{ ok: true, value: { id, token } }`; DELETE the same path plus `/:id`
+returns `{ ok: true, value: { revoked: true } }`. Target must be running
+with `tokens: true`. Tokens are
+ordinary pebble `brk_` tokens owned by the calling deploy token's creator, minted
+through child IPC in an executor mutation slot with `ctx.tokens.create` permission
+validation. Ownerless local/legacy tokens get 403 `TOKEN_OWNER_REQUIRED`: use a
+creator login token to create the scoped deploy token. `TOKENS_DISABLED` and
+`PEBBLE_STOPPED` return 409; `INVALID_TOKEN_PERMISSION` returns 400.
+All daemon API successes use
+`{ ok: true, value }`; errors use `{ ok: false, error: { code, message, hint } }`.
+Secrets/service-token responses retain `Cache-Control: no-store`; CLI JSON output
+is unchanged.
+
 ## Common mistakes
 
 - Importing `pebble.ts` as a runtime value in browser code bundles server code.
   Use `import type pebble` and type the client/hooks.
-- Forgetting `schema` or `storage` registration. Register plugin tables through
-  `plugins`, normal tables through `schema`, and exact bucket objects through `storage`.
+- Forgetting `schema` or `storage` registration. Register all tables through
+  `schema` and exact bucket objects through `storage`.
 - Treating sign-in as row authorization. Filter/check ownership in every handler;
-  a plugin route is no exception.
+  custom routes need these checks too.
 - Assuming a job has a user. It runs with `null`; choose storage policies accordingly.
 - Raw SQL writes without invalidation, or raw SQL query reads without tracking.
   Prefer Drizzle; pass table objects to invalidate, or SQL table names rather
   than schema export keys.
 - Returning BigInt or executing transaction-control SQL in a handler/migration.
   Return JSON-compatible values and let Bedrock own transaction boundaries.
-- Editing applied migrations, skipping generation for plugin tables, or putting
+- Editing applied migrations, skipping migration generation, or putting
   runtime dependencies only in devDependencies. Commit new migrations and put
   production dependencies in dependencies.
 - Hooks outside BedrockProvider, missing @bedrock/ui/styles.css, or assuming the
@@ -843,42 +874,3 @@ returns value/read/write sets. `startDaemon({ home: temporaryHome })` comes from
 - Expecting rollback to undo schema/data or a backup to contain release code.
   Keep source/config backups too, inspect migrations, and test restores.
 - Testing against ~/.bedrock or real Cloudflare/R2. Use temp directories and mocks.
-
-Custom HTTP routes may set `definePebble({ maxRequestBodySize: bytes })` (positive integer, default 90 MiB, maximum 1 TiB). The daemon ceiling is 1 TiB and forwards request bodies as streams; custom routes must stream them to bound memory. Storage bucket limits remain separate. Application sockets retain the original URL and headers before upgrade, including on Bun 1.2.
-
-### Secrets, scoped deploy tokens and service tokens
-
-```sh
-bedrock secrets ls upty --json
-printf '%s' "$DISCORD_TOKEN" | bedrock secrets set upty DISCORD_TOKEN --restart
-bedrock secrets unset upty DISCORD_TOKEN --restart
-bedrock token create --name manager --pebbles "upty,bot-*" --actions deploy,lifecycle,logs,secrets,status,service-tokens --json
-```
-
-GET/PUT `/api/pebbles/:name/secrets` return `{ secrets: [{ name, updatedAt }] }`
-without values. PUT accepts `{ set?: Record<string,string>, unset?: string[],
-restart?: boolean }`, even before first deploy (restart requires a deployment).
-Names match `^[A-Z][A-Z0-9_]{0,63}$`; runtime and OS environment controls are
-reserved. Values come from stdin or a hidden prompt, never CLI argv. Secrets are
-private `$BEDROCK_HOME/pebbles/<name>/secrets.json`, outside releases/data and
-excluded from DB/directory backups; back up credentials separately. Every launch
-receives them in its environment and receives `BEDROCK_API_URL` pointing to the
-loopback daemon API. Restart checks replacement health before retiring the old
-child; a failed restart leaves the secret update saved.
-
-POST `/api/tokens` optionally accepts `{ name, scope: { pebbles: ["upty", "bot-*"],
-actions: ["deploy", "lifecycle", "logs", "secrets", "status", "service-tokens"] } }`.
-Scoped tokens cannot manage tokens, self-update, backups, jobs, host/config, or
-unmatched pebbles (403 `FORBIDDEN`). Status/list endpoints filter matching pebbles.
-`token ls` shows scope; unscoped tokens retain full access.
-
-POST `/api/pebbles/:name/service-tokens` with `{ name, permissions: string[] }`
-returns `{ id, token }` directly; DELETE the same path plus `/:id` returns
-`{ revoked: true }`. Target must be running with `tokens: true`. Tokens are
-ordinary pebble `brk_` tokens owned by the calling deploy token's creator, minted
-through child IPC in an executor mutation slot with `ctx.tokens.create` permission
-validation. Ownerless local/legacy tokens get 403 `TOKEN_OWNER_REQUIRED`: use a
-creator login token to create the scoped deploy token. `TOKENS_DISABLED` and
-`PEBBLE_STOPPED` return 409; `INVALID_TOKEN_PERMISSION` returns 400. These new
-endpoints return direct objects, while existing daemon endpoints retain
-`{ ok: true, value }`; errors retain `{ ok: false, error: { code, message, hint } }`.

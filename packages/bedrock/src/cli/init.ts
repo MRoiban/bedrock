@@ -42,7 +42,7 @@ Prefer ctx.invalidate([items]) with registered Drizzle tables; SQL names like ct
 Export Drizzle tables from pebble.ts. Run bedrock db generate after schema changes.
 Run bedrock db plan to inspect pending SQL; bedrock db migrate applies it.
 Run bun install, then bun run dev. Data lives in .bedrock/; never commit it.
-Read node_modules/bedrock/AGENTS.md and node_modules/bedrock/llms.txt for the complete API, jobs, auth, storage, sync, client/react, and @bedrock/ui.
+Read node_modules/bedrock/llms.txt for the index and node_modules/bedrock/AGENTS.md for the complete API, jobs, auth, storage, sync, client/react, and @bedrock/ui.
 All CLI commands support --json. Never open real ~/.bedrock in tests.
 `,
     ".gitignore": "node_modules/\n.bedrock/\n",
@@ -154,7 +154,7 @@ Run bun install, bunx bedrock db generate, then bun run dev. Dev login needs no 
 Hooks run inside BedrockProvider. useQuery subscribes live; writes use useMutation.
 UploadButton uploads immediately; keep the attachment id for the next mutation.
 Use document.documentElement.dataset.theme = "light" or "dark" to change Onyx tokens.
-Read node_modules/bedrock/AGENTS.md and node_modules/bedrock/llms.txt for the full author API and common mistakes.
+Read node_modules/bedrock/llms.txt for the index and node_modules/bedrock/AGENTS.md for the full author API and common mistakes.
 Run bun run typecheck and bedrock db plan before deploying. Never commit .bedrock/.
 `,
   };

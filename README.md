@@ -2,9 +2,10 @@
 
 One home server for your small projects, called **pebbles**. Bun runs each pebble
 in its own process; SQLite and files stay on your disk. Google login, live queries,
-uploads, jobs, application WebSockets, long-lived services, plugins, backups, and a Cloudflare Tunnel come built in.
+uploads, jobs, application WebSockets, long-lived services, backups, and a Cloudflare Tunnel come built in.
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) for the contract and
+Read [ARCHITECTURE.md](ARCHITECTURE.md) for the principles,
+[docs/reference.md](docs/reference.md) for implementation detail, and
 [the author API reference](packages/bedrock/AGENTS.md) when building a pebble.
 Creators are trusted: separate processes provide no OS sandbox. Access policies,
 signed identity, and Origin checks protect against end users and the internet.
@@ -124,8 +125,8 @@ bedrock self-update --remote --json  # machine-readable result and redacted Git/
 Status reports the daemon's boot-time package version, checkout commit/branch and
 dirty state, platform/architecture, Bun version, and supported features. Git fields
 are null for installations outside a checkout. `bedrock --version` reports the
-local CLI's identity. Deploy refuses unsupported sockets, services (including
-plugins), or directory backups before uploading, with an update hint. Doctor warns
+local CLI's identity. Deploy refuses unsupported sockets, services, or directory
+backups before uploading, with an update hint. Doctor warns
 when the local daemon does not advertise sockets/services.
 
 Remote update requires a creator deploy token, an installed daemon service, and a
@@ -176,7 +177,7 @@ for the raw SQL escape hatch.
 
 ```ts
 import { socket, service } from "bedrock";
-// Inside definePebble or plugin:
+// Inside definePebble:
 services: { host: service({ start(ctx) { return { ready: true }; }, stop(value) {} }) },
 sockets: { "/api/host": socket({ message(ws, data, ctx) { ws.send(data); } }) },
 ```
@@ -194,6 +195,11 @@ a deployment. Editors can veto stale-tab reload indefinitely with
 for lifecycle, browser connections and typed contexts.
 
 ## Operations
+
+Deployed pebbles inherit only an allow-listed host environment plus pebble secrets
+and reserved Bedrock values. Supply bot tokens and other credentials through
+`bedrock secrets`, never the daemon/service environment. `bedrock dev` inherits
+your full shell environment.
 
 ```sh
 bedrock whoami
