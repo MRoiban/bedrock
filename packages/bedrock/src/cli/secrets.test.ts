@@ -19,3 +19,8 @@ test("secrets CLI keeps values off argv and responses; stdin and hidden prompts 
   for (const args of [["set", "upty", "DISCORD_TOKEN", "secret-in-argv"], ["set", "upty", "BEDROCK_API_URL"], ["ls", "upty", "--restart"]])
     await expect(secretsCommand(args, { request })).rejects.toMatchObject({ code: "INVALID_ARGS" });
 });
+
+test("secrets CLI reads bare metadata from daemons that predate the unified envelope", async () => {
+  const request: typeof call = async () => Response.json({ secrets: [{ name: "DISCORD_TOKEN", updatedAt: 1 }] });
+  expect(await secretsCommand(["ls", "upty"], { request })).toEqual({ command: "secrets ls", secrets: [{ name: "DISCORD_TOKEN", updatedAt: 1 }] });
+});

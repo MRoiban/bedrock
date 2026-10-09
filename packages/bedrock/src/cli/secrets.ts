@@ -27,5 +27,7 @@ export async function secretsCommand(args: string[], options: { stdin?: () => Pr
   if (action === "unset") body.unset = keys;
   if (flags["--restart"]) body.restart = true;
   const response = await (options.request ?? call)(flags, `/api/pebbles/${name}/secrets`, action === "ls" ? {} : { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  return { command: `secrets ${action}`, ...(await response.json()).value };
+  const reply = await response.json();
+  // Daemons before the unified envelope answered with bare metadata; accept both until servers self-update.
+  return { command: `secrets ${action}`, ...(reply?.ok === true && "value" in reply ? reply.value : reply) };
 }
