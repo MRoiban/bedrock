@@ -108,6 +108,42 @@ test("daemon routes, strips headers, authorizes, swaps, retains releases, rolls 
   } finally { await h.cleanup(); }
 }, 30000);
 
+test("daemon keeps slow pebble HTTP handlers and quiet response streams alive", async () => {
+  const h = await harness();
+  const dir = join(h.temp.dir, "source");
+  try {
+    await Bun.write(join(dir, "pebble.ts"), `import { definePebble, detached } from "bedrock";
+export default definePebble({ name: "sample", access: "public", routes: {
+  "GET /slow": detached(async () => {
+    await Bun.sleep(11000);
+    return new Response("slow response");
+  }),
+  "GET /stream": detached(() => new Response(new ReadableStream({ async start(controller) {
+    controller.enqueue(new TextEncoder().encode("first"));
+    await Bun.sleep(11000);
+    controller.enqueue(new TextEncoder().encode("second"));
+    controller.close();
+  } }))),
+}});`);
+    expect((await h.deploy("sample", dir)).status).toBe(200);
+    await Promise.all([
+      (async () => {
+        const response = await h.request("sample.localhost", "/slow");
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("slow response");
+      })(),
+      (async () => {
+        const response = await h.request("sample.localhost", "/stream");
+        expect(response.status).toBe(200);
+        const reader = response.body!.getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toBe("first");
+        expect(new TextDecoder().decode((await reader.read()).value)).toBe("second");
+        expect((await reader.read()).done).toBe(true);
+      })(),
+    ]);
+  } finally { await h.cleanup(); }
+}, 30000);
+
 test("deploys notes with production dependencies, serves HTML, adds/lists, and rejects a broken migration", async () => {
   const h = await harness(true);
   const dir = join(h.temp.dir, "notes");

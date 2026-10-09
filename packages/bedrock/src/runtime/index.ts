@@ -93,6 +93,8 @@ export async function startPebble(options: StartPebbleOptions) {
         close(ws, code, reason) { if (isApplication(ws.data)) appSockets.websocket.close!(ws as any, code, reason); else sync?.websocket.close!(ws as any); },
         drain(ws) { if (isApplication(ws.data)) appSockets.websocket.drain!(ws as any); },
       },
+      // Slow handlers and quiet streams must stay alive behind the daemon.
+      idleTimeout: 0,
       maxRequestBodySize: pebble.maxRequestBodySize ?? 90 * 1024 ** 2,
       hostname: "127.0.0.1", port: options.port ?? 3000, routes,
       async fetch(request) {

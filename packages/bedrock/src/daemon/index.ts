@@ -114,6 +114,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             } : undefined);
             return response;
           }
+          server.timeout(request, 0);
           child.requests++;
           const response = await proxyHttp(request, child.port, child.releaseId, () => { child.requests--; }, identity);
           if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));

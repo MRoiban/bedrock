@@ -743,6 +743,8 @@ ctx.invalidate([audit.schema.auditLog]);
 
 Custom HTTP routes may set `definePebble({ maxRequestBodySize: bytes })` (positive integer, default 90 MiB, maximum 1 TiB). The daemon ceiling is 1 TiB and forwards request bodies as streams; custom routes must stream them to bound memory. Storage bucket limits remain separate. Application sockets retain the original URL and headers before upgrade, including on Bun 1.2.
 
+Proxied pebble HTTP requests have no idle timeout, so slow handlers and long streams work; Cloudflare still applies its own ~100-second limit for time to the first response byte.
+
 Routes and jobs can opt out of the outer queue/transaction for slow network I/O:
 
 ```ts
