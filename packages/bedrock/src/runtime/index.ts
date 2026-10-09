@@ -1,7 +1,6 @@
 import { createServices } from "./services";
 import { createApplicationSockets, isApplication, type RuntimeSocketData } from "./sockets";
 import { createJobs } from "../jobs";
-import { verifyIdentity } from "../auth/identity";
 import { createFileHandler } from "../storage/http";
 import { resolve, join } from "node:path";
 import type { PebbleConfig } from "../config";
@@ -59,15 +58,6 @@ export async function startPebble(options: StartPebbleOptions) {
     }
     if (web.html && !Object.hasOwn(routes, "/*")) routes["/*"] = web.html;
     routes["/_bedrock/files/*"] = files.handle;
-    routes["/_bedrock/jobs"] = async (request: Request) => {
-      try {
-        const secret = process.env.BEDROCK_IDENTITY_SECRET;
-        const user = secret ? verifyIdentity(request, secret) : null;
-        if (!secret || user?.id !== "bedrock-daemon") throw new BedrockError("FORBIDDEN", "Jobs require daemon authorization.", "Use bedrock jobs ls/run through the daemon.");
-        const name = new URL(request.url).searchParams.get("name");
-        return Response.json({ ok: true, value: request.method === "POST" && name ? await jobs.run(name) : jobs.list() });
-      } catch (error) { return errorResponse(error); }
-    };
     routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };

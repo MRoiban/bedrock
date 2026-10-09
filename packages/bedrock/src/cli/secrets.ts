@@ -27,5 +27,5 @@ export async function secretsCommand(args: string[], options: { stdin?: () => Pr
   if (action === "unset") body.unset = keys;
   if (flags["--restart"]) body.restart = true;
   const response = await (options.request ?? call)(flags, `/api/pebbles/${name}/secrets`, action === "ls" ? {} : { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  return { command: `secrets ${action}`, ...await response.json() };
+  return { command: `secrets ${action}`, ...(await response.json()).value };
 }

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { detached, definePebble, job, mutation, query, sqliteTable, text, type FunctionContext } from "../src";
 import { createClient } from "../src/client";
 import { startPebble } from "../src/runtime";
+import { handleControl } from "../src/runtime/control";
 import { identityHeaders, tempDirectory } from "./helpers";
 
 async function until(predicate: () => boolean) {
@@ -68,9 +69,12 @@ test("detached HTTP routes leave mutations free, notify sync, return errors and 
     expect((await failed.json()).error.code).toBe("FUNCTION_FAILED");
     await until(() => values.at(-1)?.length === 3);
     expect((await client.query("list", undefined)).map(row => row.id)).toEqual(["mutation", "route", "before-error"]);
-    const response = await fetch(new URL("/_bedrock/jobs?name=refresh", running.server.url), { method: "POST", headers: identityHeaders("bedrock-daemon") });
-    expect(await response.json()).toEqual({ ok: true, value: { name: "refresh", skipped: false } });
+    expect(await handleControl(running, { op: "unknown", requestId: "bad" })).toMatchObject({
+      op: "reply", requestId: "bad", error: { code: "UNKNOWN_OPERATION", hint: expect.any(String) },
+    });
+    const response = await handleControl(running, { op: "jobs.run", requestId: "refresh", name: "refresh" });
+    expect(response).toEqual({ op: "reply", requestId: "refresh", value: { name: "refresh", skipped: false } });
     await until(() => values.at(-1)?.length === 4);
-    expect((await fetch(new URL("/_bedrock/jobs?name=refresh", running.server.url), { method: "POST", headers })).status).toBe(403);
+    expect((await fetch(new URL("/_bedrock/jobs?name=refresh", running.server.url), { method: "POST", headers })).status).toBe(404);
   } finally { client.close(); await running.stop(); temp.cleanup(); }
 });

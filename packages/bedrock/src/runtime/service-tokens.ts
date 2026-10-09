@@ -11,6 +11,6 @@ export async function handleServiceToken(execute: ReturnType<typeof createExecut
       const created = ctx.tokens.create({ name: input?.name!, permissions: input?.permissions! });
       return { id: created.id, token: created.token };
     });
-    return { op: "service-token-result", requestId, value: result.value };
-  } catch (error) { return { op: "service-token-result", requestId, error: asBedrockError(error).toJSON() }; }
+    return { op: "reply", requestId, value: result.value };
+  } catch (error) { return { op: "reply", requestId, error: asBedrockError(error).toJSON() }; }
 }

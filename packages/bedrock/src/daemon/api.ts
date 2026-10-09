@@ -41,7 +41,7 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
         if (body.restart) await releases.restart(name);
         return result;
       });
-      return Response.json(value, { headers: { "cache-control": "no-store" } });
+      return Response.json({ ok: true, value }, { headers: { "cache-control": "no-store" } });
     }
     if (serviceMatch && (request.method === "POST" && !serviceMatch[2] || request.method === "DELETE" && serviceMatch[2])) {
       const name = serviceMatch[1]!; validateName(name); releases.record(name);
@@ -49,7 +49,7 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
       if (!user) throw new BedrockError("TOKEN_OWNER_REQUIRED", "This deploy token has no owning creator user.", "Run bedrock login as a creator, then create a deploy token from that login token.");
       const body = request.method === "POST" ? await request.json().catch(() => { throw new BedrockError("INVALID_ARGS", "Invalid JSON body.", "Send { name, permissions: string[] }."); }) : undefined;
       const value = await releases.exclusive(name, () => supervisor.serviceTokens(name, user, body, serviceMatch[2]));
-      return Response.json(value, { headers: { "cache-control": "no-store" } });
+      return Response.json({ ok: true, value }, { headers: { "cache-control": "no-store" } });
     }
     let value: unknown;
     const backup = /^\/api\/backup\/(run|ls|restore)$/.exec(url.pathname);

@@ -40,7 +40,7 @@ test("custom route explicit invalidation and anonymous jobs commit, notify subsc
     await Bun.sleep(30);
     expect(values).toHaveLength(3);
     expect(await client.query("list", undefined)).toHaveLength(2);
-    expect((await fetch(new URL("/_bedrock/jobs?name=add", running.server.url), { method: "POST" })).status).toBe(403);
+    expect((await fetch(new URL("/_bedrock/jobs?name=add", running.server.url), { method: "POST" })).status).toBe(404);
   } finally { client.close(); await running.stop(); temp.cleanup(); }
 });
 

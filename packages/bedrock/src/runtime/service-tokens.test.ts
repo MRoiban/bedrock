@@ -16,9 +16,10 @@ test("IPC service token creation waits for the executor and shares token permiss
     await started; let finished = false;
     const pending = handleServiceToken(execute, { requestId: "create", user, input: { name: "service", permissions: ["query:who"] } }).then(value => { finished = true; return value; });
     await Bun.sleep(1); expect(finished).toBe(false); release(); await held;
-    const result = await pending; expect(result.error).toBeUndefined();
+    const result = await pending; expect(result).toMatchObject({ op: "reply", requestId: "create" }); expect(result.error).toBeUndefined();
     expect(result.value).toMatchObject({ id: expect.any(String), token: expect.stringMatching(/^brk_/) });
     const invalid = await handleServiceToken(execute, { requestId: "bad", user, input: { name: "bad", permissions: ["query:missing"] } });
+    expect(invalid).toMatchObject({ op: "reply", requestId: "bad" });
     expect(invalid.error?.code).toBe("INVALID_TOKEN_PERMISSION");
     expect((await execute("query", "inspect", null, new Request("http://localhost"), { user }, ctx => ctx.tokens.list())).value).toHaveLength(1);
   } finally { await execute.close(); database.close(); temp.cleanup(); }
