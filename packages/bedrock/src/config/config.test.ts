@@ -5,6 +5,21 @@ import { definePebble, query, mutation, bucket, validateName } from "./index";
 import type { FunctionArgs, FunctionResult, QueryNames, MutationNames } from "./index";
 import { BedrockError } from "../error";
 
+test("pebble names are 1–32 lowercase DNS labels with no edge hyphens", () => {
+  for (const name of ["a", "notes", "my-app", "a1", "a".repeat(32)]) {
+    expect(() => validateName(name)).not.toThrow();
+    expect(definePebble({ name }).name).toBe(name);
+  }
+  for (const name of ["--help", "-x", "-a", "a-", "", "Notes", "a".repeat(33)]) {
+    for (const validate of [() => validateName(name), () => definePebble({ name })]) {
+      expect(validate).toThrow(BedrockError);
+      try { validate(); } catch (error) {
+        expect(error).toMatchObject({ code: "INVALID_PEBBLE_NAME", hint: expect.stringContaining("starting and ending") });
+      }
+    }
+  }
+});
+
 test.skipIf(process.platform !== "win32")("Windows device names produce repair hints before filesystem writes", () => {
   for (const name of ["con", "nul", "aux", "prn", "com1", "lpt9"]) {
     expect(() => validateName(name)).toThrow("reserved Windows device name");

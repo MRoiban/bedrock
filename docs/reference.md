@@ -95,7 +95,7 @@ export const notes = sqliteTable("notes", {
 export const attachments = bucket("attachments", { maxSize: "50mb", access: "owner" });
 
 export default definePebble({
-  name: "notes",                        // subdomain; [a-z0-9-]{1,32}
+  name: "notes",                        // subdomain; 1–32 lowercase letters/digits/hyphens; letter/digit at both ends
   access: "users",                      // see §5
   schema: { notes },
   sync: true,                           // enable live subscriptions
@@ -471,6 +471,12 @@ $BEDROCK_HOME (default ~/.bedrock)
   Git exists. `init <name>` scaffolds in the current empty directory. Dev needs
   no host configuration. Source installs use checkout-relative first-party
   `file:` dependencies; daemon deployment substitutes its own first-party packages.
+- `new`, `init`, `db`, `deploy`, `rm`, `start`, `stop`, `restart`, `rollback`,
+  `secrets`, `token`, `backup`, and `jobs` accept `--help` or `-h`: print command
+  usage and a description, exit 0, and perform no actions. With `--json`, help
+  is `{ ok: true, command, usage, description }`. Unknown flags to `new`/`init`
+  fail with `INVALID_ARGS` and a usage hint. Invalid pebble names fail with
+  `INVALID_PEBBLE_NAME`; names must start and end with a lowercase letter or digit.
 - The creator dashboard at `bedrock.<domain>/` uses Google session authorization;
   it redirects to sign-in and lists pebble links for creators only. CLI status
   includes domain, creator session presence and the current token's creator email

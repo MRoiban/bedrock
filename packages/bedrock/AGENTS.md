@@ -71,7 +71,7 @@ HTML; `init <name> [--template react]` scaffolds in the current empty directory.
 
 | Field | Meaning |
 | --- | --- |
-| `name` | 1–32 lowercase letters, digits, hyphens; `auth`, `bedrock`, `www` reserved |
+| `name` | 1–32 lowercase letters, digits, hyphens; start/end with a letter or digit; `auth`, `bedrock`, `www` reserved |
 | `access` | `"public"` (default), `"users"`, `"creators"`, or `{ allow: ["a@x.com", "@company.com", "creators"] }` (`"creators"` admits the server's creators) |
 | `schema` | Named Drizzle SQLite tables; `_bedrock_` SQL names reserved |
 | `queries`, `mutations` | Maps of named `query(...)` / `mutation(...)` definitions |
@@ -653,6 +653,11 @@ From `packages/bedrock`, `bun link` registers the `bedrock` bin globally. Ensure
 Bun's bin directory is on PATH. `bedrock --version` prints local package/checkout identity, platform, architecture and Bun version; `--json` exposes version, commit, branch, dirty, platform, arch and bun. Git fields are null outside a checkout.
 All commands support `--json` (one object; doctor returns a checks array).
 Errors carry `code`, `message`, `hint`; failures set exit code 1.
+`new`, `init`, `db`, `deploy`, `rm`, `start`, `stop`, `restart`, `rollback`,
+`secrets`, `token`, `backup`, and `jobs` accept `--help`/`-h` to print usage and a
+description without performing actions (exit 0). With `--json`, help returns
+`{ ok: true, command, usage, description }`. Unknown flags to `new`/`init` fail
+with `INVALID_ARGS` and usage hints; invalid pebble names fail with `INVALID_PEBBLE_NAME`.
 
 ```sh
 # Home server (after checkout/install.sh):

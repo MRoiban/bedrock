@@ -13,11 +13,37 @@ import { init } from "./init";
 import { dbCommand } from "./db";
 import { dev, devWorker } from "./dev";
 
+const commandHelp: Record<string, [usage: string, description: string]> = {
+  new: ["<name> [--template react|minimal]", "Create a pebble directory, install dependencies, and initialize Git and migrations."],
+  init: ["<name> [--template react|minimal]", "Scaffold a pebble in the current empty directory."],
+  db: ["generate|plan|migrate", "Generate, inspect, or apply pebble database migrations."],
+  deploy: ["[dir] [--no-open] [--url <url>] [--token <token>]", "Deploy a pebble to the daemon."],
+  rm: ["<name> --yes [--url <url>] [--token <token>]", "Remove a deployed pebble."],
+  start: ["<name> [--url <url>] [--token <token>]", "Start a deployed pebble."],
+  stop: ["<name> [--url <url>] [--token <token>]", "Stop a deployed pebble."],
+  restart: ["<name> [--url <url>] [--token <token>]", "Restart a deployed pebble."],
+  rollback: ["<name> [--force] [--url <url>] [--token <token>]", "Restore a pebble's previous release."],
+  secrets: ["ls <pebble> | set <pebble> <NAME> | unset <pebble> <NAME>... [--restart] [--url <url>] [--token <token>]", "List secret names or set and remove pebble secrets."],
+  token: ["create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id> [--url <url>] [--token <token>]", "Create, list, or revoke deploy tokens."],
+  backup: ["setup --dir <path> | setup --r2-account <id> --r2-bucket <bucket> --r2-access-key-id <key> [--r2-secret-access-key <secret>] | run [pebble] | ls <pebble> | restore <pebble> [--at <ts>] --yes", "Configure backups, create or list snapshots, or restore pebble data."],
+  jobs: ["ls <pebble> | run <pebble> <job> [--url <url>] [--token <token>]", "List or run pebble jobs."],
+};
+
 async function main() {
   const raw = process.argv.slice(2);
   const json = raw.includes("--json");
   const args = raw.filter(arg => arg !== "--json");
   const command = args.shift();
+  const help = command && Object.hasOwn(commandHelp, command) ? commandHelp[command] : undefined;
+  if (help && args.some(arg => arg === "--help" || arg === "-h")) {
+    const [usage, description] = help;
+    const value = { command, usage: `bedrock ${command} ${usage} [--json]`, description };
+    console.log(json ? JSON.stringify({ ok: true, ...value }) : `Usage: ${value.usage}\n${description}`);
+    return;
+  }
+  if ((command === "new" || command === "init") && args.some(arg => arg.startsWith("-") && arg !== "--template")) {
+    throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, `Use bedrock ${command} ${commandHelp[command]![0]} [--json].`);
+  }
   if (command === "--version" && !args.length) { const info = await buildInfo(); console.log(json ? JSON.stringify({ ok: true, ...info }) : formatBuild(info)); return; }
   if (command === "__dev_worker") { await devWorker(); return; }
   if (command === "dev") {
@@ -30,7 +56,7 @@ async function main() {
   let result: unknown;
   if (command === "setup") { result = await setupWizard(args, json); if (!json) return; }
   else if (command === "self-update" && (!args.length || args.length === 1 && args[0] === "--remote")) { const update = args[0] === "--remote" ? await remoteSelfUpdate(json ? {} : { onUpdate: update => console.log(`Updating remote bedrock ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)} · waiting for daemon…`) }) : await selfUpdate(); result = update; if (!json) { console.log("remote" in update ? `✓ Updated bedrock on ${update.domain} ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)} · daemon back in ${update.seconds}s` : `✓ Updated bedrock ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)}${update.restarted ? " · service restarted" : ""}`); return; } }
-  else if (command === "new" && (args.length === 1 || args.length === 3 && args[1] === "--template")) { result = await newPebble(args[0]!, args[2] ?? "react", { json }); if (!json) return; }
+  else if (command === "new" && !args[0]?.startsWith("-") && (args.length === 1 || args.length === 3 && args[1] === "--template")) { result = await newPebble(args[0]!, args[2] ?? "react", { json }); if (!json) return; }
   else if (command === "secrets") result = await secretsCommand(args);
   else if (command === "backup") result = await backupCommand(args);
   else if (command === "jobs") result = await jobsCommand(args);
@@ -41,7 +67,7 @@ async function main() {
     result = await daemonCommand(command, args, json);
     if (result === undefined) return;
   }
-  else if (command === "init" && (args.length === 1 || args.length === 3 && args[1] === "--template")) result = { command: "init", ...await init(args[0]!, process.cwd(), args[2], true) };
+  else if (command === "init" && !args[0]?.startsWith("-") && (args.length === 1 || args.length === 3 && args[1] === "--template")) result = { command: "init", ...await init(args[0]!, process.cwd(), args[2], true) };
   else if (command === "db" && args.length === 1 && ["generate", "plan", "migrate"].includes(args[0]!)) result = await dbCommand(args[0]!);
   else if (command && ["new", "init", "db", "self-update"].includes(command)) {
     const usage = command === "new" || command === "init" ? " <name> [--template react|minimal]" : command === "db" ? " generate|plan|migrate" : " [--remote]";
