@@ -83,17 +83,6 @@ export interface TransactionalJobDefinition { cron: string; transaction?: true; 
 export interface DetachedJobDefinition { cron: string; transaction: false; run: (ctx: DetachedContext) => unknown }
 export type JobDefinition = TransactionalJobDefinition | DetachedJobDefinition;
 
-export interface PluginConfig {
-  name: string;
-  schema?: Record<string, unknown>;
-  sockets?: Record<string, import("./hosting").SocketDefinition>;
-  services?: Record<string, import("./hosting").ServiceDefinition>;
-  routes?: Record<string, RouteHandler | DetachedRouteDefinition>;
-  onQuery?: (ctx: FunctionContext, name: string, args: unknown, next: () => Promise<unknown>) => Promise<unknown>;
-  onMutation?: PluginConfig["onQuery"];
-  jobs?: Record<string, JobDefinition>;
-}
-
 export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends FunctionMap = FunctionMap> {
   name: string;
   access?: Access;
@@ -110,7 +99,6 @@ export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends Fun
   sockets?: Record<string, import("./hosting").SocketDefinition>;
   services?: Record<string, import("./hosting").ServiceDefinition>;
   routes?: Record<string, RouteHandler | DetachedRouteDefinition>;
-  plugins?: readonly PluginConfig[];
   jobs?: Record<string, JobDefinition>;
 }
 

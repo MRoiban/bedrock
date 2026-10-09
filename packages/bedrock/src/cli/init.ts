@@ -42,7 +42,7 @@ Prefer ctx.invalidate([items]) with registered Drizzle tables; SQL names like ct
 Export Drizzle tables from pebble.ts. Run bedrock db generate after schema changes.
 Run bedrock db plan to inspect pending SQL; bedrock db migrate applies it.
 Run bun install, then bun run dev. Data lives in .bedrock/; never commit it.
-Read node_modules/bedrock/AGENTS.md and node_modules/bedrock/llms.txt for the complete API, jobs, plugins, auth, storage, sync, client/react, and @bedrock/ui.
+Read node_modules/bedrock/AGENTS.md and node_modules/bedrock/llms.txt for the complete API, jobs, auth, storage, sync, client/react, and @bedrock/ui.
 All CLI commands support --json. Never open real ~/.bedrock in tests.
 `,
     ".gitignore": "node_modules/\n.bedrock/\n",

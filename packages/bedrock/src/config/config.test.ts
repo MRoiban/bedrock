@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import * as v from "valibot";
 import { sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { definePebble, query, mutation, bucket, plugin, validateName } from "./index";
+import { definePebble, query, mutation, bucket, validateName } from "./index";
 import type { FunctionArgs, FunctionResult, QueryNames, MutationNames } from "./index";
 import { BedrockError } from "../error";
 
@@ -42,7 +42,6 @@ test("Standard Schema overloads and configuration helpers retain inference", () 
   expect([names, mutationNames, args, output, noArgs]).toEqual([true, true, true, true, true]);
   void bad;
   expect(bucket("attachments", { maxSize: "50mb", access: "owner" }).access).toBe("owner");
-  expect(plugin({ name: "audit-log" }).name).toBe("audit-log");
 });
 
 test("BedrockError has stable JSON and a repair hint", () => {
@@ -53,4 +52,36 @@ test("BedrockError has stable JSON and a repair hint", () => {
 test("custom HTTP body ceiling is bounded and opt-in", () => {
   expect(definePebble({ name: 'large', maxRequestBodySize: 1024 ** 4 }).maxRequestBodySize).toBe(1024 ** 4);
   for (const maxRequestBodySize of [0, -1, 0.5, Infinity, 1024 ** 4 + 1]) expect(() => definePebble({ name: 'large', maxRequestBodySize })).toThrow('Invalid maxRequestBodySize');
+});
+
+test("removed configuration keys fail with a migration hint", () => {
+  const hint = "Plugins were removed; spread the plugin's schema/routes/jobs/sockets/services objects into definePebble directly.";
+  for (const plugins of [undefined, [], [{ name: "old", routes: { "GET /old": () => new Response() } }]]) {
+    expect(() => definePebble({ name: "stale", plugins })).toThrow(expect.objectContaining({ code: "INVALID_CONFIG", hint }));
+  }
+  const config = definePebble({ name: "stale" });
+  Object.assign(config, { plugins: [] });
+  expect(() => definePebble(config)).toThrow(expect.objectContaining({ code: "INVALID_CONFIG", hint }));
+});
+
+test("schema rejects duplicate SQL names and repeated table registrations", () => {
+  const first = sqliteTable("items", { id: text("id") });
+  const second = sqliteTable("items", { id: text("id") });
+  for (const other of [first, second]) {
+    expect(() => definePebble({ name: "duplicate", schema: { first, other } })).toThrow(expect.objectContaining({
+      code: "DUPLICATE_TABLE",
+      hint: "Give each table in schema a distinct SQL name; register each table only once.",
+    }));
+  }
+});
+
+test("plain object composition preserves schema and function types idempotently", () => {
+  const sharedSchema = { items: sqliteTable("items", { id: text("id") }) };
+  const sharedQueries = { answer: query(() => 42) };
+  const pebble = definePebble({ name: "composed", schema: { ...sharedSchema }, queries: { ...sharedQueries } });
+  const table: typeof sharedSchema.items = pebble.schema.items;
+  const output: FunctionResult<typeof pebble.queries.answer> = 42;
+  expect(table).toBe(sharedSchema.items);
+  expect(output).toBe(42);
+  expect(definePebble(pebble)).toBe(pebble);
 });

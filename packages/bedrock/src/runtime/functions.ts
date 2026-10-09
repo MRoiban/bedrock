@@ -38,7 +38,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         if (kind === "query") throw new BedrockError("READ_ONLY", "Queries cannot invalidate tables.", "Call invalidate inside a mutation, route, or job.");
         for (const table of tables) {
           const name = typeof table === "string" ? table : getTableName(table);
-          if (!database.tableNames.has(name)) throw new BedrockError("UNKNOWN_TABLE", `Unknown table: ${name}`, "Pass a registered Drizzle table object or its SQL table name; register tables in schema or a plugin.");
+          if (!database.tableNames.has(name)) throw new BedrockError("UNKNOWN_TABLE", `Unknown table: ${name}`, "Pass a registered Drizzle table object or its SQL table name; register tables in the pebble schema.");
           invalidated.add(name);
         }
       } };
@@ -50,13 +50,9 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         if (kind === "query") sqlite.exec("PRAGMA query_only=ON");
         sqlite.exec(kind === "query" ? "BEGIN DEFERRED" : "BEGIN IMMEDIATE");
         let flushed = () => {};
-        const middleware = handler ? [] : (pebble.plugins ?? []).map(plugin => kind === "query" ? plugin.onQuery : plugin.onMutation).filter(fn => fn !== undefined);
-        const invoke = (index: number): Promise<any> => index < middleware.length
-          ? Promise.resolve(middleware[index]!(ctx, name, args, () => invoke(index + 1)))
-          : Promise.resolve(definition.run(ctx, args));
         const result = await tracker.capture(() => {
           if (kind === "mutation") flushed = tokens.flush();
-          return invoke(0);
+          return definition.run(ctx, args);
         });
         for (const table of invalidated) result.writes.add(table);
         // Detect unserializable results before committing any writes.

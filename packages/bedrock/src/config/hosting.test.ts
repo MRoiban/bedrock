@@ -1,14 +1,13 @@
 import { expect, test } from "bun:test";
-import { definePebble, plugin, service, socket } from "./index";
+import { definePebble, service, socket } from "./index";
 
-test("hosting validates paths and detects plugin collisions", () => {
+test("hosting validates socket paths, service names and backup directories", () => {
   const echo = socket({ message(ws, body) { ws.send(body); } });
   for (const path of ["relative", "/_bedrock", "/_bedrock/ws", "/host?query"]) expect(() => definePebble({ name: "host", sockets: { [path]: echo } })).toThrow();
   for (const path of ["../outside", "/absolute", "files", "uploads/foo", "db.sqlite", "a/../b", "a\\b", "C:/x"]) expect(() => definePebble({ name: "host", backup: { directories: [path] } })).toThrow();
   expect(() => definePebble({ name: "host", backup: { directories: ["a", "a/b"] } })).toThrow();
-  expect(() => definePebble({ name: "host", sockets: { "/host": echo }, plugins: [plugin({ name: "extension", sockets: { "/host": echo } })] })).toThrow();
   const host = service({ start: () => 1 });
-  expect(() => definePebble({ name: "host", services: { host }, plugins: [plugin({ name: "extension", services: { host } })] })).toThrow();
+  for (const name of ["bad-name", "1host", "constructor", "prototype", "__proto__"]) expect(() => definePebble({ name: "host", services: { [name]: host } })).toThrow(expect.objectContaining({ code: "INVALID_SERVICE" }));
 });
 
 test("service values derive from service definitions for typed handler contexts", () => {

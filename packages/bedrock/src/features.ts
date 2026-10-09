@@ -4,10 +4,8 @@ import { BedrockError } from "./error";
 export const daemonFeatures = ["sockets", "services", "directory-backups", "chunked-uploads", "chunked-uploads-cancel", "access-allow-creators", "pebble-secrets", "scoped-deploy-tokens", "service-tokens"];
 export function requiredFeatures(pebble: PebbleConfig): string[] {
   const required = new Set<string>();
-  for (const config of [pebble, ...(pebble.plugins ?? [])]) {
-    if (Object.keys(config.sockets ?? {}).length) required.add("sockets");
-    if (Object.keys(config.services ?? {}).length) required.add("services");
-  }
+  if (Object.keys(pebble.sockets ?? {}).length) required.add("sockets");
+  if (Object.keys(pebble.services ?? {}).length) required.add("services");
   if (pebble.backup?.directories?.length) required.add("directory-backups");
   if (typeof pebble.access === "object" && pebble.access.allow.includes("creators")) required.add("access-allow-creators");
   return [...required];

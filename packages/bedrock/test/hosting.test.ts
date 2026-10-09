@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { startPebble } from "../src/runtime";
-import { definePebble, service, socket, query, mutation, plugin } from "../src/config";
+import { definePebble, service, socket, query, mutation } from "../src/config";
 import { tempDirectory, HeaderWebSocket, identityHeaders } from "./helpers";
 
 async function connect(url: URL, headers: Record<string, string> = {}) {
@@ -29,7 +29,8 @@ test("services gate readiness, share values in functions/routes/sockets/jobs, an
   const pending = startPebble({ dir: temp.dir, dataDir: join(temp.dir, "data"), port, pebble: definePebble({
     name: "hosting", services: {
       first: service({ async start(ctx) { order.push("first"); began(); await gate; expect(ctx.dataDir).toBe(join(temp.dir, "data")); return { answer: 42, signal: ctx.signal }; }, stop(value) { expect(value.signal.aborted).toBe(true); order.push("stop first"); } }),
-    }, plugins: [plugin({ name: "second", services: { second: service({ start() { order.push("second"); return "two"; }, stop() { order.push("stop second"); } }) } })],
+      second: service({ start() { order.push("second"); return "two"; }, stop() { order.push("stop second"); } }),
+    },
     queries: { answer: query(ctx => ctx.services.first.answer) },
     routes: { "GET /value": (_req, _server, ctx) => Response.json(ctx.services.second) },
     sockets: { "/api/host": socket<number>({ open(ws, ctx) { ws.data.value = ctx.services.first.answer; }, async message(ws, body, ctx) { expect(ws.data.value).toBe(42); expect(await ctx.read(c => c.services.second)).toBe("two"); ws.send(body); } }) },
@@ -149,4 +150,15 @@ test('custom HTTP limit accepts streamed bodies above the default 90 MiB', async
     const response = await fetch(new URL('/large', runtime.server.url), { method: 'PUT', body });
     expect(response.status).toBe(200); expect(await response.json()).toEqual({ bytes: 91 * 1024 ** 2 });
   } finally { await runtime.stop(); temp.cleanup(); }
+});
+
+test("a socket cannot share its path with a GET route", async () => {
+  const temp = tempDirectory();
+  try {
+    await expect(startPebble({ dir: temp.dir, dataDir: temp.dir, port: 0, pebble: {
+      name: "conflict",
+      routes: { "GET /host": () => new Response("http") },
+      sockets: { "/host": socket({ message() {} }) },
+    } })).rejects.toMatchObject({ code: "INVALID_SOCKET", hint: "Choose a separate socket path." });
+  } finally { temp.cleanup(); }
 });

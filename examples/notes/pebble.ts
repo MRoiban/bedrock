@@ -30,5 +30,4 @@ export default definePebble({
   },
   web: "./web/index.html",
   routes: { "GET /api/health": () => new Response("ok") },
-  plugins: [],
 });
