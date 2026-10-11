@@ -689,6 +689,9 @@ CSS for app layouts. `OnyxThemeRoot` also accepts a scoped `theme`, `density`,
 and semantic `variables`; an omitted theme inherits its surroundings. The bundled
 CSS includes utilities used by components only, all Onyx component layers, and
 the embedded codicon font. Upstream palettes and defaults come from Onyx.
+Select options follow the trigger’s computed font size, family, weight, line
+height, and letter spacing across the portal; explicit SelectContent styles
+can override that typography.
 Maintainers sync the private `MRoiban/onyx` repository's `main` checkout using
 `bun run sync:onyx` and `bun run build:css` in `packages/ui`. The default source is
 a sibling `onyx` checkout; `ONYX_VERSION` records its commit and source hash.

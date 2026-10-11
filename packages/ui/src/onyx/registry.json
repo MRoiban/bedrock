@@ -258,6 +258,7 @@
       ],
       "registryDependencies": [
         "field",
+        "hooks",
         "icon",
         "theme"
       ]

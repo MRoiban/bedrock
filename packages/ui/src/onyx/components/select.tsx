@@ -4,9 +4,19 @@ import * as React from 'react';
 import * as SelectPrimitive from '@radix-ui/react-select';
 
 import { cn } from '../lib/cn';
+import { useComposedRefs } from '../lib/compose-refs';
 import { Icon } from './icon';
 
-const Select = SelectPrimitive.Root;
+const SelectTriggerContext = React.createContext<React.RefObject<HTMLButtonElement | null> | null>(null);
+
+function Select({ children, ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
+  const trigger = React.useRef<HTMLButtonElement>(null);
+  return (
+    <SelectTriggerContext.Provider value={trigger}>
+      <SelectPrimitive.Root {...props}>{children}</SelectPrimitive.Root>
+    </SelectTriggerContext.Provider>
+  );
+}
 const SelectGroup = SelectPrimitive.Group;
 const SelectValue = SelectPrimitive.Value;
 
@@ -14,57 +24,86 @@ const SelectTrigger = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Trigger>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
 >(({ className, children, ...props }, ref) => {
+  const trigger = React.useContext(SelectTriggerContext);
+  const composedRef = useComposedRefs(ref, trigger ?? undefined);
   const field = useFieldControl(props);
   props = { ...field, ...props, disabled: props.disabled ?? field.disabled };
   return (
-  <SelectPrimitive.Trigger
-    ref={ref}
-    data-slot="select-trigger"
-    data-invalid={props['aria-invalid'] && props['aria-invalid'] !== 'false' ? '' : undefined}
-    className={cn(
-      'flex h-[var(--onyx-control-height-md)] w-full items-center justify-between gap-[calc(8px*var(--onyx-scale-ui))] rounded-[calc(var(--onyx-radius-md)*var(--onyx-scale-ui))] border border-[var(--onyx-control-input-border)] bg-[var(--onyx-control-input-bg)] px-[calc(12px*var(--onyx-scale-ui))] py-[calc(8px*var(--onyx-scale-ui))] text-[length:var(--onyx-text-md)] leading-[1.428571] text-[var(--onyx-control-input-fg)] shadow-[var(--onyx-shadow-sm)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--onyx-control-focus-ring)] disabled:cursor-not-allowed disabled:opacity-50',
-      className
-    )}
-    {...props}
-  >
-    {children}
-    <SelectPrimitive.Icon asChild>
-      <Icon name="chevron-down" size="sm" className="text-[var(--onyx-text-muted)]" />
-    </SelectPrimitive.Icon>
-  </SelectPrimitive.Trigger>
-);
+    <SelectPrimitive.Trigger
+      ref={composedRef}
+      data-slot="select-trigger"
+      data-invalid={props['aria-invalid'] && props['aria-invalid'] !== 'false' ? '' : undefined}
+      className={cn(
+        'flex h-[var(--onyx-control-height-md)] w-full items-center justify-between gap-[calc(8px*var(--onyx-scale-ui))] rounded-[calc(var(--onyx-radius-md)*var(--onyx-scale-ui))] border border-[var(--onyx-control-input-border)] bg-[var(--onyx-control-input-bg)] px-[calc(12px*var(--onyx-scale-ui))] py-[calc(8px*var(--onyx-scale-ui))] text-[length:var(--onyx-text-md)] leading-[1.428571] text-[var(--onyx-control-input-fg)] shadow-[var(--onyx-shadow-sm)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--onyx-control-focus-ring)] disabled:cursor-not-allowed disabled:opacity-50',
+        className
+      )}
+      {...props}
+    >
+      {children}
+      <SelectPrimitive.Icon asChild>
+        <Icon name="chevron-down" size="sm" className="text-[var(--onyx-text-muted)]" />
+      </SelectPrimitive.Icon>
+    </SelectPrimitive.Trigger>
+  );
 });
 SelectTrigger.displayName = SelectPrimitive.Trigger.displayName;
 
 const SelectContent = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = 'popper', ...props }, ref) => (
-  <SelectPrimitive.Portal>
-    <SelectPrimitive.Content
-      ref={ref}
-      data-slot="select-content"
-      className={cn(
-        'z-[var(--onyx-z-popover)] min-w-[calc(128px*var(--onyx-scale-ui))] max-w-[calc(100vw-16px)] max-h-[var(--radix-select-content-available-height,85vh)] overflow-y-auto rounded-[calc(var(--onyx-radius-md)*var(--onyx-scale-ui))] border border-[var(--onyx-border-default)] bg-[var(--onyx-surface-menu)] text-[var(--onyx-text-foreground)] shadow-[var(--onyx-shadow-md)] focus:outline-none',
-        position === 'popper' && 'translate-y-[calc(4px*var(--onyx-scale-ui))]',
-        className
-      )}
-      position={position}
-      {...props}
-    >
-      <SelectPrimitive.Viewport
-        data-slot="select-viewport"
+>(({ className, children, position = 'popper', style, ...props }, ref) => {
+  const trigger = React.useContext(SelectTriggerContext);
+  const [content, setContent] = React.useState<HTMLDivElement | null>(null);
+  const [typography, setTypography] = React.useState<React.CSSProperties>({});
+  const composedRef = useComposedRefs(ref, setContent);
+
+  React.useLayoutEffect(() => {
+    if (!content || !trigger?.current) return;
+    // Portals leave the trigger's CSS scope. Read the actual typography on every
+    // opening so application overrides and changed font settings follow it.
+    const computed = trigger.current.ownerDocument.defaultView!.getComputedStyle(trigger.current);
+    const next = {
+      fontSize: computed.fontSize,
+      fontFamily: computed.fontFamily,
+      fontWeight: computed.fontWeight,
+      lineHeight: computed.lineHeight,
+      letterSpacing: computed.letterSpacing,
+    };
+    setTypography(previous =>
+      Object.entries(next).every(([key, value]) => previous[key as keyof typeof next] === value)
+        ? previous
+        : next
+    );
+  });
+
+  return (
+    <SelectPrimitive.Portal>
+      <SelectPrimitive.Content
+        ref={composedRef}
+        data-slot="select-content"
         className={cn(
-          'p-[calc(4px*var(--onyx-scale-ui))]',
-          position === 'popper' &&
-            'max-h-[var(--radix-select-content-available-height)] w-full min-w-[var(--radix-select-trigger-width)] overflow-y-auto'
+          'z-[var(--onyx-z-popover)] min-w-[calc(128px*var(--onyx-scale-ui))] max-w-[calc(100vw-16px)] max-h-[var(--radix-select-content-available-height,85vh)] overflow-y-auto rounded-[calc(var(--onyx-radius-md)*var(--onyx-scale-ui))] border border-[var(--onyx-border-default)] bg-[var(--onyx-surface-menu)] text-[length:var(--onyx-text-md)] leading-[1.428571] text-[var(--onyx-text-foreground)] shadow-[var(--onyx-shadow-md)] focus:outline-none',
+          position === 'popper' && 'translate-y-[calc(4px*var(--onyx-scale-ui))]',
+          className
         )}
+        position={position}
+        style={{ ...typography, ...style }}
+        {...props}
       >
-        {children}
-      </SelectPrimitive.Viewport>
-    </SelectPrimitive.Content>
-  </SelectPrimitive.Portal>
-));
+        <SelectPrimitive.Viewport
+          data-slot="select-viewport"
+          className={cn(
+            'p-[calc(4px*var(--onyx-scale-ui))]',
+            position === 'popper' &&
+              'max-h-[var(--radix-select-content-available-height)] w-full min-w-[var(--radix-select-trigger-width)] overflow-y-auto'
+          )}
+        >
+          {children}
+        </SelectPrimitive.Viewport>
+      </SelectPrimitive.Content>
+    </SelectPrimitive.Portal>
+  );
+});
 SelectContent.displayName = SelectPrimitive.Content.displayName;
 
 const SelectLabel = React.forwardRef<
@@ -94,7 +133,7 @@ const SelectItem = React.forwardRef<
     ref={ref}
     data-slot="select-item"
     className={cn(
-      'relative flex min-h-[max(24px,calc(32px*var(--onyx-scale-ui)))] w-full cursor-default select-none items-center rounded-[calc(var(--onyx-radius-sm)*var(--onyx-scale-ui))] py-[calc(6px*var(--onyx-scale-ui))] pl-[calc(32px*var(--onyx-scale-ui))] pr-[calc(8px*var(--onyx-scale-ui))] text-[length:var(--onyx-text-md)] leading-[1.428571] text-[var(--onyx-text-foreground)] outline-none transition-colors focus:bg-[var(--onyx-state-selected)] focus:text-[var(--onyx-state-selected-fg)] data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-40',
+      'relative flex min-h-[max(24px,calc(32px*var(--onyx-scale-ui)))] w-full cursor-default select-none items-center rounded-[calc(var(--onyx-radius-sm)*var(--onyx-scale-ui))] py-[calc(6px*var(--onyx-scale-ui))] pl-[calc(32px*var(--onyx-scale-ui))] pr-[calc(8px*var(--onyx-scale-ui))] text-[length:inherit] leading-[inherit] text-[var(--onyx-text-foreground)] outline-none transition-colors focus:bg-[var(--onyx-state-selected)] focus:text-[var(--onyx-state-selected-fg)] data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-40',
       className
     )}
     {...props}

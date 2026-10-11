@@ -4061,6 +4061,9 @@ font-size: calc(var(--onyx-text-lg) * var(--onyx-scale-type));
   .text-\[length\:calc\(var\(--onyx-text-md\)\*var\(--onyx-scale-type\)\)\]{
 font-size: calc(var(--onyx-text-md) * var(--onyx-scale-type));
 }
+  .text-\[length\:inherit\]{
+font-size: inherit;
+}
   .text-\[length\:var\(--onyx-text-lg\)\]{
 font-size: var(--onyx-text-lg);
 }
@@ -4107,6 +4110,9 @@ line-height: 1.333333;
 }
   .leading-\[1\.428571\]{
 line-height: 1.428571;
+}
+  .leading-\[inherit\]{
+line-height: inherit;
 }
   .leading-\[var\(--onyx-leading-normal\)\]{
 line-height: var(--onyx-leading-normal);
