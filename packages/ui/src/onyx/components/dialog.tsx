@@ -44,7 +44,7 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 export const DialogContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,
-  ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { overlayClassName?: string }
+  ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { overlayClassName?: string | undefined }
 >(({ className, children, overlayClassName, ...props }, ref) => {
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const contentRef = useComposedRefs(ref, setHost);
@@ -77,7 +77,7 @@ export const DialogContent = forwardRef<
 });
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
-export const DialogHeader = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement> & { asChild?: boolean }>(
+export const DialogHeader = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }>(
   ({ className, asChild, ...props }, ref) => {
     const Comp = asChild ? Slot : 'div';
     return <Comp ref={ref} data-slot="dialog-header" className={cn('flex flex-col gap-[var(--onyx-space-2)] text-left', className)} {...props} />;
@@ -85,7 +85,7 @@ export const DialogHeader = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivEle
 );
 DialogHeader.displayName = 'DialogHeader';
 
-export const DialogFooter = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement> & { asChild?: boolean }>(
+export const DialogFooter = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }>(
   ({ className, asChild, ...props }, ref) => {
     const Comp = asChild ? Slot : 'div';
     return <Comp ref={ref} data-slot="dialog-footer" className={cn('flex flex-col-reverse gap-[var(--onyx-space-2)] sm:flex-row sm:justify-end', className)} {...props} />;

@@ -72,10 +72,9 @@ Public entry points of `bedrock` (package.json `exports`):
 | `bedrock/server`  | `startPebble()` (low-level, used by daemon and tests) |
 | bin `bedrock`     | CLI |
 
-`@bedrock/ui` vendors a registry subset from the private
-[Onyx repository](https://github.com/MRoiban/onyx), including its required
-component dependencies. `packages/ui/ONYX_VERSION` records the upstream Git
-commit and selected-source hash. Sync from a sibling Onyx checkout with
+`@bedrock/ui` vendors every registry item from the private
+[Onyx repository](https://github.com/MRoiban/onyx). `packages/ui/ONYX_VERSION`
+records the upstream Git commit and source hash. Sync from a sibling Onyx checkout with
 `bun run sync:onyx` in `packages/ui`, then run `bun run build:css` and commit both
 the source and `dist/styles.css`. The stylesheet bundles all Onyx layers and
 the codicon font; pebbles need no CSS build step. Theme palettes and component

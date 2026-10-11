@@ -116,7 +116,7 @@ export const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
 Alert.displayName = "Alert";
 export const AlertTitle = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ asChild, className, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -130,7 +130,7 @@ export const AlertTitle = React.forwardRef<
 });
 export const AlertDescription = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ asChild, className, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -144,7 +144,7 @@ export const AlertDescription = React.forwardRef<
 });
 export const AlertActions = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ asChild, className, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (

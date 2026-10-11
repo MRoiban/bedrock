@@ -45,14 +45,12 @@ in the stylesheet; `Icon` needs no extra import or asset path.
 All hook components need `BedrockProvider`. Pass the same provider client to auth
 components; they accept only the auth methods they need, preserving typed pebble clients.
 
-The registry subset exports button, input, textarea, checkbox, switch, select,
-dialog, table, tabs, toast, text, empty-state, progress, kbd, icon, theme, panel,
-toolbar, and context-menu primitives from the package root. Panels and toolbars
-are useful composition pieces for ordinary web apps. Sidebar/activity-bar,
-status-bar, section-select, prompt, and number-effect are omitted to keep the
-web API focused; command is omitted to avoid the additional cmdk dependency.
-Required registry dependencies are exported too: Field/Label, Popover, Spinner,
-Alert, Badge, and the shared hooks. `Toast` and `Tabs` retain Onyx's source-owned
+Every Onyx primitive is exported from the package root: form controls (Field,
+Input, Select, Combobox, DatePicker, Slider, …), overlays (Dialog, Sheet,
+AlertDialog, Popover, Menu, Tooltip, Command), collections (Listbox, Tree,
+VirtualList, Table), layout and workbench pieces (Stack, Panel, Toolbar, Sidebar,
+SplitView, StatusBar), and display components (Badge, Card, Alert, Avatar,
+Skeleton, …). Names and APIs match Onyx; `Toast` and `Tabs` keep Onyx's
 composition API, including the toast queue hook.
 
 ## Themes and custom styles

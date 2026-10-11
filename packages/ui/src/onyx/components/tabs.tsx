@@ -106,7 +106,7 @@ export const tabsVariants = cva("onyx-tabs", {
 });
 export const TabsList = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(
   (
     { className, asChild, onKeyDown, onFocusCapture, onBlurCapture, ...props },

@@ -19,9 +19,9 @@ export const emptyStateActionsVariants = cva("onyx-empty-state-actions");
 export const EmptyState = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement> & {
-    asChild?: boolean;
-    tone?: DisplayTone;
-    size?: "sm" | "md" | "lg";
+    asChild?: boolean | undefined;
+    tone?: DisplayTone | undefined;
+    size?: "sm" | "md" | "lg" | undefined;
   }
 >(({ className, asChild, tone = "neutral", size = "md", ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
@@ -40,7 +40,7 @@ EmptyState.displayName = "EmptyState";
 
 export const EmptyStateIcon = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -56,7 +56,7 @@ EmptyStateIcon.displayName = "EmptyStateIcon";
 
 export const EmptyStateTitle = React.forwardRef<
   HTMLHeadingElement,
-  React.HTMLAttributes<HTMLHeadingElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLHeadingElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "h3";
   return (
@@ -72,7 +72,7 @@ EmptyStateTitle.displayName = "EmptyStateTitle";
 
 export const EmptyStateDescription = React.forwardRef<
   HTMLParagraphElement,
-  React.HTMLAttributes<HTMLParagraphElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLParagraphElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "p";
   return (
@@ -88,7 +88,7 @@ EmptyStateDescription.displayName = "EmptyStateDescription";
 
 export const EmptyStateActions = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (

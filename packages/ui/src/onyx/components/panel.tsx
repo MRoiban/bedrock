@@ -7,7 +7,7 @@ import { cn } from "../lib/cn";
 
 export const Panel = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean; variant?: 'card' | 'docked' }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined; variant?: 'card' | 'docked' | undefined }
 >(({ className, asChild, variant = 'card', ...props }, ref) => {
   const Component = asChild ? Slot : "section";
   return (
@@ -29,7 +29,7 @@ Panel.displayName = "Panel";
 
 export const PanelHeader = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Component = asChild ? Slot : "header";
   return (
@@ -48,7 +48,7 @@ PanelHeader.displayName = "PanelHeader";
 
 export const PanelBody = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Component = asChild ? Slot : "div";
   return (
@@ -64,7 +64,7 @@ PanelBody.displayName = "PanelBody";
 
 export const PanelFooter = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Component = asChild ? Slot : "footer";
   return (

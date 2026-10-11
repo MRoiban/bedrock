@@ -56,7 +56,7 @@ PopoverClose.displayName = "PopoverClose";
 export const PopoverContent = React.forwardRef<
   React.ElementRef<typeof P.Content>,
   React.ComponentPropsWithoutRef<typeof P.Content> & {
-    container?: HTMLElement | null;
+    container?: HTMLElement | null | undefined;
   }
 >(
   (
@@ -101,7 +101,7 @@ export const PopoverArrow = React.forwardRef<
 PopoverArrow.displayName = "PopoverArrow";
 export const PopoverHeader = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ asChild, className, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -116,7 +116,7 @@ export const PopoverHeader = React.forwardRef<
 PopoverHeader.displayName = "PopoverHeader";
 export const PopoverBody = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ asChild, className, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -131,7 +131,7 @@ export const PopoverBody = React.forwardRef<
 PopoverBody.displayName = "PopoverBody";
 export const PopoverFooter = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ asChild, className, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (

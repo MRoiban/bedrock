@@ -3,7 +3,7 @@ import { useCallback, useRef, useState, type SetStateAction } from 'react';
 export interface UseControllableStateOptions<T> {
   value?: T | undefined;
   defaultValue: T;
-  onChange?: (value: T) => void;
+  onChange?: ((value: T) => void) | undefined;
 }
 export function useControllableState<T>({
   value,

@@ -12,7 +12,7 @@ import { useComposedRefs } from "../lib/compose-refs";
 
 export const ToastViewport = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -29,8 +29,8 @@ ToastViewport.displayName = "ToastViewport";
 export const ToastRoot = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement> & {
-    asChild?: boolean;
-    tone?: DisplayTone;
+    asChild?: boolean | undefined;
+    tone?: DisplayTone | undefined;
   }
 >(({ className, asChild, tone = "neutral", ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
@@ -48,7 +48,7 @@ ToastRoot.displayName = "ToastRoot";
 
 export const ToastContent = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -64,7 +64,7 @@ ToastContent.displayName = "ToastContent";
 
 export const ToastIcon = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -80,7 +80,7 @@ ToastIcon.displayName = "ToastIcon";
 
 export const ToastMessage = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -96,7 +96,7 @@ ToastMessage.displayName = "ToastMessage";
 
 export const ToastSource = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -112,7 +112,7 @@ ToastSource.displayName = "ToastSource";
 
 export const ToastText = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (
@@ -128,7 +128,7 @@ ToastText.displayName = "ToastText";
 
 export const ToastClose = React.forwardRef<
   HTMLButtonElement,
-  React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }
+  React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, type = "button", ...props }, ref) => {
   const Comp = asChild ? Slot : "button";
   return (
@@ -145,7 +145,7 @@ ToastClose.displayName = "ToastClose";
 
 export const ToastActions = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean | undefined }
 >(({ className, asChild, ...props }, ref) => {
   const Comp = asChild ? Slot : "div";
   return (

@@ -14,7 +14,7 @@ interface FocusSnapshot {
 export function useRemovalFocus<T extends HTMLElement>(
   ref: React.RefObject<T | null>,
   selector: string,
-  options: { fallbackRef?: React.RefObject<HTMLElement | null>; onEmpty?: () => void; returnToPrevious?: boolean } = {},
+  options: { fallbackRef?: React.RefObject<HTMLElement | null> | undefined; onEmpty?: (() => void) | undefined; returnToPrevious?: boolean | undefined } = {},
 ) {
   const snapshot = React.useRef<FocusSnapshot | null>(null);
   const previous = React.useRef<HTMLElement | null>(null);

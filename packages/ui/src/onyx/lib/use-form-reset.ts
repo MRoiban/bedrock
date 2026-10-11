@@ -27,7 +27,7 @@ export function useFormReset(
 
 /** Controllable state with a silent reset to its mount-time uncontrolled default. */
 export function useResettableState<T>({ value, defaultValue, onChange }: {
-  value?: T; defaultValue: T; onChange?: (value: T) => void;
+  value?: T | undefined; defaultValue: T; onChange?: ((value: T) => void) | undefined;
 }): [T, (next: React.SetStateAction<T>) => void, () => void] {
   const initial = React.useRef(defaultValue);
   const silent = React.useRef(false);

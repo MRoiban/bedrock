@@ -158,7 +158,7 @@ export const Button = forwardRef<ElementRef<'button'>, ButtonProps>(
       >
         {asChild && isValidElement(children)
           ? cloneElement(
-              children as ReactElement<Record<string, unknown> & { children?: ReactNode }>,
+              children as ReactElement<Record<string, unknown> & { children?: ReactNode | undefined }>,
               blocked ? {
                 onClickCapture: blockActivation,
                 onClick: blockActivation,
@@ -169,7 +169,7 @@ export const Button = forwardRef<ElementRef<'button'>, ButtonProps>(
               } : {},
               <>
                 <span data-slot="button-label" className="onyx-button-label">
-                  {(children.props as { children?: ReactNode }).children}
+                  {(children.props as { children?: ReactNode | undefined }).children}
                 </span>
                 {loading && (
                   <span

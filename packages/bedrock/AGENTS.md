@@ -677,8 +677,10 @@ All hooks need BedrockProvider. `useQuery` returns `{ data, error, isLoading, co
 `{ upload, progress, error, isUploading }` and passes all upload options through. Args without a schema are `undefined`.
 HTML references `./app.tsx` with a module script; Bun bundles it.
 
-`@bedrock/ui` exports Onyx primitives (Button, Input, Textarea, Panel/PanelBody,
-Dialog, Table, Tabs, Toast, and more) and AppShell, UserMenu, SignInGate,
+`@bedrock/ui` exports every Onyx primitive (forms such as Field, Input, Select,
+Combobox and DatePicker; overlays such as Dialog, Sheet, Menu, Popover, Tooltip
+and Command; collections such as Listbox, Tree, VirtualList and Table; layout
+such as Stack, Panel, Toolbar and SplitView) and AppShell, UserMenu, SignInGate,
 UploadButton. Import its stylesheet once; no Tailwind setup is needed.
 `UploadButton<typeof pebble>` takes `bucket="attachments"` and
 `onUpload={metadata => ...}`, with optional `accept`, `disabled`, `label`,

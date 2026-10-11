@@ -108,8 +108,8 @@ export function useFieldControl(overrides?: Pick<React.AriaAttributes, 'aria-lab
 export const Label = React.forwardRef<
   HTMLLabelElement,
   React.ComponentPropsWithoutRef<typeof LabelPrimitive.Root> & {
-    required?: boolean;
-    optional?: boolean;
+    required?: boolean | undefined;
+    optional?: boolean | undefined;
   }
 >(({ className, required, optional, children, ...props }, ref) => {
   const field = React.useContext(FieldContext);
@@ -146,7 +146,7 @@ function usePart(kind: 'label' | 'description' | 'error', idProp?: string) {
 }
 export const FieldDescription = React.forwardRef<
   HTMLParagraphElement,
-  React.ComponentPropsWithoutRef<'p'> & { asChild?: boolean }
+  React.ComponentPropsWithoutRef<'p'> & { asChild?: boolean | undefined }
 >(({ asChild, className, id: supplied, ...props }, ref) => {
   const id = usePart('description', supplied);
   const Comp = asChild ? Slot : 'p';
@@ -163,7 +163,7 @@ export const FieldDescription = React.forwardRef<
 FieldDescription.displayName = 'FieldDescription';
 export const FieldError = React.forwardRef<
   HTMLParagraphElement,
-  React.ComponentPropsWithoutRef<'p'> & { asChild?: boolean }
+  React.ComponentPropsWithoutRef<'p'> & { asChild?: boolean | undefined }
 >(({ asChild, className, id: supplied, children, ...props }, ref) => {
   const id = usePart('error', supplied);
   const Comp = asChild ? Slot : 'p';
@@ -191,7 +191,7 @@ export const FieldError = React.forwardRef<
 FieldError.displayName = 'FieldError';
 export const Fieldset = React.forwardRef<
   HTMLFieldSetElement,
-  React.ComponentPropsWithoutRef<'fieldset'> & { asChild?: boolean }
+  React.ComponentPropsWithoutRef<'fieldset'> & { asChild?: boolean | undefined }
 >(({ asChild, className, ...props }, ref) => {
   const Comp = asChild ? Slot : 'fieldset';
   return (
@@ -207,7 +207,7 @@ export const Fieldset = React.forwardRef<
 Fieldset.displayName = 'Fieldset';
 export const Legend = React.forwardRef<
   HTMLLegendElement,
-  React.ComponentPropsWithoutRef<'legend'> & { asChild?: boolean }
+  React.ComponentPropsWithoutRef<'legend'> & { asChild?: boolean | undefined }
 >(({ asChild, className, ...props }, ref) => {
   const Comp = asChild ? Slot : 'legend';
   return (

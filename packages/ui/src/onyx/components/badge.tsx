@@ -72,13 +72,13 @@ export function formatCount(value: number, max = 99) {
 }
 /** Optional styling attributes and integration hooks for custom display markup. */
 export function displayAttributes(options: {
-  tone?: DisplayTone;
-  variant?: string;
-  size?: string;
-  state?: string;
-  orientation?: "horizontal" | "vertical";
-  interactive?: boolean;
-  pulse?: boolean;
+  tone?: DisplayTone | undefined;
+  variant?: string | undefined;
+  size?: string | undefined;
+  state?: string | undefined;
+  orientation?: "horizontal" | "vertical" | undefined;
+  interactive?: boolean | undefined;
+  pulse?: boolean | undefined;
 } = {}) {
   return {
     "data-tone": options.tone,
@@ -122,7 +122,7 @@ export const Count = React.forwardRef<HTMLSpanElement, CountProps>(
       >
         {asChild && children
           ? React.cloneElement(
-              children as React.ReactElement<{ children?: React.ReactNode }>,
+              children as React.ReactElement<{ children?: React.ReactNode | undefined }>,
               {},
               content,
             )

@@ -2,7 +2,6 @@ import { mkdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { BedrockError } from "bedrock/client";
 
-export const selectedItems = ["button", "input", "textarea", "checkbox", "switch", "select", "dialog", "table", "tabs", "toast", "text", "empty-state", "progress", "kbd", "icon", "theme", "panel", "toolbar", "context-menu"];
 const packageDir = resolve(import.meta.dir, "..");
 export const defaultSource = resolve(packageDir, "../../../onyx");
 interface RegistryItem { name: string; files: { path: string }[]; registryDependencies?: string[] }
@@ -18,11 +17,12 @@ export async function syncOnyx(source = defaultSource, destination = packageDir)
     if (visited.has(name)) return;
     visited.add(name);
     const item = items.get(name);
-    if (!item) throw new BedrockError("ONYX_REGISTRY_ITEM_MISSING", `Registry item ${name} is missing.`, "Review the selected component list against the upstream registry.");
+    if (!item) throw new BedrockError("ONYX_REGISTRY_ITEM_MISSING", `Registry item ${name} is missing.`, "Check registryDependencies in the upstream registry.");
     for (const file of item.files) files.add(file.path);
     for (const dependency of item.registryDependencies ?? []) include(dependency);
   }
-  selectedItems.forEach(include);
+  // Pebbles get every Onyx primitive; Bedrock adds integrations, not a curated subset.
+  registry.items.forEach(item => include(item.name));
   // Registry metadata omits shared helpers; follow relative source imports as well.
   async function read(path: string): Promise<string> {
     if (!path.startsWith("src/") || path.includes("..")) throw new BedrockError("ONYX_SOURCE_PATH", `Unsafe source path: ${path}`, "Use registry files inside Onyx src/.");
@@ -54,11 +54,7 @@ export async function syncOnyx(source = defaultSource, destination = packageDir)
   for (const [path, content] of contents) {
     const output = join(target, path.slice(4));
     await mkdir(dirname(output), { recursive: true });
-    // Radix optional props must be omitted under Bedrock's exactOptionalPropertyTypes.
-    const compatible = path === "src/components/context-menu.tsx"
-      ? content.replace("checked={checked}", "{...(checked === undefined ? {} : { checked })}")
-      : content;
-    await Bun.write(output, `/* Vendored from Onyx. Do not edit; run bun run sync:onyx. */\n${compatible}`);
+    await Bun.write(output, `/* Vendored from Onyx. Do not edit; run bun run sync:onyx. */\n${content}`);
   }
   await Bun.write(join(target, "registry.json"), registryText);
   await Bun.write(join(destination, "ONYX_VERSION"), version);

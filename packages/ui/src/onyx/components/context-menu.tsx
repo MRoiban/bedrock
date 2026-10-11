@@ -28,7 +28,7 @@ function itemContent(
 ) {
   const child =
     asChild && React.isValidElement(children)
-      ? (children as React.ReactElement<{ children?: React.ReactNode }>)
+      ? (children as React.ReactElement<{ children?: React.ReactNode | undefined }>)
       : undefined;
   const label = child ? child.props.children : children;
   const content = leading ? (
@@ -86,7 +86,7 @@ ContextMenuRadioGroup.displayName = "ContextMenuRadioGroup";
 export const ContextMenuContent = React.forwardRef<
   React.ElementRef<typeof P.Content>,
   React.ComponentPropsWithoutRef<typeof P.Content> & {
-    container?: HTMLElement | null;
+    container?: HTMLElement | null | undefined;
   }
 >(({ className, container, collisionPadding = 8, ...props }, ref) => (
   <P.Portal container={container}>
@@ -103,7 +103,7 @@ ContextMenuContent.displayName = "ContextMenuContent";
 export const ContextMenuSubContent = React.forwardRef<
   React.ElementRef<typeof P.SubContent>,
   React.ComponentPropsWithoutRef<typeof P.SubContent> & {
-    container?: HTMLElement | null;
+    container?: HTMLElement | null | undefined;
   }
 >(({ className, container, collisionPadding = 8, ...props }, ref) => (
   <P.Portal container={container}>
@@ -120,8 +120,8 @@ ContextMenuSubContent.displayName = "ContextMenuSubContent";
 export const ContextMenuItem = React.forwardRef<
   React.ElementRef<typeof P.Item>,
   React.ComponentPropsWithoutRef<typeof P.Item> & {
-    inset?: boolean;
-    tone?: "neutral" | "danger";
+    inset?: boolean | undefined;
+    tone?: "neutral" | "danger" | undefined;
   }
 >(({ className, inset, tone, children, ...props }, ref) => (
   <P.Item
@@ -138,8 +138,8 @@ ContextMenuItem.displayName = "ContextMenuItem";
 export const ContextMenuSubTrigger = React.forwardRef<
   React.ElementRef<typeof P.SubTrigger>,
   React.ComponentPropsWithoutRef<typeof P.SubTrigger> & {
-    inset?: boolean;
-    tone?: "neutral" | "danger";
+    inset?: boolean | undefined;
+    tone?: "neutral" | "danger" | undefined;
   }
 >(({ className, inset, tone, children, ...props }, ref) => (
   <P.SubTrigger
@@ -209,7 +209,7 @@ export const ContextMenuRadioItem = React.forwardRef<
 ContextMenuRadioItem.displayName = "ContextMenuRadioItem";
 export const ContextMenuLabel = React.forwardRef<
   React.ElementRef<typeof P.Label>,
-  React.ComponentPropsWithoutRef<typeof P.Label> & { inset?: boolean }
+  React.ComponentPropsWithoutRef<typeof P.Label> & { inset?: boolean | undefined }
 >(({ className, inset, ...props }, ref) => (
   <P.Label
     ref={ref}
@@ -233,7 +233,7 @@ export const ContextMenuSeparator = React.forwardRef<
 ContextMenuSeparator.displayName = "ContextMenuSeparator";
 export const ContextMenuShortcut = React.forwardRef<
   HTMLSpanElement,
-  React.HTMLAttributes<HTMLSpanElement> & { asChild?: boolean }
+  React.HTMLAttributes<HTMLSpanElement> & { asChild?: boolean | undefined }
 >(({ asChild, className, ...props }, ref) => {
   const Comp = asChild ? Slot : "span";
   return (

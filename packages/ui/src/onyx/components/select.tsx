@@ -125,8 +125,8 @@ SelectLabel.displayName = SelectPrimitive.Label.displayName;
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item> & {
-    leading?: React.ReactNode;
-    trailing?: React.ReactNode;
+    leading?: React.ReactNode | undefined;
+    trailing?: React.ReactNode | undefined;
   }
 >(({ className, children, leading, trailing, ...props }, ref) => (
   <SelectPrimitive.Item
