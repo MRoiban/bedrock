@@ -38,7 +38,8 @@ test("notes example serves bundled UI, adds and lists notes over HTTP, and verif
     const script = /src="([^"]+\.js[^"]*)"/.exec(html);
     expect(script).not.toBeNull();
     expect((await fetch(new URL(script![1]!, running.server.url))).status).toBe(200);
-    expect(await (await fetch(new URL("/api/health", running.server.url))).text()).toBe("ok");
+    expect((await fetch(new URL("/api/health", running.server.url))).status).toBe(401);
+    expect(await (await fetch(new URL("/api/health", running.server.url), { headers })).text()).toBe("ok");
   } finally {
     await running.stop();
     temp.cleanup();

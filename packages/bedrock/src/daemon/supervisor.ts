@@ -1,3 +1,4 @@
+import { validatePublicRouteKey } from "../config/public-route";
 import { childEnvironment } from "./child-env";
 import { createSecrets } from "./secrets";
 import type { User } from "../config";
@@ -20,6 +21,7 @@ export interface Child {
   stopTimeout?: number;
   devSource?: boolean;
   access: Access;
+  publicRoutes: string[];
 }
 interface State { child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number }
 
@@ -117,7 +119,7 @@ export class Supervisor {
     const reading = Promise.all([logs.pump(processChild.stdout), logs.pump(processChild.stderr)]);
     // Observe pipe failures immediately; the child is also reaped on every failure path.
     void reading.catch(() => {});
-    const child: Child = { process: processChild, port: 0, release, releaseId, devSource, started, reading, requests: 0, access: "users" };
+    const child: Child = { process: processChild, port: 0, release, releaseId, devSource, started, reading, requests: 0, access: "users", publicRoutes: [] };
     void processChild.exited.then(() => {
       for (const [requestId, pending] of requests) {
         if (pending.child !== child) continue;
@@ -139,6 +141,11 @@ export class Supervisor {
       if (!health.ok || info.name !== name || processChild.exitCode !== null) throw new BedrockError("HEALTH_FAILED", `${name} failed its health check.`, `Check bedrock logs ${name} before retrying.`);
       const access = info.access;
       if (!["public", "users", "creators"].includes(access) && !(access && Array.isArray(access.allow) && access.allow.every((email: unknown) => typeof email === "string"))) throw new BedrockError("HEALTH_FAILED", "Invalid child access policy.", "Return a valid access value in the health check.");
+      const publicRoutes = info.public_routes ?? [];
+      if (!Array.isArray(publicRoutes) || publicRoutes.some((key: unknown) => typeof key !== "string")) throw new BedrockError("HEALTH_FAILED", "Invalid public route list.", "Return registered public route keys in the health check.");
+      publicRoutes.forEach(validatePublicRouteKey);
+      child.publicRoutes = publicRoutes;
+      if (!devSource) await Bun.write(join(release, ".bedrock-public-routes.json"), JSON.stringify(publicRoutes));
       child.access = access;
       return child;
     } catch (error) {

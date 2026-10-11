@@ -1,3 +1,4 @@
+import { matchesPublicRoute } from "./public-routes";
 import { buildInfo } from "../version";
 import { updateCheckout } from "../self-update";
 import { requireUpdateService, scheduleUpdateRestart } from "../service/update-restart";
@@ -80,6 +81,14 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           if (!child) return notFound();
           if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
           const websocket = request.headers.get("upgrade")?.toLowerCase() === "websocket";
+          if (!websocket && matchesPublicRoute(child.publicRoutes, request.method, url.pathname)) {
+            request.headers.delete("cookie");
+            request.headers.delete("authorization");
+            for (const name of [...request.headers.keys()]) if (name.startsWith("x-bedrock-")) request.headers.delete(name);
+            server.timeout(request, 0);
+            child.requests++;
+            return await proxyHttp(request, child.port, child.releaseId, () => { child.requests--; }, { "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) });
+          }
           const hasSessionCookie = (request.headers.get("cookie") ?? "").split(";").some(part => part.trim().split("=", 1)[0] === "bedrock_session");
           const bearer = !hasSessionCookie && request.headers.get("authorization")?.startsWith("Bearer brk_") === true;
           const token = cookieToken(request);

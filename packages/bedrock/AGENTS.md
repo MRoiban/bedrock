@@ -165,12 +165,10 @@ and process-local overlap protection.
 
 Google OAuth and sessions belong to the daemon; identity is global, access is per
 pebble. Configure Google's redirect URI as `https://auth.<domain>/callback`.
-The daemon checks access before all pebble routes and strips external identity
+The daemon checks access before normal pebble routes and strips external identity
 headers/session cookies. Each child receives a separately derived signing secret;
-functions and sync verify signed identity too. Direct low-level custom routes
-retain Bun handler behavior; expose pebbles through the daemon, not their child
-port. Route context resolves signed identity, but public/private routing is the
-daemon's responsibility for session/anonymous calls; runtime token requests enforce access on every entry point.
+functions and sync verify signed identity too. The child also checks access for normal custom routes, including anonymous
+requests; expose pebbles through the daemon, not their child port.
 
 `"users"` permits all signed-in users, not only row owners. Queries and mutations
 must enforce row authorization explicitly (e.g. filter `ownerId` and check it
@@ -188,6 +186,48 @@ Creators and their code are trusted. Pebbles have no OS isolation and can access
 server files as the daemon user. Security boundaries protect against end users
 and the internet, not hostile creators. Unscoped deploy tokens grant full daemon management; scoped tokens grant only named actions on matching pebble globs.
 
+
+### Public HTTP routes
+
+Use `publicRoute` from `bedrock` for anonymous HTTP endpoints on a protected
+pebble. It composes with detached work:
+
+```ts
+routes: {
+  "GET /agents.md": publicRoute(() => new Response(doc, {
+    headers: { "content-type": "text/markdown; charset=utf-8" },
+  })),
+  "GET /health": publicRoute(detached(() => new Response("ok"))),
+}
+```
+
+Only HTTP entries in `routes` qualify; sockets, functions and storage cannot be
+marked public, and public wildcard (`*`) keys are rejected. Public keys must
+use normalized paths without repeated slashes or dot segments. It is allowed and
+redundant on `access: "public"`. The daemon matches normalized paths by exact,
+case-sensitive segments; `:param` matches one nonempty segment. Extra/trailing
+slashes and encoded static spellings do not match. HEAD can fall back to GET.
+The child checks the actual selected handler, so private static/HEAD overrides
+still deny anonymous access. Reserved `/_bedrock` paths never qualify. Protected
+pebbles with a Bun HTML entry must namespace public GET/HEAD parameter routes:
+root patterns like `/:id` are rejected at load because generated bundle assets
+would override their handlers. Static public paths such as `/agents.md` work.
+
+These handlers always see `user: null` and `token: null`, even when callers send
+valid credentials. The daemon skips session resolution, Origin checks and login
+redirects, removes all Cookie, Authorization and x-bedrock-* headers, and sends
+no identity; the child repeats credential stripping. Public routes need no token
+grant, but `route:<exact key>` remains a valid registered token permission.
+Deploy output and `bedrock ls` list public routes (JSON: `public_routes`), including
+stopped releases.
+
+Author security checklist:
+
+- Treat every input as untrusted; never return user data or secrets.
+- Bound request size and work yourself. There is no built-in rate limit.
+- Never call paid upstreams on anonymous input.
+- Prefer GET for static documentation and health responses.
+- Keep anything private on normal routes.
 
 ### Pebble tokens for native clients
 

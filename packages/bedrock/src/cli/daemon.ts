@@ -113,6 +113,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
       const url = domain === "localhost" ? `http://${pebble.name}.localhost:${new URL((await connection(flags)).url).port}` : `https://${pebble.name}.${domain}`;
       if (!json) {
         console.log(`✓ Deployed ${pebble.name}\n${url}`);
+        console.log(`Public routes: ${(result.value.public_routes ?? []).join(", ") || "none"}`);
         if (first && pebble.access && pebble.access !== "public") console.log(`Access: ${pebble.access === "users" ? "anyone signed in with Google" : pebble.access === "creators" ? "server creators" : pebble.access.allow.join(", ")}.`);
         if ((options.tty ?? process.stdin.isTTY) && !flags["--no-open"]) await (options.open ?? openBrowser)(url);
         return;
@@ -122,7 +123,12 @@ export async function daemonCommand(command: string, args: string[], json: boole
   }
   if (command === "ls") {
     if (positionals.length) invalid();
-    return { command, ...(await (await call(flags, "/api/pebbles")).json()) };
+    const result = await (await call(flags, "/api/pebbles")).json();
+    if (!json) {
+      for (const pebble of result.value) console.log(`${pebble.name}  ${pebble.status}  Public routes: ${(pebble.public_routes ?? []).join(", ") || "none"}`);
+      return;
+    }
+    return { command, ...result };
   }
   if (command === "token") {
     if (!name || !["create", "ls", "revoke"].includes(name) || positionals.length !== (name === "revoke" ? 2 : 1)) invalid();

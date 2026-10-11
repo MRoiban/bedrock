@@ -27,7 +27,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
       const { user, token } = resolved;
       if (token) checkAccess(pebble, user);
       if (!handler || name === "storage" || permission) requirePermission(token, permission ?? (name === "storage" ? storagePermission(request) : `${kind}:${name}`));
-      if (!handler || name === "storage") checkAccess(pebble, user);
+      if (!handler || name === "storage" || (name === "route" && !identity)) checkAccess(pebble, user);
       if (definition.schema && !identity?.validated) {
         const result = await definition.schema["~standard"].validate(args);
         if (result.issues) throw new BedrockError("INVALID_ARGS", result.issues.map(issue => issue.message).join("; "), "Send JSON matching the function's Standard Schema.");
@@ -86,7 +86,10 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
       const resolved = identity ? { ...identity, token: identity.token ?? null } : await identify(request);
       const { user, token } = resolved;
       if (token) checkAccess(pebble, user);
-      if (permission) requirePermission(token, permission);
+      if (permission) {
+        requirePermission(token, permission);
+        if (!identity) checkAccess(pebble, user);
+      }
       const slot = async <T>(kind: "query" | "mutation", fn: (ctx: FunctionContext) => T): Promise<Awaited<T>> => {
         const result = await execute(kind, "detached", null, request, token ? undefined : { user, token }, fn);
         return result.value;
@@ -122,8 +125,8 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
     job(handler: (ctx: FunctionContext) => unknown) {
       return execute("mutation", "job", null, new Request("http://localhost/_bedrock/jobs"), { user: null }, handler);
     },
-    route(request: Request, handler: (ctx: FunctionContext) => unknown, permission?: string) {
-      return execute("mutation", "route", null, request, undefined, handler, permission);
+    route(request: Request, handler: (ctx: FunctionContext) => unknown, permission?: string, identity?: RequestIdentity) {
+      return execute("mutation", "route", null, request, identity, handler, permission);
     },
     onCommit(listener: (writes: Set<string>) => void) {
       listeners.add(listener);

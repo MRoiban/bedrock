@@ -155,6 +155,53 @@ authorization is **per pebble**.
   only an explicitly attached dev source uses its source-local `.bedrock` directory.
 - **Dev mode** (`bedrock dev`): no Google. A local login page lets you pick any email. Agents must be able to test auth flows without credentials.
 
+### Public HTTP routes
+
+`publicRoute(handler)` from `bedrock` marks an individual registered HTTP route
+as public on any access mode, including `creators`, `users`, and allow lists.
+It accepts a plain Bun handler or `detached(handler)`; on a public pebble it is
+allowed and redundant. Only entries in `routes` qualify: sockets, functions,
+storage, jobs, services and reserved `/_bedrock` endpoints cannot be marked
+public. Invalid placements or public wildcard keys throw `BedrockError` at
+configuration/load time. Public route keys must use normalized paths without
+repeated slashes or dot segments.
+
+The child health response carries exact registered `public_routes` keys alongside
+`access`; the supervisor validates them before activating the release. Deploy
+output and `bedrock ls` (human and JSON) show this list. JSON uses
+`public_routes: string[]`; a release metadata file retains the list while stopped.
+
+The daemon matches the WHATWG-normalized `url.pathname` that it proxies, case
+sensitively, segment by segment. Methods must match exactly, except HEAD may use
+GET because Bun serves that fallback. A `:param` consumes exactly one nonempty
+segment. Static segments compare literally, without percent decoding; trailing
+slashes, extra/empty segments, case changes and encoded static spellings do not
+broaden exposure. WHATWG dot-segment normalization happens before matching.
+Normal private routes may use Bun wildcards, but public keys containing `*` are
+rejected rather than extending the matcher with wildcard semantics. Reserved
+`/_bedrock` paths never qualify, even through a parameter pattern. On protected
+pebbles with a Bun HTML entry, root parameter public GET/HEAD routes (`/:id`) are
+rejected at load: generated bundle assets outrank them and bypass custom-handler
+checks. Use a namespaced pattern, a static public route, or a static web directory.
+Explicit static HTTP handlers override generated assets; namespaced parameter
+routes do not overlap Bun's root asset routes.
+
+Matched HTTP requests are always anonymous, even with valid credentials: the
+daemon skips session resolution, access enforcement, Origin checks and HTML
+login redirects, strips **all Cookie, Authorization and x-bedrock-* headers**,
+and attaches no signed identity. There is no ambient identity to borrow for
+CSRF or replay. `ctx.user` and `ctx.token` are null, including detached read/write
+callbacks. WebSocket upgrades never qualify.
+
+The child rechecks the handler Bun actually dispatches: normal routes enforce
+pebble access for anonymous, signed and token identities; public handlers strip
+credentials again and execute anonymously. Thus a private static route overriding
+a public parameter route (or a private HEAD overriding public GET) returns
+401 `UNAUTHENTICATED` for an anonymous request admitted by the daemon. Internal
+health/control routes keep their existing behavior; functions, storage and
+sockets retain their own access checks. Private HTML requests still redirect at
+the daemon as before, except requests rejected by the child recheck return 401.
+
 ### Pebble tokens
 
 Opt in with `definePebble({ tokens: true, ... })`. Pebble tokens are per-user,
@@ -187,7 +234,8 @@ Permissions default to deny, and creation validates registered targets:
 - `*`: everything the user could do, including WS sync.
 - `query:<name>` / `mutation:<name>`: that HTTP function.
 - `route:<METHOD> <path-pattern>`: the exact registered route key, including
-  detached routes.
+  detached and public routes. Public routes need no token or permission; credentials
+  are discarded rather than used to authorize them.
 - `socket:<path>`: the registered application socket path.
 - `files:<bucket>:upload|read|delete`: built-in storage endpoints; all chunk
   operations, including status, require upload.
@@ -743,9 +791,9 @@ ctx.invalidate([audit.schema.auditLog]);
   daemon API and the IPC control channel to the child.
 - Route handlers keep `(request, server)` and receive FunctionContext as a third
   argument, including `{ db, user, storage, invalidate }`. By default they run inside write
-  transactions. Daemon access gating applies to all routes; direct low-level
-  routes retain existing Bun behavior for signed/anonymous identity; token users
-  are also gated by the runtime. Functions and jobs also expose invalidate.
+  transactions. Normal routes enforce pebble access in both daemon and child;
+  `publicRoute(handler)` or `publicRoute(detached(handler))` opts only that HTTP
+  handler into the anonymous semantics in §5. Functions and jobs also expose invalidate.
 
 Custom HTTP routes may set `definePebble({ maxRequestBodySize: bytes })` (positive integer, default 90 MiB, maximum 1 TiB). The daemon ceiling is 1 TiB and forwards request bodies as streams; custom routes must stream them to bound memory. Storage bucket limits remain separate. Application sockets retain the original URL and headers before upgrade, including on Bun 1.2.
 
@@ -774,8 +822,8 @@ queued slots with the same FunctionContext and transaction/storage/tracking
 semantics as queries and mutations. Await every slot, keep network I/O outside callbacks, and do not
 retain a slot's context. A failed slot rolls back only itself; earlier committed
 slots survive later handler errors. Writes notify sync after each commit.
-Detached routes retain daemon access gating and signed user identity, just like
-ordinary routes. Jobs keep `user: null` in every slot, process-local overlap
+Normal detached routes retain daemon and child access gating and signed user
+identity. Wrapping them in `publicRoute` uses the anonymous semantics in §5. Jobs keep `user: null` in every slot, process-local overlap
 protection, scheduling, and `bedrock jobs run`. Existing routes/jobs remain
 transactional by default.
 

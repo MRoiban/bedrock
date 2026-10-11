@@ -3,7 +3,7 @@ import { sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { bucket, definePebble, job, mutation, type FunctionContext } from "../config";
 import { openDatabase } from "../db";
 import { createJobs } from "../jobs";
-import { tempDirectory } from "../../test/helpers";
+import { tempDirectory, identityHeaders } from "../../test/helpers";
 import { createExecutor } from "./functions";
 
 function fixture() {
@@ -54,7 +54,7 @@ test("ordinary routes still hold their queued write transaction across awaits", 
   const started = new Promise<void>(resolve => { entered = resolve; });
   const order: string[] = [];
   try {
-    const route = execute.route(request, async () => { entered(); await gate; order.push("route"); });
+    const route = execute.route(new Request(request, { headers: identityHeaders("reader") }), async () => { entered(); await gate; order.push("route"); });
     await started;
     const mutation = execute("mutation", "add", null, request, { user: { id: "reader" } }).then(() => order.push("mutation"));
     await Bun.sleep(20);

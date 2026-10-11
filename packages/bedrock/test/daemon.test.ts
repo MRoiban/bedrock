@@ -1,3 +1,4 @@
+import { request as httpRequest } from "node:http";
 import { expect, test } from "bun:test";
 import { cp, mkdir, readlink, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -202,5 +203,93 @@ export default definePebble({name:"sample",access:"public",services:{data:servic
     expect(first.dir).toBe(join(h.home, 'pebbles/sample/data'));
     expect((await h.deploy('sample', dir)).status).toBe(200);
     expect(await (await h.request('sample.localhost', '/data')).json()).toEqual(first);
+  } finally { await h.cleanup(); }
+}, 30000);
+
+test("protected pebbles expose only public HTTP handlers, anonymously", async () => {
+  const h = await harness(true);
+  const dir = join(h.temp.dir, "public-routes");
+  const keys = ["GET /doc", "GET /files/:id", "POST /public", "GET /head", "GET /detached"];
+  try {
+    await Bun.write(join(dir, "pebble.ts"), `import { definePebble, publicRoute, detached, mutation } from "bedrock";
+const anonymous = (request, _server, ctx) => Response.json({ headers: Object.fromEntries(request.headers), user: ctx.user, token: ctx.token });
+export default definePebble({ name: "sample", access: "creators", tokens: true,
+mutations: { key: mutation(ctx => ctx.tokens.create({ name: "test", permissions: ["route:GET /doc"] })) },
+routes: {
+"GET /doc": publicRoute(anonymous), "GET /files/:id": publicRoute(() => new Response("file")),
+"GET /files/secret": () => new Response("secret"), "GET /private": () => new Response("private"),
+"POST /doc": () => new Response("private"), "POST /public": publicRoute(anonymous),
+"GET /head": publicRoute(() => new Response("head")), "HEAD /head": () => new Response("private"),
+"GET /detached": publicRoute(detached(async (request, server, ctx) => ctx.read(inner => anonymous(request, server, inner)))),
+}});`);
+    const deployed = await (await h.deploy("sample", dir)).json();
+    expect(deployed.value.public_routes).toEqual(keys);
+    expect((await (await h.api("/api/pebbles")).json()).value[0].public_routes).toEqual(keys);
+    const login = await h.request("sample.localhost", "/_bedrock/dev-login", { method: "POST", body: new URLSearchParams({ email: "creator@example.test" }) });
+    const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+    const created = await h.request("sample.localhost", "/_bedrock/m/key", { method: "POST", body: "null", headers: { cookie } });
+    const bearer = (await created.json()).value.token;
+    expect(bearer).toStartWith("brk_");
+    for (const path of ["/doc", "/detached", "/public"]) {
+      for (const credentials of [{}, { cookie }, { authorization: `Bearer ${bearer}` }, { cookie: `${cookie}; other=secret`, authorization: `Bearer ${bearer}` }]) {
+        const response = await h.request("sample.localhost", path, { method: path === "/public" ? "POST" : "GET", headers: { ...credentials, accept: "text/html", origin: "https://evil.test", "x-bedrock-user": "spoofed", "x-bedrock-file-meta": "secret" } });
+        expect(response.status).toBe(200);
+        const value = await response.json();
+        expect(value.user).toBeNull(); expect(value.token).toBeNull();
+        expect(value.headers.cookie).toBeUndefined(); expect(value.headers.authorization).toBeUndefined();
+        expect(Object.keys(value.headers).some(key => key.startsWith("x-bedrock-"))).toBe(false);
+      }
+    }
+    expect((await h.request("sample.localhost", "/doc", { method: "HEAD" })).status).toBe(200);
+    expect((await h.request("sample.localhost", "/head", { method: "HEAD" })).status).toBe(401);
+    expect((await h.request("sample.localhost", "/doc", { method: "POST" })).status).toBe(401);
+    expect((await h.request("sample.localhost", "/private")).status).toBe(401);
+    expect((await h.request("sample.localhost", "/private", { headers: { accept: "text/html" } })).status).toBe(302);
+    expect((await h.request("sample.localhost", "/files/abc")).status).toBe(200);
+    expect((await h.request("sample.localhost", "/files/secret")).status).toBe(401);
+    for (const path of ["/doc/", "//doc", "/DOC", "/x/../private", "/%70rivate", "/doc%2F..%2Fprivate", "/files/a/b"]) {
+      // Bun fetch collapses // before sending; raw paths must reach the daemon unchanged.
+      const status = await new Promise<number | undefined>((resolve, reject) => {
+        const request = httpRequest({ hostname: "127.0.0.1", port: h.daemon.server.port, path, headers: { host: "sample.localhost" } }, response => {
+          response.resume();
+          response.on("end", () => resolve(response.statusCode));
+        });
+        request.on("error", reject);
+        request.end();
+      });
+      expect(status).toBe(401);
+    }
+    const port = (await (await h.api("/api/pebbles")).json()).value[0].port;
+    expect((await fetch(`http://127.0.0.1:${port}/private`)).status).toBe(401);
+    expect((await fetch(`http://127.0.0.1:${port}/_bedrock/health`)).status).toBe(200);
+    const cli = Bun.spawn([process.execPath, resolve(import.meta.dir, "../src/cli/index.ts"), "ls", "--json", "--url", h.daemon.server.url.origin, "--token", h.token], { env: { ...process.env, BEDROCK_HOME: h.home }, stdout: "pipe", stderr: "pipe" });
+    expect(JSON.parse(await new Response(cli.stdout).text()).value[0].public_routes).toEqual(keys);
+    expect(await cli.exited).toBe(0);
+    await h.api("/api/pebbles/sample/stop", { method: "POST" });
+    expect((await (await h.api("/api/pebbles")).json()).value[0].public_routes).toEqual(keys);
+  } finally { await h.cleanup(); }
+}, 30000);
+
+test("public root params cannot expose protected Bun bundle assets", async () => {
+  const h = await harness(true);
+  const dir = join(h.temp.dir, "bundle-public");
+  try {
+    await Bun.write(join(dir, "index.html"), '<script src="./app.js"></script>');
+    await Bun.write(join(dir, "app.js"), 'console.log("private bundle")');
+    const source = (path: string) => `import { definePebble, publicRoute } from "bedrock";
+export default definePebble({ name: "sample", access: "creators", web: "./index.html", routes: { "GET ${path}": publicRoute(() => new Response("public doc")) } });`;
+    await Bun.write(join(dir, "pebble.ts"), source("/:id"));
+    const rejected = await (await h.deploy("sample", dir)).json();
+    expect(rejected.error.code).toBe("INVALID_PUBLIC_ROUTE");
+    await Bun.write(join(dir, "pebble.ts"), source("/docs/:id"));
+    expect((await h.deploy("sample", dir)).status).toBe(200);
+    expect(await (await h.request("sample.localhost", "/docs/agents.md")).text()).toBe("public doc");
+    expect((await h.request("sample.localhost", "/")).status).toBe(401);
+    const login = await h.request("sample.localhost", "/_bedrock/dev-login", { method: "POST", body: new URLSearchParams({ email: "creator@example.test" }) });
+    const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+    const page = await (await h.request("sample.localhost", "/", { headers: { cookie } })).text();
+    const asset = /src="([^"]+\.js[^"]*)"/.exec(page)![1]!;
+    expect((await h.request("sample.localhost", asset)).status).toBe(401);
+    expect((await h.request("sample.localhost", asset, { headers: { cookie } })).status).toBe(200);
   } finally { await h.cleanup(); }
 }, 30000);

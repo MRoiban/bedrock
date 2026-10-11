@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { authorizeScope, matchesPebble } from "./token-scope";
 import { createSecrets } from "./secrets";
 import type { BuildInfo } from "../version";
@@ -69,7 +70,7 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
       if (request.method === "POST" && !job) throw new BedrockError("INVALID_ARGS", "A job name is required.", "Use jobs run <pebble> <job>.");
       value = await supervisor.jobs(name, request.method === "POST" ? job : undefined);
     } else if (request.method === "GET" && url.pathname === "/api/pebbles") {
-      value = records().map(record => ({ ...record, port: supervisor.child(record.name)?.port ?? null, pid: supervisor.child(record.name)?.process.pid ?? null }));
+      value = await Promise.all(records().map(async record => ({ ...record, public_routes: supervisor.child(record.name)?.publicRoutes ?? await Bun.file(join(record.release, ".bedrock-public-routes.json")).json().catch(() => []), port: supervisor.child(record.name)?.port ?? null, pid: supervisor.child(record.name)?.process.pid ?? null })));
     } else if (request.method === "GET" && url.pathname === "/api/status") {
       value = { ...maintenance?.info, instanceId, features: daemonFeatures, domain: config?.domain, user: db.tokenEmail(token) ?? "server creator token", creatorSignedIn: !scope && !!config?.creators.some(email => db.db.query("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.email=? AND s.expires_at>? LIMIT 1").get(email, Date.now())), ...(!scope ? { tunnel: tunnelStatus() } : {}), pebbles: await Promise.all(records().map(async record => {
         const child = supervisor.child(record.name);

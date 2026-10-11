@@ -1,3 +1,4 @@
+import { isPublicRoute, publicRouteKeys, validatePublicRouteKey } from "./public-route";
 import { socketSize } from "./hosting";
 import { validateDirectories } from "../backup/directories";
 import { validateBucket, validateBuckets } from "../storage/config";
@@ -9,6 +10,7 @@ export { job } from "../jobs";
 import { parseCron } from "../jobs/cron";
 
 export * from "./hosting";
+export { publicRoute } from "./public-route";
 export { detached } from "./detached";
 export { query, mutation } from "./functions";
 export type * from "./types";
@@ -30,6 +32,13 @@ export function definePebble<const P extends PebbleConfig>(config: P): P {
   if (validated.has(config)) return config;
   validateName(config.name);
   if (config.maxRequestBodySize !== undefined && (!Number.isSafeInteger(config.maxRequestBodySize) || config.maxRequestBodySize <= 0 || config.maxRequestBodySize > 1024 ** 4)) throw new BedrockError("INVALID_CONFIG", "Invalid maxRequestBodySize.", "Use a positive integer byte limit up to 1 TiB; stream custom request bodies.");
+  for (const key of publicRouteKeys(config.routes)) validatePublicRouteKey(key);
+  for (const [field, value] of Object.entries(config)) {
+    if (field === "routes") continue;
+    const entries = value && typeof value === "object" ? Object.values(value) : [value];
+    if (isPublicRoute(value) || entries.some(entry => isPublicRoute(entry) || entry && typeof entry === "object" && Object.values(entry).some(isPublicRoute)))
+      throw new BedrockError("INVALID_PUBLIC_ROUTE", "Public handlers belong only in routes.", "Keep sockets, functions, storage, jobs and services private; register publicRoute under an HTTP route key.");
+  }
   validateBuckets(config.storage);
   for (const [path, definition] of Object.entries(config.sockets ?? {})) {
     if (!/^\/[^?#]*$/.test(path) || path === "/_bedrock" || path.startsWith("/_bedrock/") || !definition || typeof definition.message !== "function" || [definition.open, definition.close, definition.drain].some(fn => fn !== undefined && typeof fn !== "function")) throw new BedrockError("INVALID_SOCKET", `Invalid socket: ${path}`, "Use socket({ message }) at an absolute path outside /_bedrock.");

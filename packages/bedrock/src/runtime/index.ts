@@ -1,3 +1,4 @@
+import { isPublicRoute, publicRouteKeys } from "../config/public-route";
 import { createServices } from "./services";
 import { createApplicationSockets, isApplication, type RuntimeSocketData } from "./sockets";
 import { createJobs } from "../jobs";
@@ -42,6 +43,9 @@ export async function startPebble(options: StartPebbleOptions) {
     const sync = pebble.sync === true ? createSync(execute, release) : undefined;
     const appSockets = createApplicationSockets(pebble, execute);
     const web = await loadWeb(dir, pebble.web);
+    // Bun's generated bundle assets outrank root params and bypass our handler wrappers.
+    if (web.html && pebble.access && pebble.access !== "public" && publicRouteKeys(pebble.routes).some(key => /^(GET|HEAD) \/:[^/]+$/.test(key)))
+      throw new BedrockError("INVALID_PUBLIC_ROUTE", "Root public parameter routes conflict with bundled web assets.", "Use a namespaced public parameter route (such as /files/:id), a static public route, or a static web directory.");
     const routes: Record<string, any> = {};
     for (const [key, handler] of Object.entries(pebble.routes ?? {})) {
       const match = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) (\/.*)$/.exec(key);
@@ -50,15 +54,19 @@ export async function startPebble(options: StartPebbleOptions) {
       routes[path] ??= {};
       routes[path][match[1]!] = async (request: Request, server: Bun.Server<undefined>) => {
         try {
+          const identity = isPublicRoute(handler) ? { user: null, token: null } : undefined;
+          if (identity) {
+            for (const name of [...request.headers.keys()]) if (name === "cookie" || name === "authorization" || name.startsWith("x-bedrock-")) request.headers.delete(name);
+          }
           return typeof handler === "function"
-            ? (await execute.route(request, ctx => handler(request, server, ctx), `route:${key}`)).value as Response
-            : await execute.detached(request, ctx => handler.run(request, server, ctx), undefined, `route:${key}`);
+            ? (await execute.route(request, ctx => handler(request, server, ctx), identity ? undefined : `route:${key}`, identity)).value as Response
+            : await execute.detached(request, ctx => handler.run(request, server, ctx), identity, identity ? undefined : `route:${key}`);
         } catch (error) { return errorResponse(error); }
       };
     }
     if (web.html && !Object.hasOwn(routes, "/*")) routes["/*"] = web.html;
     routes["/_bedrock/files/*"] = files.handle;
-    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout }) };
+    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes) }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };
     routes["/_bedrock/*"] = () => Response.json({ ok: false, error: new BedrockError("NOT_FOUND", "Unknown Bedrock endpoint.", "Use POST /_bedrock/q/<name> or /_bedrock/m/<name>.").toJSON() }, { status: 404 });

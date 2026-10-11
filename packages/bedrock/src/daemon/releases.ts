@@ -69,7 +69,7 @@ export class Releases {
         await this.switch(name, child, this.db.get(name));
         activated = true;
         await this.prune(name).catch(error => this.warn(name, error));
-        return this.db.get(name)!;
+        return { ...this.db.get(name)!, public_routes: child.publicRoutes };
       } catch (error) {
         if (!activated) {
           if (child) await stopChild(child);

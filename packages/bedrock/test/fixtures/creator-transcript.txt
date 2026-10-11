@@ -4,4 +4,5 @@ bedrock dev
 bedrock deploy
 ✓ Deployed my-app
 https://my-app.example.com
+Public routes: none
 Access: anyone signed in with Google.

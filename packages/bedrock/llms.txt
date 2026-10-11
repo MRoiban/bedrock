@@ -21,6 +21,7 @@ export default definePebble({
 - [A complete pebble](AGENTS.md#a-complete-pebble): runnable example and setup.
 - [Configuration and functions](AGENTS.md#configuration-and-functions): config, context and HTTP functions.
 - [Schema and migrations](AGENTS.md#schema-and-migrations): database changes, rollback and detached work.
+- [Public HTTP routes](AGENTS.md#public-http-routes): anonymous HTTP handlers on protected pebbles.
 - [Authentication, authorization and trust](AGENTS.md#authentication-authorization-and-trust): access policies and pebble tokens.
 - [Live queries and explicit invalidation](AGENTS.md#live-queries-and-explicit-invalidation): subscriptions and write tracking.
 - [Storage](AGENTS.md#storage): buckets, uploads and file policies.

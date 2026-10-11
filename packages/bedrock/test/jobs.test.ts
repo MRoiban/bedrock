@@ -32,7 +32,8 @@ test("custom route explicit invalidation and anonymous jobs commit, notify subsc
   client.subscribe("list", undefined, rows => values.push(rows));
   try {
     await until(() => values.length === 1);
-    expect((await fetch(new URL("/raw", running.server.url), { method: "POST" })).status).toBe(200);
+    expect((await fetch(new URL("/raw", running.server.url), { method: "POST" })).status).toBe(401);
+    expect((await fetch(new URL("/raw", running.server.url), { method: "POST", headers: identityHeaders("reader") })).status).toBe(200);
     await until(() => values.at(-1)?.length === 1);
     await running.jobs.run("add");
     await until(() => values.at(-1)?.length === 2);
