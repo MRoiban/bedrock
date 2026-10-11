@@ -77,7 +77,7 @@ is included; UI defaults and Bedrock layouts use semantic tokens.
 
 ## Maintainer workflow
 
-The private [Onyx repository](https://github.com/MRoiban/onyx) is the source of
+The [Onyx repository](https://github.com/MRoiban/onyx) is the source of
 truth. Never hand-edit `src/onyx/`. Clone it beside the Bedrock checkout and pull
 its `main` branch before syncing.
 

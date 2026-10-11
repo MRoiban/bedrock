@@ -72,7 +72,7 @@ Public entry points of `bedrock` (package.json `exports`):
 | `bedrock/server`  | `startPebble()` (low-level, used by daemon and tests) |
 | bin `bedrock`     | CLI |
 
-`@bedrock/ui` vendors every registry item from the private
+`@bedrock/ui` vendors every registry item from the
 [Onyx repository](https://github.com/MRoiban/onyx). `packages/ui/ONYX_VERSION`
 records the upstream Git commit and source hash. Sync from a sibling Onyx checkout with
 `bun run sync:onyx` in `packages/ui`, then run `bun run build:css` and commit both

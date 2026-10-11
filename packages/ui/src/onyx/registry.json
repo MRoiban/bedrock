@@ -1,6 +1,6 @@
 {
   "$schema": "https://ui.shadcn.com/schema/registry.json",
-  "name": "@onyx/ui",
+  "name": "@mroiban/onyx",
   "homepage": "workspace://onyx",
   "items": [
     {
