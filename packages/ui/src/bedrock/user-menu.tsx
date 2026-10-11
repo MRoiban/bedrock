@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useUser } from "bedrock/react";
 import type { Client } from "bedrock/client";
-import { Button } from "../onyx/components/button";
-import { Icon } from "../onyx/components/icon";
+import { Button, Icon } from "@mroiban/onyx";
 
 export interface UserMenuProps { client: Pick<Client, "logout">; onSignOut?: () => void }
 export function UserMenu({ client, onSignOut = () => location.reload() }: UserMenuProps) {

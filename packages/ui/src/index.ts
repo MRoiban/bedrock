@@ -1,4 +1,4 @@
-export * from "./onyx";
+export * from "@mroiban/onyx";
 export * from "./bedrock/app-shell";
 export * from "./bedrock/user-menu";
 export * from "./bedrock/sign-in-gate";

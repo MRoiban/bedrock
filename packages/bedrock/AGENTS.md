@@ -698,9 +698,9 @@ layout inside host workbench controls, and `Panel variant="docked"` omits card
 borders, rounding, and shadows for docked regions. Docked panels clip and isolate
 positioned content. Floating menus and popovers use the host font and scale
 geometry with `--onyx-scale-ui`.
-Maintainers sync the `MRoiban/onyx` repository's `main` checkout using
-`bun run sync:onyx` and `bun run build:css` in `packages/ui`. The default source is
-a sibling `onyx` checkout; `ONYX_VERSION` records its commit and source hash.
+Onyx comes from the published `@mroiban/onyx` release; maintainers upgrade it by
+changing the release URL in `packages/ui/package.json`, then running `bun install`
+and `bun run build:css` in `packages/ui`.
 
 ## Host operations and backups
 

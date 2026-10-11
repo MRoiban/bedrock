@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Icon } from "../onyx/components/icon";
+import { Icon } from "@mroiban/onyx";
 
 export interface AppShellProps { name: string; userMenu?: ReactNode; children?: ReactNode }
 export function AppShell({ name, userMenu, children }: AppShellProps) {

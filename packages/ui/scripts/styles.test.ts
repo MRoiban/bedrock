@@ -13,7 +13,7 @@ test("committed CSS contains tokens, Bedrock layouts, rendered utilities, and an
   const selectors: string[] = [];
   tree.walkRules(rule => { selectors.push(rule.selector); });
   expect(css).toContain("--onyx-surface-app:");
-  expect(selectors.some(selector => /data-theme=['"]light['"]/.test(selector))).toBe(true);
+  expect(selectors.some(selector => /data-theme=['"]?light['"]?\]/.test(selector))).toBe(true);
   expect(tree.nodes.some(node => node.type === "atrule" && node.name === "import")).toBe(false);
   tree.walkAtRules("tailwind", () => { throw new Error("Standalone CSS must compile all Tailwind directives"); });
   for (const name of ["onyx-checkbox", "onyx-switch", "onyx-floating", "onyx-popover", "onyx-progress", "onyx-toast", "onyx-spinner"])

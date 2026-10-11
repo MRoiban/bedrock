@@ -70,51 +70,35 @@ inside a Dialog inherit its portal host and theme. Body portals need
 document-level token overrides. See Onyx's theme documentation for browser
 support and the explicit-theme fallback for automatic semantic rebinding.
 
-Use ordinary CSS for app layouts. The prebuilt CSS includes the utilities in
-**the vendored components**, not arbitrary Tailwind classes from consumer apps.
-Import your app CSS after `@bedrock/ui/styles.css`. Tailwind's standard base reset
-is included; UI defaults and Bedrock layouts use semantic tokens.
+Use ordinary CSS for app layouts. The prebuilt CSS covers every Onyx component,
+not arbitrary Tailwind classes from consumer apps. Import your app CSS after
+`@bedrock/ui/styles.css`; Onyx styles sit in cascade layers, so your rules win.
+UI defaults and Bedrock layouts use semantic tokens.
 
 ## Maintainer workflow
 
-The [Onyx repository](https://github.com/MRoiban/onyx) is the source of
-truth. Never hand-edit `src/onyx/`. Clone it beside the Bedrock checkout and pull
-its `main` branch before syncing.
+Onyx is a regular dependency: the published
+[`@mroiban/onyx`](https://github.com/MRoiban/onyx/releases) release tarball.
+`src/index.ts` re-exports it, and the Bedrock components import from it. To
+upgrade, change the release URL in `package.json`, then:
 
 ```sh
-cd packages/ui
-bun run sync:onyx /path/to/onyx
-bun run build:css
+bun install
+cd packages/ui && bun run build:css
 ```
 
-The source defaults to the sibling `onyx` checkout next to Bedrock. The sync script
-reads registry items and their registry dependencies, follows relative imports
-for shared helpers, and preserves upstream directory structure so internal
-imports remain valid. It records the source Git commit and a SHA-256 of the
-selected registry and source content in `ONYX_VERSION`. The one compatibility
-rewrite omits an undefined Radix CheckboxItem `checked` prop for TypeScript's
-`exactOptionalPropertyTypes`. It is applied by the script, never by editing a copy.
-
-This package uses a Tailwind 3/PostCSS development-only script with explicit
-content paths. It resolves all imports from Onyx's globals, including its form,
-overlay, collection, and display layers, then compiles utilities and adds Bedrock
-layouts. The codicon font is embedded in `dist/styles.css`; no CSS imports or
-asset requests remain. The codicons
-package is a development dependency only; its font/code notices ship in `dist/`.
-Commit both the
-vendored source and rebuilt stylesheet. End users never run these scripts.
+`build:css` concatenates Onyx's standalone `styles.css` (which already embeds
+the codicon font and its notices) with `src/bedrock/styles.css`; no Tailwind or
+PostCSS step is involved. Commit the lockfile and `dist/styles.css`. End users
+never run these scripts.
 
 Run `bun install`, `bun run typecheck`, and `bun test` from the repository root.
-Sync tests use a temporary source fixture derived from the committed registry
-and do not require the original Babel checkout.
 
 Release installation discovers the daemon checkout's first-party packages and
 links them from one list. Their available peer dependencies are shared too,
 so linked Bedrock hooks/UI and the app use the same React instance and renderer.
-Radix Label and Popover supply the newly required accessible labels and modal
-floating content; Floating UI positions the shared floating hooks. They join the
-existing Radix dialog/select/context-menu/slot, cva, clsx, and tailwind-merge
-runtime dependencies. PostCSS, its import plugin, and Tailwind are build tools only.
+Onyx brings its own runtime dependencies (Radix UI, Floating UI, cmdk, TanStack
+Virtual, cva, clsx, tailwind-merge).
 
 ## React starter
 

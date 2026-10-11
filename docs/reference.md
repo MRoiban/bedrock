@@ -72,12 +72,12 @@ Public entry points of `bedrock` (package.json `exports`):
 | `bedrock/server`  | `startPebble()` (low-level, used by daemon and tests) |
 | bin `bedrock`     | CLI |
 
-`@bedrock/ui` vendors every registry item from the
-[Onyx repository](https://github.com/MRoiban/onyx). `packages/ui/ONYX_VERSION`
-records the upstream Git commit and source hash. Sync from a sibling Onyx checkout with
-`bun run sync:onyx` in `packages/ui`, then run `bun run build:css` and commit both
-the source and `dist/styles.css`. The stylesheet bundles all Onyx layers and
-the codicon font; pebbles need no CSS build step. Theme palettes and component
+`@bedrock/ui` depends on the published
+[`@mroiban/onyx`](https://github.com/MRoiban/onyx) release tarball and re-exports
+every Onyx primitive. To upgrade, change the release URL in `packages/ui/package.json`,
+run `bun install`, then `bun run build:css` in `packages/ui`, and commit the lockfile
+and `dist/styles.css`. The stylesheet is Onyx's prebuilt CSS (all layers and the
+codicon font) followed by Bedrock's layouts; pebbles need no CSS build step. Theme palettes and component
 defaults come from Onyx, with Bedrock supplying its web layouts. Select menus
 follow the trigger’s computed typography across portals, including application
 font-size overrides. Compact host buttons (`size="native"`) preserve child layout;

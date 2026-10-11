@@ -1,9 +1,7 @@
 import { useRef, useState } from "react";
 import { useUpload } from "bedrock/react";
 import type { PebbleConfig, BucketNames, FileMetadata } from "bedrock";
-import { Button } from "../onyx/components/button";
-import { Progress } from "../onyx/components/progress";
-import { Icon } from "../onyx/components/icon";
+import { Button, Progress, Icon } from "@mroiban/onyx";
 
 export interface UploadButtonProps<P extends PebbleConfig> {
   bucket: BucketNames<P>;

@@ -1,10 +1,7 @@
 import type { ReactNode } from "react";
 import type { Client } from "bedrock/client";
 import { useUser } from "bedrock/react";
-import { Button } from "../onyx/components/button";
-import { Panel, PanelBody } from "../onyx/components/panel";
-import { Heading, Text } from "../onyx/components/text";
-import { Icon } from "../onyx/components/icon";
+import { Button, Panel, PanelBody, Heading, Text, Icon } from "@mroiban/onyx";
 
 export interface SignInGateProps { client: Pick<Client, "loginUrl">; children?: ReactNode; name?: string }
 export function SignInGate({ client, children, name = "your pebble" }: SignInGateProps) {
