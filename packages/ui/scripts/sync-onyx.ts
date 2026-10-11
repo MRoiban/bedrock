@@ -3,8 +3,8 @@ import { dirname, join, resolve } from "node:path";
 import { BedrockError } from "bedrock/client";
 
 export const selectedItems = ["button", "input", "textarea", "checkbox", "switch", "select", "dialog", "table", "tabs", "toast", "text", "empty-state", "progress", "kbd", "icon", "theme", "panel", "toolbar", "context-menu"];
-export const defaultSource = "/Users/stellar/Playground/babel-ui/onyx";
 const packageDir = resolve(import.meta.dir, "..");
+export const defaultSource = resolve(packageDir, "../../../onyx");
 interface RegistryItem { name: string; files: { path: string }[]; registryDependencies?: string[] }
 
 export async function syncOnyx(source = defaultSource, destination = packageDir) {

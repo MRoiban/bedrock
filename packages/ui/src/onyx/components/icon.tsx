@@ -13,10 +13,8 @@ const iconVariants = cva('codicon inline-flex shrink-0 items-center justify-cent
       lg: 'text-lg',
       xl: 'text-xl'
     }
-  },
-  defaultVariants: {
-    size: 'md'
   }
+  // No default size: icons inherit font-size so surrounding components can size them.
 });
 
 export interface IconProps

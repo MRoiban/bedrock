@@ -685,7 +685,13 @@ UploadButton. Import its stylesheet once; no Tailwind setup is needed.
 `onError`, `onUploadingChange`. It uploads immediately; link the returned id in
 a mutation and clean up abandoned files. Pass the provider's client to auth UI.
 Set `document.documentElement.dataset.theme` to `"light"` or `"dark"`; use normal
-CSS for app layouts. The bundled CSS includes utilities used by components only.
+CSS for app layouts. `OnyxThemeRoot` also accepts a scoped `theme`, `density`,
+and semantic `variables`; an omitted theme inherits its surroundings. The bundled
+CSS includes utilities used by components only, all Onyx component layers, and
+the embedded codicon font. Upstream palettes and defaults come from Onyx.
+Maintainers sync the private `MRoiban/onyx` repository's `main` checkout using
+`bun run sync:onyx` and `bun run build:css` in `packages/ui`. The default source is
+a sibling `onyx` checkout; `ONYX_VERSION` records its commit and source hash.
 
 ## Host operations and backups
 

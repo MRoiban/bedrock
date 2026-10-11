@@ -20,10 +20,33 @@
         {
           "path": "src/styles/globals.css",
           "type": "registry:style"
+        },
+        {
+          "path": "src/styles/overlays.css",
+          "type": "registry:style"
+        },
+        {
+          "path": "src/styles/forms.css",
+          "type": "registry:style"
+        },
+        {
+          "path": "src/styles/collections.css",
+          "type": "registry:style"
+        },
+        {
+          "path": "src/styles/display.css",
+          "type": "registry:style"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
-        "@radix-ui/react-slot"
+        "@radix-ui/react-slot",
+        "@vscode/codicons",
+        "clsx",
+        "tailwind-merge"
       ]
     },
     {
@@ -35,13 +58,19 @@
         {
           "path": "src/components/icon.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
-        "@vscode/codicons",
         "class-variance-authority",
         "clsx",
         "tailwind-merge"
+      ],
+      "registryDependencies": [
+        "theme"
       ]
     },
     {
@@ -53,6 +82,10 @@
         {
           "path": "src/components/button.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
@@ -62,8 +95,9 @@
         "tailwind-merge"
       ],
       "registryDependencies": [
-        "theme",
-        "icon"
+        "hooks",
+        "spinner",
+        "theme"
       ]
     },
     {
@@ -75,13 +109,20 @@
         {
           "path": "src/components/input.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
       "registryDependencies": [
+        "field",
         "theme"
       ]
     },
@@ -94,6 +135,14 @@
         {
           "path": "src/components/checkbox.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/use-form-reset.ts",
+          "type": "registry:lib"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
@@ -101,6 +150,8 @@
         "tailwind-merge"
       ],
       "registryDependencies": [
+        "field",
+        "hooks",
         "theme"
       ]
     },
@@ -113,13 +164,20 @@
         {
           "path": "src/components/textarea.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
       "registryDependencies": [
+        "field",
         "theme"
       ]
     },
@@ -132,6 +190,14 @@
         {
           "path": "src/components/switch.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/use-form-reset.ts",
+          "type": "registry:lib"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
@@ -139,6 +205,8 @@
         "tailwind-merge"
       ],
       "registryDependencies": [
+        "field",
+        "hooks",
         "theme"
       ]
     },
@@ -151,13 +219,20 @@
         {
           "path": "src/components/progress.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
       "registryDependencies": [
+        "badge",
         "theme"
       ]
     },
@@ -170,6 +245,10 @@
         {
           "path": "src/components/select.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
@@ -178,8 +257,9 @@
         "tailwind-merge"
       ],
       "registryDependencies": [
-        "theme",
-        "icon"
+        "field",
+        "icon",
+        "theme"
       ]
     },
     {
@@ -191,14 +271,21 @@
         {
           "path": "src/components/dialog.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
         "@radix-ui/react-dialog",
+        "@radix-ui/react-slot",
         "clsx",
         "tailwind-merge"
       ],
       "registryDependencies": [
+        "hooks",
+        "popover",
         "theme"
       ]
     },
@@ -211,16 +298,26 @@
         {
           "path": "src/components/context-menu.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
+        },
+        {
+          "path": "src/lib/menu-styles.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
         "@radix-ui/react-context-menu",
+        "@radix-ui/react-slot",
+        "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
       "registryDependencies": [
-        "theme",
-        "icon"
+        "icon",
+        "theme"
       ]
     },
     {
@@ -232,13 +329,20 @@
         {
           "path": "src/components/table.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
       "registryDependencies": [
+        "icon",
         "theme"
       ]
     },
@@ -251,9 +355,15 @@
         {
           "path": "src/components/kbd.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
@@ -270,9 +380,15 @@
         {
           "path": "src/components/panel.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
@@ -289,16 +405,22 @@
         {
           "path": "src/components/tabs.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
         "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
       "registryDependencies": [
-        "theme",
-        "button"
+        "button",
+        "hooks",
+        "theme"
       ]
     },
     {
@@ -310,16 +432,22 @@
         {
           "path": "src/components/toolbar.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
         "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
       "registryDependencies": [
-        "theme",
-        "button"
+        "button",
+        "hooks",
+        "theme"
       ]
     },
     {
@@ -331,16 +459,28 @@
         {
           "path": "src/components/toast.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
+        },
+        {
+          "path": "src/lib/use-removal-focus.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
       "registryDependencies": [
-        "theme",
-        "button",
-        "icon"
+        "alert",
+        "badge",
+        "hooks",
+        "icon",
+        "theme"
       ]
     },
     {
@@ -352,13 +492,20 @@
         {
           "path": "src/components/empty-state.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
         "clsx",
         "tailwind-merge"
       ],
       "registryDependencies": [
+        "badge",
         "theme"
       ]
     },
@@ -371,10 +518,178 @@
         {
           "path": "src/components/text.tsx",
           "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
         }
       ],
       "dependencies": [
+        "@radix-ui/react-slot",
         "class-variance-authority",
+        "clsx",
+        "tailwind-merge"
+      ],
+      "registryDependencies": [
+        "theme"
+      ]
+    },
+    {
+      "name": "popover",
+      "type": "registry:ui",
+      "title": "Popover",
+      "files": [
+        {
+          "path": "src/components/popover.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
+        }
+      ],
+      "dependencies": [
+        "@radix-ui/react-popover",
+        "@radix-ui/react-slot",
+        "class-variance-authority",
+        "clsx",
+        "tailwind-merge"
+      ],
+      "registryDependencies": [
+        "theme"
+      ]
+    },
+    {
+      "name": "field",
+      "type": "registry:ui",
+      "title": "Field",
+      "files": [
+        {
+          "path": "src/components/field.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
+        }
+      ],
+      "dependencies": [
+        "@radix-ui/react-label",
+        "@radix-ui/react-slot",
+        "class-variance-authority",
+        "clsx",
+        "tailwind-merge"
+      ],
+      "registryDependencies": [
+        "icon",
+        "theme"
+      ]
+    },
+    {
+      "name": "badge",
+      "type": "registry:ui",
+      "title": "Badge",
+      "files": [
+        {
+          "path": "src/components/badge.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
+        }
+      ],
+      "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
+        "clsx",
+        "tailwind-merge"
+      ],
+      "registryDependencies": [
+        "theme"
+      ]
+    },
+    {
+      "name": "alert",
+      "type": "registry:ui",
+      "title": "Alert",
+      "files": [
+        {
+          "path": "src/components/alert.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
+        }
+      ],
+      "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
+        "clsx",
+        "tailwind-merge"
+      ],
+      "registryDependencies": [
+        "badge",
+        "icon",
+        "theme"
+      ]
+    },
+    {
+      "name": "spinner",
+      "type": "registry:ui",
+      "title": "Spinner",
+      "files": [
+        {
+          "path": "src/components/spinner.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
+        }
+      ],
+      "dependencies": [
+        "@radix-ui/react-slot",
+        "class-variance-authority",
+        "clsx",
+        "tailwind-merge"
+      ],
+      "registryDependencies": [
+        "theme"
+      ]
+    },
+    {
+      "name": "hooks",
+      "type": "registry:lib",
+      "files": [
+        {
+          "path": "src/components/hooks.ts",
+          "type": "registry:ui"
+        },
+        {
+          "path": "src/lib/use-controllable-state.ts",
+          "type": "registry:lib"
+        },
+        {
+          "path": "src/lib/use-roving-focus.ts",
+          "type": "registry:lib"
+        },
+        {
+          "path": "src/lib/compose-refs.ts",
+          "type": "registry:lib"
+        },
+        {
+          "path": "src/lib/use-floating-position.ts",
+          "type": "registry:lib"
+        },
+        {
+          "path": "src/lib/cn.ts",
+          "type": "registry:lib"
+        }
+      ],
+      "dependencies": [
+        "@floating-ui/react-dom",
         "clsx",
         "tailwind-merge"
       ],

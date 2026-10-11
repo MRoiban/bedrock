@@ -51,8 +51,9 @@ toolbar, and context-menu primitives from the package root. Panels and toolbars
 are useful composition pieces for ordinary web apps. Sidebar/activity-bar,
 status-bar, section-select, prompt, and number-effect are omitted to keep the
 web API focused; command is omitted to avoid the additional cmdk dependency.
-`Toast` and `Tabs` retain Onyx's source-owned composition API; no toast manager
-or extra Bedrock list abstraction is added.
+Required registry dependencies are exported too: Field/Label, Popover, Spinner,
+Alert, Badge, and the shared hooks. `Toast` and `Tabs` retain Onyx's source-owned
+composition API, including the toast queue hook.
 
 ## Themes and custom styles
 
@@ -63,29 +64,32 @@ document.documentElement.dataset.theme = "light";
 document.documentElement.dataset.theme = "dark";
 ```
 
-The light palette overrides the semantic `--onyx-*` variables. Customize any of
-those variables on `:root`, or use `OnyxThemeRoot` with `variables` for a scoped
-custom theme. OnyxThemeRoot supplies its own inline default dark tokens, so pass
-explicit `variables` for scoped light themes; document `data-theme` is the simplest
-app-wide option. Body portals need document-level token overrides.
+The dark/light palettes and component defaults come directly from Onyx. Customize
+semantic `--onyx-*` variables on `:root`, or use `OnyxThemeRoot` with `variables`,
+`theme="light"`/`theme="dark"`, and `density="compact"`/`density="comfortable"`
+for a scoped theme. An omitted theme inherits its surroundings. Floating children
+inside a Dialog inherit its portal host and theme. Body portals need
+document-level token overrides. See Onyx's theme documentation for browser
+support and the explicit-theme fallback for automatic semantic rebinding.
 
 Use ordinary CSS for app layouts. The prebuilt CSS includes the utilities in
 **the vendored components**, not arbitrary Tailwind classes from consumer apps.
 Import your app CSS after `@bedrock/ui/styles.css`. Tailwind's standard base reset
-is included; UI defaults and Bedrock layouts use semantic tokens. A local alias
-`--onyx-control-bg` supplies the progress track token missing from upstream defaults.
+is included; UI defaults and Bedrock layouts use semantic tokens.
 
 ## Maintainer workflow
 
-Onyx is the source of truth. Never hand-edit `src/onyx/`.
+The private [Onyx repository](https://github.com/MRoiban/onyx) is the source of
+truth. Never hand-edit `src/onyx/`. Clone it beside the Bedrock checkout and pull
+its `main` branch before syncing.
 
 ```sh
 cd packages/ui
-bun run sync:onyx /path/to/babel-ui/onyx
+bun run sync:onyx /path/to/onyx
 bun run build:css
 ```
 
-The source defaults to `/Users/stellar/Playground/babel-ui/onyx`. The sync script
+The source defaults to the sibling `onyx` checkout next to Bedrock. The sync script
 reads registry items and their registry dependencies, follows relative imports
 for shared helpers, and preserves upstream directory structure so internal
 imports remain valid. It records the source Git commit and a SHA-256 of the
@@ -93,10 +97,11 @@ selected registry and source content in `ONYX_VERSION`. The one compatibility
 rewrite omits an undefined Radix CheckboxItem `checked` prop for TypeScript's
 `exactOptionalPropertyTypes`. It is applied by the script, never by editing a copy.
 
-Onyx's upstream PostCSS config references a retired `new-ui/tailwind.config.cjs`.
-This package instead uses its own Tailwind 3/PostCSS development-only script with
-explicit content paths. It concatenates the copied tokens/globals, Bedrock CSS,
-compiled utilities, and codicons CSS/font into `dist/styles.css`. The codicons
+This package uses a Tailwind 3/PostCSS development-only script with explicit
+content paths. It resolves all imports from Onyx's globals, including its form,
+overlay, collection, and display layers, then compiles utilities and adds Bedrock
+layouts. The codicon font is embedded in `dist/styles.css`; no CSS imports or
+asset requests remain. The codicons
 package is a development dependency only; its font/code notices ship in `dist/`.
 Commit both the
 vendored source and rebuilt stylesheet. End users never run these scripts.
@@ -108,10 +113,10 @@ and do not require the original Babel checkout.
 Release installation discovers the daemon checkout's first-party packages and
 links them from one list. Their available peer dependencies are shared too,
 so linked Bedrock hooks/UI and the app use the same React instance and renderer.
-Runtime dependencies (Radix dialog/select/context-menu/slot, cva, clsx, and
-tailwind-merge, including transitives) occupy roughly 5.4 MiB with `du -ch`,
-excluding React/React DOM peers and development tools. The standalone stylesheet
-is roughly 188 KiB.
+Radix Label and Popover supply the newly required accessible labels and modal
+floating content; Floating UI positions the shared floating hooks. They join the
+existing Radix dialog/select/context-menu/slot, cva, clsx, and tailwind-merge
+runtime dependencies. PostCSS, its import plugin, and Tailwind are build tools only.
 
 ## React starter
 

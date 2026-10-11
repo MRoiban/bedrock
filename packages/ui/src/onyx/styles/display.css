@@ -1,0 +1,661 @@
+/* Vendored from Onyx. Do not edit; run bun run sync:onyx. */
+@layer onyx.components {
+  :where(.onyx-display-tone, .onyx-display--tone-neutral) {
+    --onyx-display-fg: var(--onyx-tone-neutral-fg);
+    --onyx-display-bg: var(--onyx-tone-neutral-bg);
+    --onyx-display-border: var(--onyx-tone-neutral-border);
+    --onyx-display-solid: var(--onyx-tone-neutral-solid);
+    --onyx-display-solid-fg: var(--onyx-tone-neutral-solid-fg);
+  }
+  :where(.onyx-display-tone[data-tone="info"], .onyx-display--tone-info) {
+    --onyx-display-fg: var(--onyx-tone-info-fg);
+    --onyx-display-bg: var(--onyx-tone-info-bg);
+    --onyx-display-border: var(--onyx-tone-info-border);
+    --onyx-display-solid: var(--onyx-tone-info-solid);
+    --onyx-display-solid-fg: var(--onyx-tone-info-solid-fg);
+  }
+  :where(.onyx-display-tone[data-tone="success"], .onyx-display--tone-success) {
+    --onyx-display-fg: var(--onyx-tone-success-fg);
+    --onyx-display-bg: var(--onyx-tone-success-bg);
+    --onyx-display-border: var(--onyx-tone-success-border);
+    --onyx-display-solid: var(--onyx-tone-success-solid);
+    --onyx-display-solid-fg: var(--onyx-tone-success-solid-fg);
+  }
+  :where(.onyx-display-tone[data-tone="warning"], .onyx-display--tone-warning) {
+    --onyx-display-fg: var(--onyx-tone-warning-fg);
+    --onyx-display-bg: var(--onyx-tone-warning-bg);
+    --onyx-display-border: var(--onyx-tone-warning-border);
+    --onyx-display-solid: var(--onyx-tone-warning-solid);
+    --onyx-display-solid-fg: var(--onyx-tone-warning-solid-fg);
+  }
+  :where(.onyx-display-tone[data-tone="danger"], .onyx-display--tone-danger) {
+    --onyx-display-fg: var(--onyx-tone-danger-fg);
+    --onyx-display-bg: var(--onyx-tone-danger-bg);
+    --onyx-display-border: var(--onyx-tone-danger-border);
+    --onyx-display-solid: var(--onyx-tone-danger-solid);
+    --onyx-display-solid-fg: var(--onyx-tone-danger-solid-fg);
+  }
+  :where(.onyx-badge, .onyx-badge--variant-subtle) {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--onyx-badge-gap, var(--onyx-space-1));
+    height: var(
+      --onyx-badge-height,
+      calc(var(--onyx-space-4) + var(--onyx-space-0-5))
+    );
+    padding-inline: var(--onyx-badge-padding, var(--onyx-space-1-5));
+    border-radius: var(--onyx-badge-radius, var(--onyx-radius-full));
+    font-size: var(--onyx-badge-text-size, var(--onyx-text-xs));
+    font-weight: var(--onyx-weight-semibold);
+    line-height: 1;
+    white-space: nowrap;
+    border: 1px solid var(--onyx-display-border);
+    background: var(--onyx-display-bg);
+    color: var(--onyx-display-fg);
+  }
+  :where(.onyx-badge [data-slot="badge-icon"]) {
+    display: inline-flex;
+  }
+  :where(.onyx-badge .codicon) {
+    font-size: var(--onyx-text-sm);
+  }
+  :where(:is(.onyx-badge[data-variant="solid"], .onyx-badge--variant-solid)) {
+    background: var(--onyx-display-solid);
+    color: var(--onyx-display-solid-fg);
+    border-color: transparent;
+  }
+  :where(:is(.onyx-badge[data-variant="outline"], .onyx-badge--variant-outline)) {
+    background: transparent;
+  }
+  :where(.onyx-count, .onyx-count--variant-solid) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--onyx-count-size, var(--onyx-space-4));
+    height: var(--onyx-count-size, var(--onyx-space-4));
+    padding-inline: var(--onyx-space-1);
+    border-radius: var(--onyx-radius-full);
+    font-size: var(--onyx-count-text-size, calc(var(--onyx-text-xs) * 0.91));
+    font-weight: var(
+      --onyx-count-font-weight,
+      calc(var(--onyx-weight-semibold) + 100)
+    );
+    font-variant-numeric: tabular-nums;
+    background: var(--onyx-display-solid);
+    color: var(--onyx-display-solid-fg);
+  }
+  :where(:is(.onyx-count[data-variant="subtle"], .onyx-count--variant-subtle), :is(.onyx-count[data-variant="outline"], .onyx-count--variant-outline)) {
+    background: var(--onyx-display-bg);
+    color: var(--onyx-display-fg);
+    border: 1px solid var(--onyx-display-border);
+  }
+  :where(:is(.onyx-count[data-variant="outline"], .onyx-count--variant-outline)) { background: transparent; }
+  :where(.onyx-status-dot) {
+    display: inline-block;
+    flex: none;
+    width: var(--onyx-status-dot-size, var(--onyx-space-2));
+    height: var(--onyx-status-dot-size, var(--onyx-space-2));
+    border-radius: var(--onyx-radius-full);
+    background: var(--onyx-display-fg);
+  }
+  :where(:is(.onyx-status-dot[data-pulse], .onyx-status-dot--pulse)) {
+    animation: onyx-pulse
+      var(--onyx-status-dot-duration, calc(var(--onyx-duration-slow) * 5))
+      var(--onyx-ease-standard) infinite;
+  }
+  :where(.onyx-tag-group) {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--onyx-tag-group-gap, var(--onyx-space-2));
+  }
+  :where(.onyx-tag) {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--onyx-space-1);
+    height: var(
+      --onyx-tag-height,
+      calc(var(--onyx-space-5) + var(--onyx-space-0-5))
+    );
+    padding: 0 var(--onyx-space-1) 0 var(--onyx-space-2);
+    border-radius: var(--onyx-tag-radius, var(--onyx-radius-sm));
+    background: var(--onyx-tag-bg, var(--onyx-control-secondary-bg));
+    color: var(--onyx-tag-fg, var(--onyx-text-foreground));
+    font-size: var(--onyx-text-sm);
+  }
+  :where(.onyx-tag:not([data-tone="neutral"]):not(.onyx-display--tone-neutral:not([data-tone]))) {
+    background: var(--onyx-display-bg);
+    color: var(--onyx-display-fg);
+  }
+  :where(
+    .onyx-tag [data-slot="tag-remove"],
+    .onyx-alert [data-slot="alert-close"],
+    .onyx-toast-close
+  ) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    width: var(--onyx-space-4);
+    height: var(--onyx-space-4);
+    border-radius: var(--onyx-radius-xs);
+    color: var(--onyx-text-description);
+    background: transparent;
+    cursor: pointer;
+  }
+  :where(
+    .onyx-tag [data-slot="tag-remove"]:hover,
+    .onyx-alert [data-slot="alert-close"]:hover,
+    .onyx-toast-close:hover
+  ) {
+    background: var(--onyx-state-active);
+    color: var(--onyx-text-foreground);
+  }
+  :where(.onyx-tag[data-disabled]) {
+    opacity: 0.5;
+  }
+  :where(.onyx-tag [data-slot="tag-remove"]:disabled) {
+    cursor: not-allowed;
+  }
+  :where(.onyx-alert, .onyx-alert--variant-inline) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--onyx-space-0-5)
+      var(
+        --onyx-alert-column-gap,
+        calc(var(--onyx-space-2) + var(--onyx-space-0-5))
+      );
+    padding: var(
+        --onyx-alert-padding-y,
+        calc(var(--onyx-space-2) + var(--onyx-space-0-5))
+      )
+      var(--onyx-alert-padding-x, var(--onyx-space-3));
+    border: 1px solid var(--onyx-display-border);
+    border-radius: var(--onyx-alert-radius, var(--onyx-radius-md));
+    background: var(--onyx-display-bg);
+  }
+  :where(.onyx-alert-icon) {
+    color: var(--onyx-display-fg);
+    grid-row: 1 / span 2;
+    margin-top: 1px;
+  }
+  :where(.onyx-alert-title) {
+    grid-column: 2;
+    font-weight: var(--onyx-weight-semibold);
+  }
+  :where(.onyx-alert-description) {
+    grid-column: 2;
+    color: var(--onyx-text-muted);
+    font-size: var(--onyx-text-sm);
+  }
+  :where(.onyx-alert-actions) {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--onyx-space-1-5);
+    align-items: center;
+  }
+  :where(:is(.onyx-alert[data-variant="banner"], .onyx-alert--variant-banner)) {
+    border-radius: 0;
+    border-width: 0 0 1px;
+  }
+  :where(.onyx-card) {
+    display: block;
+    min-width: 0;
+    border: 1px solid var(--onyx-card-border, var(--onyx-border-default));
+    border-radius: var(--onyx-card-radius, var(--onyx-radius-lg));
+    background: var(--onyx-card-bg, var(--onyx-surface-panel));
+    overflow: hidden;
+    color: inherit;
+    text-decoration: none;
+  }
+  :where(.onyx-card-header) {
+    display: flex;
+    align-items: flex-start;
+    gap: calc(var(--onyx-space-2) + var(--onyx-space-0-5));
+    padding: calc(var(--onyx-space-3) + var(--onyx-space-0-5))
+      var(--onyx-card-padding, var(--onyx-space-4)) 0;
+  }
+  :where(.onyx-card-title) {
+    margin: 0;
+    font-size: var(--onyx-text-lg);
+    font-weight: var(--onyx-weight-semibold);
+    line-height: var(--onyx-leading-tight);
+  }
+  :where(.onyx-card-description) {
+    margin: var(--onyx-space-0-5) 0 0;
+    font-size: var(--onyx-text-sm);
+    color: var(--onyx-text-description);
+  }
+  :where(.onyx-card-body) {
+    padding: var(--onyx-space-3) var(--onyx-card-padding, var(--onyx-space-4));
+    font-size: var(--onyx-text-sm);
+    color: var(--onyx-text-muted);
+  }
+  :where(.onyx-card-footer) {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--onyx-space-2);
+    padding: calc(var(--onyx-space-2) + var(--onyx-space-0-5))
+      var(--onyx-card-padding, var(--onyx-space-4));
+    border-top: 1px solid var(--onyx-border-subtle);
+  }
+  :where(.onyx-card-media) {
+    overflow: hidden;
+  }
+  :where(.onyx-card-media img, .onyx-card-media video) {
+    display: block;
+    width: 100%;
+  }
+  :where(:is(.onyx-card[data-interactive], .onyx-card--interactive):hover) {
+    border-color: var(--onyx-border-strong);
+  }
+  :where(.onyx-avatar, .onyx-avatar--size-md, .onyx-avatar--variant-circle) {
+    width: var(
+      --onyx-avatar-size,
+      calc(var(--onyx-space-6) + var(--onyx-space-1))
+    );
+    height: var(
+      --onyx-avatar-size,
+      calc(var(--onyx-space-6) + var(--onyx-space-1))
+    );
+    border-radius: var(--onyx-radius-full);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--onyx-avatar-bg, var(--onyx-control-secondary-bg));
+    color: var(--onyx-avatar-fg, var(--onyx-text-foreground));
+    font-size: var(--onyx-text-xs);
+    font-weight: var(--onyx-weight-semibold);
+    flex: none;
+    position: relative;
+  }
+  :where(:is(.onyx-avatar[data-size="sm"], .onyx-avatar--size-sm)) {
+    width: var(--onyx-avatar-size-sm, var(--onyx-space-5));
+    height: var(--onyx-avatar-size-sm, var(--onyx-space-5));
+    font-size: calc(var(--onyx-text-xs) * 0.82);
+  }
+  :where(:is(.onyx-avatar[data-size="lg"], .onyx-avatar--size-lg)) {
+    width: var(--onyx-avatar-size-lg, var(--onyx-space-10));
+    height: var(--onyx-avatar-size-lg, var(--onyx-space-10));
+    font-size: var(--onyx-text-lg);
+  }
+  :where(:is(.onyx-avatar[data-variant="square"], .onyx-avatar--variant-square)) {
+    border-radius: var(--onyx-avatar-square-radius, var(--onyx-radius-md));
+  }
+  :where(.onyx-avatar-image, .onyx-avatar-fallback) {
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+  }
+  :where(.onyx-avatar-image) {
+    object-fit: cover;
+  }
+  :where(.onyx-avatar-fallback) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  :where(.onyx-avatar-group) {
+    display: inline-flex;
+    align-items: center;
+  }
+  :where(.onyx-avatar-group > .onyx-avatar) {
+    box-shadow: 0 0 0 var(--onyx-space-0-5) var(--onyx-surface-app);
+    margin-inline-start: calc(
+      var(--onyx-avatar-group-overlap, var(--onyx-space-1-5)) * -1
+    );
+  }
+  :where(.onyx-avatar-group > .onyx-avatar:first-child) {
+    margin-inline-start: 0;
+  }
+  :where(.onyx-avatar [data-slot="avatar-status"]) {
+    position: absolute;
+    inset-inline-end: 0;
+    bottom: 0;
+    box-shadow: 0 0 0 var(--onyx-space-0-5) var(--onyx-surface-app);
+  }
+  :where(.onyx-skeleton, .onyx-skeleton--shape-text, .onyx-skeleton--shape-text-line) {
+    border-radius: var(--onyx-skeleton-radius, var(--onyx-radius-sm));
+    height: var(
+      --onyx-skeleton-height,
+      calc(var(--onyx-space-2) + var(--onyx-space-0-5))
+    );
+    background: linear-gradient(
+      90deg,
+      var(--onyx-state-hover),
+      var(--onyx-state-active),
+      var(--onyx-state-hover)
+    );
+    background-size: 200% 100%;
+    animation: onyx-shimmer calc(var(--onyx-duration-slow) * 5) linear infinite;
+  }
+  :where(:is(.onyx-skeleton[data-variant="circle"], .onyx-skeleton--shape-circle)) {
+    width: var(--onyx-skeleton-size, var(--onyx-space-10));
+    height: var(--onyx-skeleton-size, var(--onyx-space-10));
+    border-radius: var(--onyx-radius-full);
+  }
+  :where(:is(.onyx-skeleton[data-variant="rect"], .onyx-skeleton--shape-rect)) {
+    height: var(--onyx-skeleton-height, calc(var(--onyx-space-10) * 3));
+  }
+  :where(.onyx-track) {
+    height: var(--onyx-track-height, var(--onyx-space-1-5));
+    border-radius: var(--onyx-radius-full);
+    background: var(--onyx-control-track);
+    overflow: hidden;
+  }
+  :where(.onyx-progress-indicator, .onyx-meter-indicator) {
+    height: 100%;
+    background: var(--onyx-display-fg);
+    border-radius: inherit;
+    transition: width var(--onyx-duration-fast) var(--onyx-ease-standard);
+  }
+  :where(:is(.onyx-progress[data-state="indeterminate"], .onyx-progress--indeterminate) .onyx-progress-indicator) {
+    animation: onyx-indeterminate calc(var(--onyx-duration-slow) * 4)
+      var(--onyx-ease-standard) infinite;
+  }
+  :where(.onyx-meter) {
+    display: grid;
+    gap: var(--onyx-space-1);
+  }
+  :where(.onyx-meter-header) {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--onyx-text-sm);
+  }
+  :where([data-slot="meter-value"]) {
+    color: var(--onyx-text-description);
+    font-variant-numeric: tabular-nums;
+  }
+  :where(.onyx-separator, .onyx-separator--orientation-horizontal, .onyx-separator--variant-line) {
+    background: var(--onyx-separator-color, var(--onyx-border-default));
+    height: 1px;
+    width: 100%;
+    flex: none;
+  }
+  :where(:is(.onyx-separator[data-orientation="vertical"], .onyx-separator--orientation-vertical)) {
+    width: 1px;
+    height: var(--onyx-separator-height, var(--onyx-space-4));
+  }
+  :where(:is(.onyx-separator[data-variant="label"], .onyx-separator--variant-label)) {
+    background: transparent;
+    height: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--onyx-space-2);
+    font-size: var(--onyx-text-xs);
+    color: var(--onyx-text-description);
+  }
+  :where(:is(.onyx-separator[data-variant="label"], .onyx-separator--variant-label))::before,
+  :where(:is(.onyx-separator[data-variant="label"], .onyx-separator--variant-label))::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--onyx-separator-color, var(--onyx-border-default));
+  }
+  :where(.onyx-link, .onyx-link--variant-default) {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--onyx-space-1);
+    color: var(--onyx-link-color, var(--onyx-text-link));
+    text-decoration: none;
+    text-underline-offset: var(--onyx-space-1);
+    cursor: pointer;
+  }
+  :where(.onyx-link:hover) {
+    text-decoration: underline;
+  }
+  :where(:is(.onyx-link[data-variant="muted"], .onyx-link--variant-muted)) {
+    color: var(--onyx-text-description);
+  }
+  :where(.onyx-link [data-slot="link-external-icon"]) {
+    font-size: var(--onyx-text-sm);
+  }
+  :where(.onyx-breadcrumb) {
+    font-size: var(--onyx-text-sm);
+    color: var(--onyx-text-description);
+    min-width: 0;
+  }
+  :where(.onyx-breadcrumb-list) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--onyx-space-0-5);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  :where(.onyx-breadcrumb-item) {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--onyx-space-0-5);
+  }
+  :where(.onyx-breadcrumb-link, .onyx-breadcrumb-overflow) {
+    color: inherit;
+    font: inherit;
+    text-decoration: none;
+    padding: 1px var(--onyx-space-1);
+    border-radius: var(--onyx-radius-xs);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--onyx-space-1);
+    border: 0;
+    background: transparent;
+  }
+  :where(.onyx-breadcrumb-link:hover, .onyx-breadcrumb-overflow:hover) {
+    color: var(--onyx-text-foreground);
+    background: var(--onyx-state-hover);
+  }
+  :where(.onyx-breadcrumb-link[aria-current]) {
+    color: var(--onyx-text-foreground);
+  }
+  :where(.onyx-breadcrumb-separator) {
+    display: inline-flex;
+    font-size: var(--onyx-text-sm);
+    opacity: 0.7;
+  }
+  :where(.onyx-stack) {
+    display: flex;
+    min-width: 0;
+    flex-direction: var(--onyx-stack-direction, column);
+    gap: var(--onyx-stack-gap, var(--onyx-space-3));
+    align-items: var(--onyx-stack-align, stretch);
+    justify-content: var(--onyx-stack-justify, flex-start);
+  }
+  :where(.onyx-inline) {
+    display: flex;
+    min-width: 0;
+    flex-wrap: var(--onyx-inline-wrap, wrap);
+    gap: var(--onyx-inline-gap, var(--onyx-space-2));
+    align-items: var(--onyx-inline-align, center);
+    justify-content: var(--onyx-inline-justify, flex-start);
+  }
+  :where(.onyx-container, .onyx-container--size-md) {
+    width: 100%;
+    max-width: var(--onyx-container-max-width, calc(var(--onyx-space-4) * 48));
+    margin-inline: auto;
+    padding: var(--onyx-container-padding, var(--onyx-space-4));
+  }
+  :where(:is(.onyx-container[data-size="sm"], .onyx-container--size-sm)) {
+    max-width: var(--onyx-container-max-width, calc(var(--onyx-space-4) * 35));
+  }
+  :where(:is(.onyx-container[data-size="lg"], .onyx-container--size-lg)) {
+    max-width: var(--onyx-container-max-width, calc(var(--onyx-space-4) * 64));
+  }
+  :where(:is(.onyx-container[data-size="full"], .onyx-container--size-full)) {
+    max-width: var(--onyx-container-max-width, 100%);
+  }
+  :where(.onyx-grid) {
+    display: grid;
+    min-width: 0;
+    gap: var(--onyx-grid-gap, var(--onyx-space-3));
+    grid-template-columns: var(--onyx-grid-columns, minmax(0, 1fr));
+  }
+  :where(.onyx-empty-state, .onyx-empty-state--size-md) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--onyx-space-3);
+    border: 1px dashed var(--onyx-display-border);
+    border-radius: var(--onyx-radius-lg);
+    background: var(--onyx-empty-state-bg, var(--onyx-surface-panel));
+    padding: var(--onyx-space-10) var(--onyx-space-6);
+    text-align: center;
+  }
+  :where(:is(.onyx-empty-state[data-size="sm"], .onyx-empty-state--size-sm)) {
+    padding: var(--onyx-space-4);
+    gap: var(--onyx-space-2);
+  }
+  :where(:is(.onyx-empty-state[data-size="lg"], .onyx-empty-state--size-lg)) {
+    padding: calc(var(--onyx-space-10) * 1.5) var(--onyx-space-8);
+  }
+  :where(.onyx-empty-state-icon) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(var(--onyx-space-6) * 2);
+    height: calc(var(--onyx-space-6) * 2);
+    border-radius: var(--onyx-radius-full);
+    background: var(--onyx-state-hover);
+    color: var(--onyx-display-fg);
+  }
+  :where(.onyx-empty-state-title) {
+    font-size: var(--onyx-text-xl);
+    font-weight: var(--onyx-weight-semibold);
+  }
+  :where(.onyx-empty-state-description) {
+    max-width: calc(var(--onyx-space-4) * 28);
+    color: var(--onyx-text-description);
+    font-size: var(--onyx-text-lg);
+  }
+  :where(.onyx-empty-state-actions) {
+    display: flex;
+    align-items: center;
+    gap: var(--onyx-space-2);
+  }
+  :where(.onyx-toast-viewport, .onyx-toast-viewport--variant-fixed, .onyx-toast-viewport--state-stacked) {
+    display: grid;
+    width: var(
+      --onyx-toast-width,
+      min(calc(var(--onyx-space-4) * 21.25), calc(100% - var(--onyx-space-6)))
+    );
+    position: fixed;
+    inset-inline-end: var(--onyx-space-3);
+    bottom: var(--onyx-space-3);
+    z-index: var(--onyx-z-toast);
+  }
+  :where(:is(.onyx-toast-viewport[data-variant="inline"], .onyx-toast-viewport--variant-inline)) {
+    position: absolute;
+  }
+  :where(.onyx-toast) {
+    position: relative;
+    grid-area: 1 / 1;
+    align-self: stretch;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--onyx-space-0-5) calc(var(--onyx-space-2) + var(--onyx-space-0-5));
+    padding: calc(var(--onyx-space-2) + var(--onyx-space-0-5));
+    padding-inline-start: var(--onyx-space-3);
+    background: var(--onyx-toast-bg, var(--onyx-surface-menu));
+    border: 1px solid var(--onyx-toast-border, var(--onyx-border-default));
+    border-radius: var(--onyx-toast-radius, var(--onyx-radius-md));
+    box-shadow: var(--onyx-shadow-md);
+    transform: translateY(
+        calc(var(--onyx-toast-index, 0) * var(--onyx-space-2) * -1)
+      )
+      scale(calc(1 - var(--onyx-toast-index, 0) * 0.04));
+    opacity: calc(1 - var(--onyx-toast-index, 0) * 0.2);
+    transition: transform var(--onyx-duration-normal) var(--onyx-ease-standard);
+    touch-action: pan-y;
+  }
+  :where(.onyx-toast[data-background] > *) {
+    visibility: hidden;
+  }
+  :where(:is(.onyx-toast-viewport[data-state="expanded"], .onyx-toast-viewport--state-expanded)) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--onyx-space-2);
+  }
+  :where(:is(.onyx-toast-viewport[data-state="expanded"], .onyx-toast-viewport--state-expanded) .onyx-toast) {
+    transform: none;
+    opacity: 1;
+  }
+  :where(.onyx-toast-icon) {
+    grid-column: 1;
+    grid-row: 1;
+    color: var(--onyx-display-fg);
+  }
+  :where(.onyx-toast-message) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  :where(.onyx-toast-close) {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  :where(.onyx-toast-text, .onyx-toast-source) {
+    grid-column: 2;
+    color: var(--onyx-text-description);
+    font-size: var(--onyx-text-sm);
+  }
+  :where(.onyx-toast-content) {
+    grid-column: 2;
+  }
+  :where(.onyx-toast-actions) {
+    grid-column: 2;
+    display: flex;
+    gap: var(--onyx-space-1-5);
+    margin-top: var(--onyx-space-1-5);
+  }
+  :where(.onyx-toast-progress) {
+    grid-column: 1 / -1;
+    height: var(--onyx-space-0-5);
+    background: var(--onyx-control-track);
+    margin-top: var(--onyx-space-2);
+  }
+  :where(.onyx-toast-progress-bar) {
+    height: 100%;
+    background: var(--onyx-display-fg);
+  }
+  :where(.onyx-toast-live) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  :where(
+    .onyx-card:focus-visible,
+    .onyx-link:focus-visible,
+    .onyx-tag button:focus-visible,
+    .onyx-alert button:focus-visible,
+    .onyx-breadcrumb a:focus-visible,
+    .onyx-breadcrumb button:focus-visible,
+    .onyx-toast button:focus-visible
+  ) {
+    outline: var(--onyx-focus-ring-width) solid var(--onyx-control-focus-ring);
+    outline-offset: var(--onyx-focus-ring-offset);
+  }
+  @media (max-width: 40rem) {
+    :where(.onyx-alert-actions) {
+      grid-column: 2;
+      grid-row: auto;
+      margin-top: var(--onyx-space-1-5);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :where(.onyx-status-dot, .onyx-skeleton, .onyx-progress-indicator) {
+      animation: none;
+    }
+    :where(.onyx-toast, .onyx-progress-indicator, .onyx-meter-indicator) {
+      transition: none;
+    }
+  }
+}

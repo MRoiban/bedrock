@@ -1,10 +1,13 @@
 /* Vendored from Onyx. Do not edit; run bun run sync:onyx. */
+import { useFormReset } from '../lib/use-form-reset';
+import { useComposedRefs } from '../lib/compose-refs';
+import { useFieldControl } from './field';
 import * as React from 'react';
 
 import { cn } from '../lib/cn';
 
 export const switchTrackClassName = [
-  'inline-flex h-[calc(20px*var(--onyx-scale-ui))] w-[calc(36px*var(--onyx-scale-ui))] shrink-0 items-center rounded-full border-0 p-[calc(2px*var(--onyx-scale-ui))]',
+  'onyx-switch inline-flex shrink-0 items-center rounded-full border-0',
   'bg-[var(--onyx-control-input-border)] transition-colors',
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--onyx-control-focus-ring)]',
   'disabled:cursor-not-allowed disabled:opacity-50',
@@ -12,9 +15,9 @@ export const switchTrackClassName = [
 ].join(' ');
 
 export const switchThumbClassName = [
-  'pointer-events-none block h-[calc(16px*var(--onyx-scale-ui))] w-[calc(16px*var(--onyx-scale-ui))] shrink-0 rounded-full',
+  'onyx-switch-thumb pointer-events-none block shrink-0 rounded-full',
   'bg-[var(--onyx-control-button-fg)] shadow-[var(--onyx-shadow-sm)] transition-transform',
-  'data-[state=checked]:translate-x-[calc(16px*var(--onyx-scale-ui))] data-[state=unchecked]:translate-x-0'
+  ''
 ].join(' ');
 
 export interface SwitchProps
@@ -38,19 +41,27 @@ export const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
     },
     ref
   ) => {
+    const field = useFieldControl(props);
+    disabled = disabled ?? field.disabled;
+    const controlProps = { ...field, ...props, disabled };
     const [uncontrolledChecked, setUncontrolledChecked] = React.useState(defaultChecked);
     const checked = checkedProp ?? uncontrolledChecked;
+    const initialChecked = React.useRef(defaultChecked);
+    const input = React.useRef<HTMLButtonElement>(null);
+    const composed = useComposedRefs(ref, input);
+    useFormReset(input, () => { if (checkedProp === undefined) setUncontrolledChecked(initialChecked.current); }, props.form);
     const state = checked ? 'checked' : 'unchecked';
 
     return (
       <button
-        ref={ref}
+        ref={composed}
         type={type}
         role="switch"
         aria-checked={checked}
         data-slot="switch"
+        data-disabled={disabled ? '' : undefined}
+        data-invalid={controlProps['aria-invalid'] && controlProps['aria-invalid'] !== 'false' ? '' : undefined}
         data-state={state}
-        disabled={disabled}
         className={cn(switchTrackClassName, className)}
         onClick={(event) => {
           onClick?.(event);
@@ -64,7 +75,7 @@ export const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
           }
           onCheckedChange?.(nextChecked);
         }}
-        {...props}
+        {...controlProps}
       >
         <span data-slot="switch-thumb" data-state={state} className={switchThumbClassName} />
       </button>

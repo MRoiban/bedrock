@@ -1,0 +1,574 @@
+/* Vendored from Onyx. Do not edit; run bun run sync:onyx. */
+@layer onyx.components {
+  :where(.onyx-floating) {
+    z-index: var(--onyx-z-popover);
+    max-width: calc(100vw - var(--onyx-space-4));
+    max-height: var(
+      --radix-popper-available-height,
+      calc(100dvh - var(--onyx-space-4))
+    );
+    overflow: auto;
+    border: 1px solid var(--onyx-border-default);
+    border-radius: var(--onyx-menu-radius, var(--onyx-radius-md));
+    background: var(--onyx-surface-menu);
+    color: var(--onyx-text-foreground);
+    box-shadow: var(--onyx-shadow-md);
+    font: inherit;
+    font-size: var(--onyx-text-md);
+    outline: none;
+    transform-origin: var(--radix-popper-transform-origin);
+    animation-duration: var(--onyx-duration-normal);
+    animation-timing-function: var(--onyx-ease-emphasized);
+  }
+  :where(.onyx-floating)[data-state="open"],
+  :where(.onyx-floating)[data-state="delayed-open"],
+  :where(.onyx-floating)[data-state="instant-open"] {
+    animation-name: onyx-overlay-enter;
+  }
+  :where(.onyx-floating)[data-state="closed"] {
+    animation-name: onyx-overlay-exit;
+    animation-timing-function: var(--onyx-ease-exit);
+  }
+  :where(.onyx-floating-arrow) {
+    fill: var(--onyx-surface-menu);
+    stroke: var(--onyx-border-default);
+    stroke-width: 1px;
+  }
+  :where(.onyx-popover, .onyx-hover-card) {
+    width: calc(var(--onyx-space-10) * 7);
+    padding: var(--onyx-space-3);
+    overflow: visible;
+  }
+  :where(.onyx-hover-card) {
+    display: grid;
+    gap: var(--onyx-space-2);
+  }
+  :where(.onyx-overlay-header) {
+    display: flex;
+    align-items: center;
+    gap: var(--onyx-space-2);
+  }
+  :where(.onyx-overlay-body) {
+    display: grid;
+    gap: var(--onyx-space-1-5);
+  }
+  :where(.onyx-overlay-footer) {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--onyx-space-2);
+  }
+  :where(.onyx-popover .onyx-overlay-header) {
+    margin-bottom: var(--onyx-space-2);
+  }
+  :where(.onyx-menu-content) {
+    min-width: calc(var(--onyx-space-10) * 5.5);
+    padding: var(--onyx-space-1);
+  }
+  :where(.onyx-menu-item) {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--onyx-space-2);
+    min-height: var(--onyx-menu-item-height, var(--onyx-control-height-md));
+    padding: 0 var(--onyx-space-2);
+    border-radius: var(--onyx-radius-sm);
+    cursor: default;
+    user-select: none;
+    white-space: nowrap;
+    outline: none;
+    color: var(--onyx-text-foreground);
+    font-size: var(--onyx-text-md);
+    line-height: var(--onyx-leading-normal);
+    transition:
+      background var(--onyx-duration-fast) var(--onyx-ease-standard),
+      color var(--onyx-duration-fast) var(--onyx-ease-standard);
+  }
+  :where(.onyx-menu-item) > .codicon {
+    color: var(--onyx-text-muted);
+  }
+  :where(.onyx-menu-item)[data-highlighted],
+  :where(.onyx-menu-item)[data-state="open"] {
+    background: var(--onyx-state-selected);
+    color: var(--onyx-state-selected-fg);
+  }
+  :where(.onyx-menu-item)[data-highlighted] > *,
+  :where(.onyx-menu-item)[data-state="open"] > * {
+    color: inherit;
+  }
+  :where(.onyx-menu-item)[data-disabled] {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  :where(.onyx-menu-danger) {
+    color: var(--onyx-tone-danger-fg);
+  }
+  :where(.onyx-menu-danger) > .codicon {
+    color: inherit;
+  }
+  :where(.onyx-menu-inset) {
+    padding-left: var(--onyx-space-8);
+  }
+  :where(.onyx-menu-indicator) {
+    position: absolute;
+    left: var(--onyx-space-2);
+    width: var(--onyx-space-4);
+    display: inline-flex;
+    justify-content: center;
+  }
+  :where(.onyx-menu-label) {
+    padding: var(--onyx-space-1-5) var(--onyx-space-2) var(--onyx-space-0-5);
+    font-size: var(--onyx-text-xs);
+    font-weight: var(--onyx-weight-semibold);
+    color: var(--onyx-text-description);
+  }
+  :where(.onyx-menu-separator) {
+    height: 1px;
+    margin: var(--onyx-space-1) 0;
+    background: var(--onyx-border-default);
+  }
+  :where(.onyx-menu-shortcut) {
+    margin-left: auto;
+    padding-left: var(--onyx-space-6);
+    font-size: var(--onyx-text-sm);
+    color: var(--onyx-text-description);
+  }
+  :where(.onyx-tooltip) {
+    z-index: var(--onyx-z-tooltip);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--onyx-space-2);
+    padding: var(--onyx-space-1) var(--onyx-space-2);
+    border-radius: var(--onyx-tooltip-radius, var(--onyx-radius-sm));
+    background: var(--onyx-surface-tooltip);
+    color: var(--onyx-control-button-fg);
+    border-color: var(--onyx-border-strong);
+    box-shadow: var(--onyx-shadow-sm);
+    font-size: var(--onyx-text-sm);
+    overflow-wrap: anywhere;
+  }
+  :where(.onyx-tooltip .onyx-kbd) {
+    background: transparent;
+    border-color: var(--onyx-border-strong);
+    color: inherit;
+  }
+  :where(.onyx-truncate) {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  :where(.onyx-truncate)[data-mode="middle"] {
+    display: flex;
+    text-overflow: clip;
+  }
+  :where(.onyx-truncate-start) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :where(.onyx-truncate-end) {
+    flex: none;
+  }
+  :where(.onyx-overlay) {
+    position: fixed;
+    inset: 0;
+    z-index: var(--onyx-z-overlay);
+    background: var(--onyx-surface-overlay);
+    animation: onyx-overlay-enter var(--onyx-duration-normal)
+      var(--onyx-ease-emphasized);
+  }
+  :where(.onyx-modal) {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    width: min(
+      calc(var(--onyx-space-10) * 10),
+      calc(100vw - var(--onyx-space-8))
+    );
+    height: fit-content;
+    max-height: calc(100dvh - var(--onyx-space-8));
+    overflow-y: auto;
+    z-index: var(--onyx-z-dialog);
+    background: var(--onyx-surface-dialog);
+    border: 1px solid var(--onyx-border-default);
+    border-radius: var(--onyx-radius-lg);
+    padding: calc(var(--onyx-space-3) * 1.5);
+    box-shadow: var(--onyx-shadow-lg);
+    display: grid;
+    gap: calc(var(--onyx-space-2) * 1.25);
+    color: var(--onyx-text-foreground);
+    animation: onyx-overlay-enter var(--onyx-duration-normal)
+      var(--onyx-ease-emphasized);
+  }
+  :where(.onyx-overlay-title) {
+    margin: 0;
+    font-size: var(--onyx-text-lg);
+    font-weight: var(--onyx-weight-semibold);
+  }
+  :where(.onyx-overlay-description) {
+    margin: 0;
+    font-size: var(--onyx-text-sm);
+    color: var(--onyx-text-muted);
+  }
+  :where(.onyx-alert-dialog-icon) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: var(--onyx-space-8);
+    height: var(--onyx-space-8);
+    border-radius: var(--onyx-radius-full);
+    background: var(--onyx-tone-danger-bg);
+    color: var(--onyx-tone-danger-fg);
+  }
+  :where(.onyx-alert-dialog-icon)[data-tone="warning"] {
+    background: var(--onyx-tone-warning-bg);
+    color: var(--onyx-tone-warning-fg);
+  }
+  :where(.onyx-alert-dialog-icon)[data-tone="info"] {
+    background: var(--onyx-tone-info-bg);
+    color: var(--onyx-tone-info-fg);
+  }
+  :where(.onyx-alert-dialog-icon)[data-tone="success"] {
+    background: var(--onyx-tone-success-bg);
+    color: var(--onyx-tone-success-fg);
+  }
+  :where(.onyx-alert-dialog-icon)[data-tone="neutral"] {
+    background: var(--onyx-tone-neutral-bg);
+    color: var(--onyx-tone-neutral-fg);
+  }
+  :where(.onyx-sheet) {
+    position: fixed;
+    z-index: var(--onyx-z-dialog);
+    display: flex;
+    flex-direction: column;
+    background: var(--onyx-surface-dialog);
+    color: var(--onyx-text-foreground);
+    border: 1px solid var(--onyx-border-default);
+    box-shadow: var(--onyx-shadow-lg);
+    animation: onyx-overlay-enter var(--onyx-duration-normal)
+      var(--onyx-ease-emphasized);
+  }
+  :where(.onyx-sheet)[data-side="right"],
+  :where(.onyx-sheet)[data-side="left"] {
+    top: 0;
+    bottom: 0;
+    width: min(calc(var(--onyx-space-10) * 7.5), 80vw);
+  }
+  :where(.onyx-sheet)[data-side="right"] {
+    right: 0;
+  }
+  :where(.onyx-sheet)[data-side="left"] {
+    left: 0;
+  }
+  :where(.onyx-sheet)[data-side="bottom"],
+  :where(.onyx-sheet)[data-side="top"] {
+    left: 0;
+    right: 0;
+    max-height: 85dvh;
+  }
+  :where(.onyx-sheet)[data-side="bottom"] {
+    bottom: 0;
+    border-radius: var(--onyx-radius-lg) var(--onyx-radius-lg) 0 0;
+  }
+  :where(.onyx-sheet)[data-side="top"] {
+    top: 0;
+    border-radius: 0 0 var(--onyx-radius-lg) var(--onyx-radius-lg);
+  }
+  :where(.onyx-sheet-header) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--onyx-space-3) var(--onyx-space-4);
+    border-bottom: 1px solid var(--onyx-border-subtle);
+  }
+  :where(.onyx-sheet-body) {
+    flex: 1;
+    padding: var(--onyx-space-4);
+    overflow-y: auto;
+    display: grid;
+    gap: var(--onyx-space-3);
+    align-content: start;
+  }
+  :where(.onyx-sheet-footer) {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--onyx-space-2);
+    padding: var(--onyx-space-3) var(--onyx-space-4);
+    border-top: 1px solid var(--onyx-border-subtle);
+  }
+  :where(.onyx-sheet-handle) {
+    width: calc(var(--onyx-space-4) * 2.25);
+    height: var(--onyx-space-1);
+    border-radius: var(--onyx-radius-full);
+    background: var(--onyx-border-strong);
+    margin: var(--onyx-space-2) auto 0;
+  }
+  :where(.onyx-menubar) {
+    display: flex;
+    align-items: center;
+    height: var(--onyx-control-height-md);
+    padding: 0 var(--onyx-space-1);
+    border-bottom: 1px solid var(--onyx-border-default);
+    background: var(--onyx-surface-panel);
+  }
+  :where(.onyx-menubar-trigger, .onyx-navigation-trigger) {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: default;
+    border-radius: var(--onyx-radius-sm);
+    padding: var(--onyx-space-1) var(--onyx-space-2);
+  }
+  :where(.onyx-menubar-trigger):hover,
+  :where(.onyx-menubar-trigger)[data-state="open"],
+  :where(.onyx-navigation-trigger):hover,
+  :where(.onyx-navigation-trigger)[data-state="open"] {
+    background: var(--onyx-state-hover);
+  }
+  :where(.onyx-navigation-menu) {
+    position: relative;
+  }
+  :where(.onyx-navigation-list) {
+    display: flex;
+    gap: var(--onyx-space-1);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  :where(.onyx-navigation-content) {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: var(--onyx-z-popover);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--onyx-space-1);
+    padding: var(--onyx-space-1-5);
+    width: min(
+      calc(var(--onyx-space-10) * 10),
+      calc(100vw - var(--onyx-space-4))
+    );
+    max-width: 100%;
+    background: var(--onyx-surface-menu);
+    border: 1px solid var(--onyx-border-default);
+    border-radius: var(--onyx-menu-radius, var(--onyx-radius-md));
+    box-shadow: var(--onyx-shadow-md);
+  }
+  :where(.onyx-navigation-link) {
+    display: grid;
+    gap: var(--onyx-space-0-5);
+    padding: var(--onyx-space-2);
+    border-radius: var(--onyx-radius-md);
+    color: inherit;
+    text-decoration: none;
+  }
+  :where(.onyx-navigation-link):hover,
+  :where(.onyx-navigation-link):focus-visible {
+    background: var(--onyx-state-hover);
+  }
+  :where(.onyx-navigation-link small) {
+    color: var(--onyx-text-description);
+    font-size: var(--onyx-text-xs);
+  }
+  :where(.onyx-combobox) {
+    min-width: 0;
+  }
+  :where(.onyx-combobox-control) {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--onyx-space-1);
+    min-height: var(--onyx-input-height, var(--onyx-control-height-md));
+    border: 1px solid var(--onyx-border-default);
+    border-radius: var(--onyx-input-radius, var(--onyx-radius-md));
+    background: var(--onyx-control-input-bg);
+    padding: 0 var(--onyx-space-2);
+  }
+  :where(.onyx-combobox-control):focus-within {
+    border-color: var(--onyx-control-focus-ring);
+    box-shadow: inset 0 0 0 1px var(--onyx-control-focus-ring);
+  }
+  :where(.onyx-combobox-input) {
+    flex: 1;
+    min-width: var(--onyx-space-10);
+    width: 100%;
+    height: calc(var(--onyx-input-height, var(--onyx-control-height-md)) - var(--onyx-space-0-5));
+    padding: 0;
+    background: transparent;
+    border: 0;
+    outline: none;
+    color: inherit;
+    font: inherit;
+  }
+  :where(.onyx-combobox-trigger) {
+    border: 0;
+    background: transparent;
+    color: var(--onyx-text-muted);
+    cursor: pointer;
+    padding: var(--onyx-space-0-5);
+  }
+  :where(.onyx-combobox-match) {
+    font-weight: var(--onyx-weight-semibold);
+    background: transparent;
+    color: inherit;
+  }
+  :where(.onyx-combobox-empty) {
+    padding: var(--onyx-space-2);
+    color: var(--onyx-text-muted);
+  }
+  :where(.onyx-combobox-chip) {
+    display: inline-flex;
+    gap: var(--onyx-space-1);
+    align-items: center;
+    border: 1px solid var(--onyx-border-default);
+    border-radius: var(--onyx-radius-sm);
+    padding: 0 var(--onyx-space-1);
+    background: var(--onyx-state-hover);
+    font-size: var(--onyx-text-sm);
+  }
+  :where(.onyx-combobox-chip button) {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    cursor: pointer;
+  }
+  :where(
+    .onyx-menubar-trigger,
+    .onyx-navigation-trigger,
+    .onyx-navigation-link,
+    .onyx-truncate,
+    .onyx-combobox-trigger
+  ):focus-visible {
+    outline: var(--onyx-focus-ring-width) solid var(--onyx-control-focus-ring);
+    outline-offset: var(--onyx-focus-ring-offset);
+  }
+  :where(.onyx-overlay, .onyx-modal, .onyx-sheet)[data-state="closed"] {
+    animation-name: onyx-overlay-exit;
+    animation-timing-function: var(--onyx-ease-exit);
+  }
+  :where(.onyx-sheet)[data-state="open"][data-side="right"] {
+    animation-name: onyx-sheet-right-enter;
+  }
+  :where(.onyx-sheet)[data-state="open"][data-side="left"] {
+    animation-name: onyx-sheet-left-enter;
+  }
+  :where(.onyx-sheet)[data-state="open"][data-side="top"] {
+    animation-name: onyx-sheet-top-enter;
+  }
+  :where(.onyx-sheet)[data-state="open"][data-side="bottom"] {
+    animation-name: onyx-sheet-bottom-enter;
+  }
+  :where(.onyx-navigation-trigger .codicon) {
+    transition: transform var(--onyx-duration-normal) var(--onyx-ease-standard);
+  }
+  :where(.onyx-navigation-trigger)[data-state="open"] .codicon {
+    transform: rotate(180deg);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :where(
+      .onyx-floating,
+      .onyx-overlay,
+      .onyx-modal,
+      .onyx-sheet,
+      .onyx-menu-item
+    ) {
+      animation: none;
+      transition: none;
+    }
+  }
+}
+@layer onyx.components {
+  /* One field: the control owns the input chrome, the input and trigger sit inside it. */
+  :where(.onyx-date-picker-control) {
+    display: flex;
+    align-items: center;
+    gap: var(--onyx-space-0-5);
+    height: var(--onyx-input-height, var(--onyx-control-height-md));
+    padding-right: var(--onyx-space-0-5);
+    border: 1px solid var(--onyx-control-input-border);
+    border-radius: var(--onyx-input-radius, var(--onyx-radius-md));
+    background: var(--onyx-control-input-bg);
+  }
+  :where(.onyx-date-picker-control):focus-within {
+    border-color: var(--onyx-control-focus-ring);
+    outline: 1px solid var(--onyx-control-focus-ring);
+    outline-offset: -1px;
+  }
+  :where(.onyx-date-picker[data-invalid] .onyx-date-picker-control) {
+    border-color: var(--onyx-tone-danger-fg);
+  }
+  .onyx-date-picker-control > [data-slot='date-picker-input'] {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    outline: none;
+  }
+  .onyx-date-picker-control > [data-slot='date-picker-trigger'] {
+    width: var(--onyx-control-height-xs);
+    height: var(--onyx-control-height-xs);
+  }
+  :where(.onyx-date-picker-content) {
+    width: fit-content;
+  }
+}
+@layer onyx.components {
+  :where(.onyx-navigation-trigger),
+  :where(
+    .onyx-navigation-list > .onyx-navigation-item > .onyx-navigation-link
+  ) {
+    padding: var(--onyx-space-1-5) calc(var(--onyx-space-2) * 1.25);
+  }
+  :where(
+    .onyx-navigation-list > .onyx-navigation-item > .onyx-navigation-link
+  ) {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+@layer onyx.components {
+  :where(.onyx-menu-label.onyx-menu-inset) {
+    padding-left: var(--onyx-space-8);
+  }
+}
+@layer onyx.components {
+  :where(.onyx-hover-card) {
+    overflow: auto;
+  }
+  :where(.onyx-popover .onyx-overlay-body) {
+    max-height: calc(
+      var(--radix-popper-available-height, 100dvh) - var(--onyx-space-10) * 2
+    );
+    overflow-y: auto;
+  }
+  :where(.onyx-sheet-body) {
+    min-height: 0;
+  }
+}
+
+@layer onyx.components {
+  :where(.onyx-navigation-content, .onyx-navigation-viewport) {
+    max-height: calc(100dvh - var(--onyx-space-4));
+    overflow: auto;
+  }
+}
+
+@layer onyx.components {
+  :where(.onyx-popover) {
+    display: flex;
+    flex-direction: column;
+  }
+  :where(.onyx-popover-scroll) {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: auto;
+  }
+
+}
