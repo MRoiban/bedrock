@@ -7,15 +7,17 @@ import { cn } from "../lib/cn";
 
 export const Panel = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean }
->(({ className, asChild, ...props }, ref) => {
+  React.HTMLAttributes<HTMLDivElement> & { asChild?: boolean; variant?: 'card' | 'docked' }
+>(({ className, asChild, variant = 'card', ...props }, ref) => {
   const Component = asChild ? Slot : "section";
   return (
     <Component
       ref={ref}
       data-slot="panel"
+      data-variant={variant}
       className={cn(
-        "flex min-h-0 flex-col rounded-[var(--onyx-radius-lg)] border border-[var(--onyx-border-default)] bg-[var(--onyx-surface-panel)] text-[var(--onyx-text-foreground)] shadow-[var(--onyx-shadow-sm)]",
+        "flex min-h-0 flex-col bg-[var(--onyx-surface-panel)] text-[var(--onyx-text-foreground)]",
+        variant === 'card' && "rounded-[var(--onyx-radius-lg)] border border-[var(--onyx-border-default)] shadow-[var(--onyx-shadow-sm)]",
         className,
       )}
       {...props}

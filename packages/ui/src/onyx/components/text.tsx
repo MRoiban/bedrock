@@ -100,3 +100,28 @@ export const Code = React.forwardRef<HTMLElement, CodeProps>(
   },
 );
 Code.displayName = 'Code';
+
+export interface HighlightedTextProps {
+  text: string;
+  /** Literal search terms; regular-expression characters are escaped. */
+  terms: readonly string[];
+  caseSensitive?: boolean;
+  markProps?: React.ComponentPropsWithoutRef<'mark'>;
+}
+
+/** Inline search matches without adding a wrapper or changing text layout. */
+export function HighlightedText({ text, terms, caseSensitive = false, markProps }: HighlightedTextProps) {
+  const needles = [...new Set(terms.filter(Boolean))];
+  if (!needles.length) return <>{text}</>;
+  const pattern = needles.map(term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const matches = text.matchAll(new RegExp(pattern, caseSensitive ? 'g' : 'gi'));
+  const parts: React.ReactNode[] = [];
+  let end = 0;
+  for (const match of matches) {
+    const start = match.index!;
+    parts.push(text.slice(end, start), <mark {...markProps} data-slot="text-highlight" key={start}>{match[0]}</mark>);
+    end = start + match[0].length;
+  }
+  parts.push(text.slice(end));
+  return <>{parts}</>;
+}

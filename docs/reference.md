@@ -81,7 +81,9 @@ the source and `dist/styles.css`. The stylesheet bundles all Onyx layers and
 the codicon font; pebbles need no CSS build step. Theme palettes and component
 defaults come from Onyx, with Bedrock supplying its web layouts. Select menus
 follow the trigger’s computed typography across portals, including application
-font-size overrides.
+font-size overrides. Compact host buttons (`size="native"`) preserve child layout;
+`Panel variant="docked"` supplies a shared workbench surface without card borders,
+rounding or shadows.
 
 Modules talk through exported TypeScript interfaces only. No module reaches into
 another's internals. Features compose through plain exported objects.

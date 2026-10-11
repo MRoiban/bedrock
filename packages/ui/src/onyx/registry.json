@@ -38,6 +38,10 @@
           "type": "registry:style"
         },
         {
+          "path": "src/styles/overlay-scrollbar.css",
+          "type": "registry:style"
+        },
+        {
           "path": "src/lib/cn.ts",
           "type": "registry:lib"
         }

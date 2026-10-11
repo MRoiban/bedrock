@@ -1,5 +1,9 @@
 /* Vendored from Onyx. Do not edit; run bun run sync:onyx. */
 @layer onyx.components {
+  :where([data-slot='text-highlight']) {
+    color: inherit;
+    background: var(--onyx-state-selected);
+  }
   :where(.onyx-display-tone, .onyx-display--tone-neutral) {
     --onyx-display-fg: var(--onyx-tone-neutral-fg);
     --onyx-display-bg: var(--onyx-tone-neutral-bg);

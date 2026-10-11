@@ -691,7 +691,9 @@ CSS includes utilities used by components only, all Onyx component layers, and
 the embedded codicon font. Upstream palettes and defaults come from Onyx.
 Select options follow the trigger’s computed font size, family, weight, line
 height, and letter spacing across the portal; explicit SelectContent styles
-can override that typography.
+can override that typography. Native-size Buttons preserve their children’s
+layout inside host workbench controls, and `Panel variant="docked"` omits card
+borders, rounding, and shadows for docked regions.
 Maintainers sync the private `MRoiban/onyx` repository's `main` checkout using
 `bun run sync:onyx` and `bun run build:css` in `packages/ui`. The default source is
 a sibling `onyx` checkout; `ONYX_VERSION` records its commit and source hash.

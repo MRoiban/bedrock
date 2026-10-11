@@ -5,6 +5,7 @@
 @import './forms.css';
 @import './collections.css';
 @import './display.css';
+@import './overlay-scrollbar.css';
 
 @layer onyx.base {
   @tailwind base;
@@ -741,6 +742,9 @@
     min-width: 0;
     flex-shrink: 1;
     overflow: hidden;
+  }
+  :where(.onyx-button[data-size='native']) > :where(.onyx-button-label) {
+    display: contents;
   }
   :where(.onyx-button[data-size='native']) {
     padding: 0;
