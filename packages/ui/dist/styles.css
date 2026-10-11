@@ -668,19 +668,20 @@
 @layer onyx.components {
   :where(.onyx-floating) {
     z-index: var(--onyx-z-popover);
-    max-width: calc(100vw - var(--onyx-space-4));
+    max-width: calc(100vw - var(--onyx-space-4) * var(--onyx-scale-ui));
     max-height: var(
       --radix-popper-available-height,
-      calc(100dvh - var(--onyx-space-4))
+      calc(100dvh - var(--onyx-space-4) * var(--onyx-scale-ui))
     );
     overflow: auto;
     border: 1px solid var(--onyx-border-default);
-    border-radius: var(--onyx-menu-radius, var(--onyx-radius-md));
+    border-radius: calc(var(--onyx-menu-radius, var(--onyx-radius-md)) * var(--onyx-scale-ui));
     background: var(--onyx-surface-menu);
     color: var(--onyx-text-foreground);
     box-shadow: var(--onyx-shadow-md);
     font: inherit;
-    font-size: var(--onyx-text-md);
+    font-family: var(--onyx-font-family);
+    font-size: calc(var(--onyx-font-size) * var(--onyx-scale-type));
     outline: none;
     transform-origin: var(--radix-popper-transform-origin);
     animation-duration: var(--onyx-duration-normal);
@@ -701,56 +702,57 @@
     stroke-width: 1px;
   }
   :where(.onyx-popover, .onyx-hover-card) {
-    width: calc(var(--onyx-space-10) * 7);
-    padding: var(--onyx-space-3);
+    width: calc(var(--onyx-space-10) * 7 * var(--onyx-scale-ui));
+    padding: calc(var(--onyx-space-3) * var(--onyx-scale-ui));
     overflow: visible;
   }
   :where(.onyx-hover-card) {
     display: grid;
-    gap: var(--onyx-space-2);
+    gap: calc(var(--onyx-space-2) * var(--onyx-scale-ui));
   }
   :where(.onyx-overlay-header) {
     display: flex;
     align-items: center;
-    gap: var(--onyx-space-2);
+    gap: calc(var(--onyx-space-2) * var(--onyx-scale-ui));
   }
   :where(.onyx-overlay-body) {
     display: grid;
-    gap: var(--onyx-space-1-5);
+    gap: calc(var(--onyx-space-1-5) * var(--onyx-scale-ui));
   }
   :where(.onyx-overlay-footer) {
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-end;
-    gap: var(--onyx-space-2);
+    gap: calc(var(--onyx-space-2) * var(--onyx-scale-ui));
   }
   :where(.onyx-popover .onyx-overlay-header) {
-    margin-bottom: var(--onyx-space-2);
+    margin-bottom: calc(var(--onyx-space-2) * var(--onyx-scale-ui));
   }
   :where(.onyx-menu-content) {
-    min-width: calc(var(--onyx-space-10) * 5.5);
-    padding: var(--onyx-space-1);
+    min-width: calc(var(--onyx-space-10) * 5.5 * var(--onyx-scale-ui));
+    padding: calc(var(--onyx-space-1) * var(--onyx-scale-ui));
   }
   :where(.onyx-menu-item) {
     position: relative;
     display: flex;
     align-items: center;
-    gap: var(--onyx-space-2);
-    min-height: var(--onyx-menu-item-height, var(--onyx-control-height-md));
-    padding: 0 var(--onyx-space-2);
-    border-radius: var(--onyx-radius-sm);
+    gap: calc(var(--onyx-space-2) * var(--onyx-scale-ui));
+    min-height: calc(var(--onyx-menu-item-height, var(--onyx-control-height-md)) * var(--onyx-scale-ui));
+    padding: 0 calc(var(--onyx-space-2) * var(--onyx-scale-ui));
+    border-radius: calc(var(--onyx-radius-sm) * var(--onyx-scale-ui));
     cursor: default;
     user-select: none;
     white-space: nowrap;
     outline: none;
     color: var(--onyx-text-foreground);
-    font-size: var(--onyx-text-md);
+    font-size: inherit;
     line-height: var(--onyx-leading-normal);
     transition:
       background var(--onyx-duration-fast) var(--onyx-ease-standard),
       color var(--onyx-duration-fast) var(--onyx-ease-standard);
   }
   :where(.onyx-menu-item) > .codicon {
+    font-size: calc(14px * var(--onyx-scale-ui));
     color: var(--onyx-text-muted);
   }
   :where(.onyx-menu-item)[data-highlighted],
@@ -773,30 +775,30 @@
     color: inherit;
   }
   :where(.onyx-menu-inset) {
-    padding-left: var(--onyx-space-8);
+    padding-left: calc(var(--onyx-space-8) * var(--onyx-scale-ui));
   }
   :where(.onyx-menu-indicator) {
     position: absolute;
-    left: var(--onyx-space-2);
-    width: var(--onyx-space-4);
+    left: calc(var(--onyx-space-2) * var(--onyx-scale-ui));
+    width: calc(var(--onyx-space-4) * var(--onyx-scale-ui));
     display: inline-flex;
     justify-content: center;
   }
   :where(.onyx-menu-label) {
-    padding: var(--onyx-space-1-5) var(--onyx-space-2) var(--onyx-space-0-5);
-    font-size: var(--onyx-text-xs);
+    padding: calc(var(--onyx-space-1-5) * var(--onyx-scale-ui)) calc(var(--onyx-space-2) * var(--onyx-scale-ui)) calc(var(--onyx-space-0-5) * var(--onyx-scale-ui));
+    font-size: calc(var(--onyx-text-xs) * var(--onyx-scale-type));
     font-weight: var(--onyx-weight-semibold);
     color: var(--onyx-text-description);
   }
   :where(.onyx-menu-separator) {
     height: 1px;
-    margin: var(--onyx-space-1) 0;
+    margin: calc(var(--onyx-space-1) * var(--onyx-scale-ui)) 0;
     background: var(--onyx-border-default);
   }
   :where(.onyx-menu-shortcut) {
     margin-left: auto;
-    padding-left: var(--onyx-space-6);
-    font-size: var(--onyx-text-sm);
+    padding-left: calc(var(--onyx-space-6) * var(--onyx-scale-ui));
+    font-size: calc(var(--onyx-text-sm) * var(--onyx-scale-type));
     color: var(--onyx-text-description);
   }
   :where(.onyx-tooltip) {
@@ -3705,6 +3707,9 @@ inset: 0px;
   .left-\[calc\(8px\*var\(--onyx-scale-ui\)\)\]{
 left: calc(8px * var(--onyx-scale-ui));
 }
+  .isolate{
+isolation: isolate;
+}
   .z-\[var\(--onyx-z-dialog\)\]{
 z-index: var(--onyx-z-dialog);
 }
@@ -3842,6 +3847,9 @@ width: 100%;
   .w-px{
 width: 1px;
 }
+  .min-w-0{
+min-width: 0px;
+}
   .min-w-5{
 min-width: 1.25rem;
 }
@@ -3919,6 +3927,9 @@ border-bottom-width: calc(1px * var(--tw-divide-y-reverse));
 }
   .divide-\[var\(--onyx-border-default\)\] > :not([hidden]) ~ :not([hidden]){
 border-color: var(--onyx-border-default);
+}
+  .overflow-hidden{
+overflow: hidden;
 }
   .overflow-y-auto{
 overflow-y: auto;

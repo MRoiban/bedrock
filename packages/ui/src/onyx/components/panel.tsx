@@ -17,6 +17,7 @@ export const Panel = React.forwardRef<
       data-variant={variant}
       className={cn(
         "flex min-h-0 flex-col bg-[var(--onyx-surface-panel)] text-[var(--onyx-text-foreground)]",
+        variant === 'docked' && "relative isolate min-w-0 overflow-hidden",
         variant === 'card' && "rounded-[var(--onyx-radius-lg)] border border-[var(--onyx-border-default)] shadow-[var(--onyx-shadow-sm)]",
         className,
       )}

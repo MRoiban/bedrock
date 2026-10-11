@@ -83,7 +83,9 @@ defaults come from Onyx, with Bedrock supplying its web layouts. Select menus
 follow the trigger’s computed typography across portals, including application
 font-size overrides. Compact host buttons (`size="native"`) preserve child layout;
 `Panel variant="docked"` supplies a shared workbench surface without card borders,
-rounding or shadows.
+rounding or shadows. Docked panels clip and isolate positioned content so it
+stays within the panel during resizing. Floating menus/popovers follow the
+Onyx host typography and UI geometry scales.
 
 Modules talk through exported TypeScript interfaces only. No module reaches into
 another's internals. Features compose through plain exported objects.
