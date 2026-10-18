@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import type { PebbleConfig, FileMetadata } from '../config/types';
+import type { PebbleConfig, FileMetadata, BucketConfig } from '../config/types';
 import type { createExecutor } from '../runtime/functions';
 import { errorResponse } from '../runtime/http';
 import { storageError, fileInfo, sizeBytes, headerMeta } from './config';
@@ -22,7 +22,8 @@ export function fileResponse(request: Request, file: FileMetadata, blob: Blob, o
   const headers = downloadHeaders(file, false);
   headers.set('Cache-Control', options.cache ?? 'private, no-store');
   if (options.disposition === 'attachment') headers.set('Content-Disposition', headers.get('Content-Disposition')!.replace(/^inline/, 'attachment'));
-  if (request.headers.get('if-none-match') === headers.get('etag')) return new Response(null, { status: 304, headers });
+  // Weak comparison (RFC 9110): proxies that compress may hand the browser W/"<sha256>".
+  if (request.headers.get('if-none-match')?.split(',').some(tag => [headers.get('etag'), '*'].includes(tag.trim().replace(/^W\//, '')))) return new Response(null, { status: 304, headers });
   const range = request.headers.get('range');
   if (range && (!request.headers.has('if-range') || request.headers.get('if-range') === headers.get('etag'))) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
@@ -35,6 +36,13 @@ export function fileResponse(request: Request, file: FileMetadata, blob: Blob, o
     return new Response(request.method === 'HEAD' ? null : blob.slice(start, end + 1), { status: 206, headers });
   }
   return new Response(request.method === 'HEAD' ? null : blob, { headers });
+}
+/** The bucket's `cache` choice, or the default. A bucket that isn't public may never let shared caches keep its files. */
+export function bucketCache(config: BucketConfig, file: FileMetadata): string {
+  const value = typeof config.cache === 'function' ? config.cache(file) : config.cache;
+  if (value === undefined) return config.access === 'public' ? 'public, max-age=3600' : 'private, no-store';
+  if (config.access !== 'public' && /\bpublic\b|s-maxage/i.test(value)) throw storageError('INVALID_BUCKET', 'Only public buckets may use a public Cache-Control.', 'Use private, no-cache to revalidate private files.');
+  return value;
 }
 export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<typeof createExecutor>, root: string) {
   const uploads = createUploads(root);
@@ -110,7 +118,7 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
           return { blob, file };
         });
         const { blob, file } = result.value as { blob: Blob; file: FileMetadata };
-        return fileResponse(request, file, blob, { cache: config.access === 'public' ? 'public, max-age=3600' : 'private, no-store' });
+        return fileResponse(request, file, blob, { cache: bucketCache(config, file) });
       }
       throw storageError('FILE_NOT_FOUND', 'Unknown file endpoint.');
     } catch (error) { return errorResponse(error); }

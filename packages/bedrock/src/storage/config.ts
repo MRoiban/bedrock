@@ -9,6 +9,8 @@ export function sizeBytes(value: string | number): number {
 }
 export function validateBucket(config: Bucket) {
   if (!config || typeof config !== 'object') throw storageError('INVALID_BUCKET', 'Use bucket(name, { maxSize, access, accept? }).');
+  if (config.cache !== undefined && typeof config.cache !== 'function' && (typeof config.cache !== 'string' || !config.cache.trim() || /[\r\n]/.test(config.cache))) throw storageError('INVALID_BUCKET', 'cache must be a Cache-Control string or a function returning one.');
+  if (typeof config.cache === 'string' && config.access !== 'public' && /\bpublic\b|s-maxage/i.test(config.cache)) throw storageError('INVALID_BUCKET', `Only public buckets may use a public Cache-Control (${config.name}).`, 'Use private, no-cache to revalidate private files.');
   for (const hook of ['admit', 'onStored'] as const) if (config[hook] !== undefined && typeof config[hook] !== 'function') throw storageError('INVALID_BUCKET', `${hook} must be a function.`);
   const name = config.name;
   if (typeof name !== 'string' || !/^[a-z0-9_-]{1,32}$/.test(name)) throw storageError('INVALID_BUCKET', 'Bucket names need 1–32 lowercase letters, digits, underscores, or hyphens.');

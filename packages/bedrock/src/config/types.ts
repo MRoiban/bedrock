@@ -71,6 +71,12 @@ export interface BucketConfig {
   accept?: readonly string[];
   admit?: (ctx: FunctionContext, candidate: UploadCandidate) => void | Promise<void>;
   onStored?: (ctx: FunctionContext, file: FileMetadata, meta: unknown) => void | Promise<void>;
+  /**
+   * Cache-Control for downloads from `/_bedrock/files`. Defaults to `public, max-age=3600` for public
+   * buckets and `private, no-store` otherwise. `private, no-cache` lets browsers keep a copy and
+   * revalidate it by ETag; access is still checked on every request. Only public buckets may use `public`.
+   */
+  cache?: string | ((file: FileMetadata) => string);
 }
 
 export interface Bucket<Name extends string = string> extends BucketConfig {

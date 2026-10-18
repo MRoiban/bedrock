@@ -13,6 +13,7 @@ const storage = {
   public: bucket('public', { maxSize: '1mb', access: 'public' }),
   users: bucket('users', { maxSize: '1mb', access: 'users' }),
   custom: bucket('custom', { maxSize: '1mb', access: (ctx, file) => ctx.user?.id === 'editor' || !!ctx.user && file.ownerId === ctx.user.id }),
+  revalidate: bucket('revalidate', { maxSize: '1mb', access: 'owner', cache: file => file.mime.startsWith('text/') ? 'private, no-cache' : 'private, no-store' }),
 };
 const pebble = definePebble({ name: 'storage-test', sync: true, storage: Object.values(storage),
   queries: { list: query(ctx => ctx.storage.list(storage.attachments)) },
@@ -196,4 +197,17 @@ test('SDK resumes by hashing received chunks without re-sending and refreshes ex
     const fresh = await client.upload('attachments', new File(['hello'], 'new'), { uploadId: start.uploadId, onUploadId: id => ids.push(id) });
     expect(ids[1]).not.toBe(start.uploadId); expect(fresh.size).toBe(5);
   } finally { globalThis.fetch = nativeFetch; client.close(); await f.cleanup(); }
+});
+
+test('buckets choose their own Cache-Control; private buckets can never be cached publicly', async () => {
+  expect(() => bucket('leaky', { maxSize: '1mb', access: 'owner', cache: 'public, max-age=60' })).toThrow('Only public buckets');
+  expect(() => bucket('bad', { maxSize: '1mb', access: 'owner', cache: 'private\r\nX: 1' })).toThrow('cache must be');
+  const f = await fixture();
+  try {
+    const text = await (await f.call('revalidate', { method: 'POST', body: 'hello', headers: { 'content-type': 'text/plain' } })).json();
+    const image = await (await f.call('revalidate', { method: 'POST', body: 'png', headers: { 'content-type': 'image/png' } })).json();
+    expect((await f.call(`revalidate/${text.id}`)).headers.get('cache-control')).toBe('private, no-cache');
+    expect((await f.call(`revalidate/${image.id}`)).headers.get('cache-control')).toBe('private, no-store');
+    expect((await f.call(`revalidate/${text.id}`, { headers: { 'if-none-match': `W/"${text.sha256}"` } })).status).toBe(304);
+  } finally { await f.cleanup(); }
 });

@@ -414,7 +414,8 @@ Future (do not build yet): row-level diffs, optimistic updates, caches shared ac
 ## 7. Storage
 
 - Files live in `$BEDROCK_HOME/pebbles/<name>/data/files/<bucket>/<id>`; metadata in the pebble DB table `_bedrock_files(id, bucket, owner_id, name, mime, size, sha256, created_at)`.
-- `bucket(name, { maxSize, access, accept?, admit?, onStored? })`; register with `storage: [attachments]`, `access`: `"public" | "users" | "owner" | (ctx, file) => boolean`.
+- `bucket(name, { maxSize, access, accept?, admit?, onStored?, cache? })`; register with `storage: [attachments]`, `access`: `"public" | "users" | "owner" | (ctx, file) => boolean`.
+  `cache` sets Cache-Control for `/_bedrock/files` downloads (a string or `(file) => string`). Defaults: `public, max-age=3600` for public buckets, `private, no-store` otherwise; `private, no-cache` keeps a browser copy that revalidates by ETag while access is still checked per request. Non-public buckets may not use `public` or `s-maxage`.
 - Endpoints: `POST /_bedrock/files/<bucket>` (upload), `GET /_bedrock/files/<bucket>/<id>` (download with Range support), `HEAD` and `DELETE` same path.
 - **Chunked uploads** are mandatory for files > 90 MiB (Cloudflare's free plan rejects request bodies > 100 MB): `POST .../uploads` → `PUT .../uploads/<uid>/<n>` → `POST .../uploads/<uid>/complete`. The client SDK chunks transparently.
 - The daemon streams upload bodies and download responses, preserves Range headers, and enforces the pebble Origin on session/browser writes. Public-bucket downloads are anonymous only on public pebbles.
