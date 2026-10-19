@@ -64,6 +64,38 @@ test("BedrockError has stable JSON and a repair hint", () => {
   expect(JSON.parse(JSON.stringify(error))).toEqual({ code: "OOPS", message: "Something broke", hint: "Try again" });
 });
 
+test("mutation options infer transformed inputs, outputs, and idempotency arguments", () => {
+  const definition = mutation({
+    args: v.object({ key: v.string(), count: v.pipe(v.string(), v.transform(Number)) }),
+    idempotencyKey: args => `${args.key}:${args.count.toFixed()}`,
+    run: async (_ctx, args) => ({ count: args.count }),
+  });
+  type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+  const input: Equal<FunctionArgs<typeof definition>, { key: string; count: string }> = true;
+  const output: Equal<FunctionResult<typeof definition>, { count: number }> = true;
+  // @ts-expect-error The schema input remains a string before validation.
+  const wrong: FunctionArgs<typeof definition> = { key: "key", count: 1 };
+  expect([input, output]).toEqual([true, true]);
+  expect(definition.idempotencyKey!({ key: "key", count: 2 })).toBe("key:2");
+  void wrong;
+});
+
+test("mutation options require a Standard Schema, handler, and function key source", () => {
+  for (const options of [
+    { run: () => 1 },
+    { args: v.string() },
+    { args: {}, run: () => 1 },
+    { args: v.string(), run: 1 },
+    { args: v.string(), run: () => 1, idempotencyKey: "key" },
+  ]) {
+    // @ts-expect-error Invalid JavaScript callers receive a repair hint.
+    expect(() => mutation(options)).toThrow(expect.objectContaining({ code: "INVALID_FUNCTION", hint: expect.stringContaining("mutation({ args, idempotencyKey, run })") }));
+  }
+  expect(mutation({ args: v.string(), run: (_ctx, value) => value }).kind).toBe("mutation");
+  const schema = Object.assign(v.string(), { run: () => "not the handler" });
+  expect(mutation(schema, (_ctx, value) => value).schema).toBe(schema);
+});
+
 test("custom HTTP body ceiling is bounded and opt-in", () => {
   expect(definePebble({ name: 'large', maxRequestBodySize: 1024 ** 4 }).maxRequestBodySize).toBe(1024 ** 4);
   for (const maxRequestBodySize of [0, -1, 0.5, Infinity, 1024 ** 4 + 1]) expect(() => definePebble({ name: 'large', maxRequestBodySize })).toThrow('Invalid maxRequestBodySize');

@@ -6,14 +6,18 @@ import type { openDatabase } from "../db";
 import { BedrockError, asBedrockError } from "../error";
 import { checkAccess } from "./access";
 import { createTokens, requirePermission, storagePermission, type RequestIdentity } from "./tokens";
+import { chooseIdempotencyKey, createIdempotency, idempotencyScope } from "./idempotency";
+
+export interface ExecuteOptions { idempotencyKey?: string }
 
 export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof openDatabase>, services: Record<string, any> = {}) {
   const tokens = createTokens(pebble, database.sqlite, database.db);
+  const idempotency = createIdempotency(database.sqlite);
   let tail: Promise<unknown> = Promise.resolve();
   let closed = false;
   const detachedRuns = new Set<Promise<unknown>>();
   const listeners = new Set<(writes: Set<string>) => void>();
-  function execute(kind: "query" | "mutation", name: string, args: unknown, request: Request, identity?: { user: User | null; token?: RequestIdentity["token"]; validated?: boolean }, handler?: (ctx: FunctionContext) => unknown, permission?: string) {
+  function execute(kind: "query" | "mutation", name: string, args: unknown, request: Request, identity?: { user: User | null; token?: RequestIdentity["token"]; validated?: boolean }, handler?: (ctx: FunctionContext) => unknown, permission?: string, options?: ExecuteOptions) {
     if (closed) return Promise.reject(new BedrockError("PEBBLE_STOPPED", "The pebble has stopped.", "Start a new pebble runtime before executing functions."));
     const run = tail.then(async () => {
       const definitions = kind === "query" ? pebble.queries : pebble.mutations;
@@ -49,6 +53,14 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
       try {
         if (kind === "query") sqlite.exec("PRAGMA query_only=ON");
         sqlite.exec(kind === "query" ? "BEGIN DEFERRED" : "BEGIN IMMEDIATE");
+        const opened = kind === "mutation" && !handler
+          ? idempotency.open(idempotencyScope(resolved), name, chooseIdempotencyKey(options?.idempotencyKey, definition, args), args)
+          : null;
+        if (opened && "replay" in opened) {
+          sqlite.exec("COMMIT");
+          committed = true;
+          return { value: opened.replay.value, reads: new Set<string>(), writes: new Set<string>(), args };
+        }
         let flushed = () => {};
         const result = await tracker.capture(() => {
           if (kind === "mutation") flushed = tokens.flush();
@@ -57,6 +69,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         for (const table of invalidated) result.writes.add(table);
         // Detect unserializable results before committing any writes.
         JSON.stringify({ ok: true, value: result.value ?? null });
+        opened?.record(result.value);
         sqlite.exec("COMMIT");
         committed = true;
         flushed();

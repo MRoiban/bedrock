@@ -89,8 +89,8 @@ HTML; `init <name> [--template react]` scaffolds in the current empty directory.
 | `backup` | `{ directories: ["workspaces"], exclude?: ["**/node_modules/**"] }` |
 | `jobs` | Map of `job(cron, handler)` definitions |
 
-`query(fn)`, `query(standardSchema, fn)`, `mutation(fn)`, and
-`mutation(standardSchema, fn)` retain argument/result types. Standard Schema v1
+`query(fn)`, `query(standardSchema, fn)`, `mutation(fn)`,
+`mutation(standardSchema, fn)`, and `mutation({ args, idempotencyKey?, run })` retain argument/result types. Standard Schema v1
 validation may be async and transform input. Function names start with a letter,
 then letters/digits/underscores; prototype names are rejected. Results must be
 JSON-serializable: Dates cross the wire as strings, `undefined` becomes `null`.
@@ -120,6 +120,32 @@ be rolled back with SQLite.
 HTTP: `POST /_bedrock/q/<name>` or `POST /_bedrock/m/<name>`, with JSON arguments
 (`null` without args), gives `{ ok: true, value }` or
 `{ ok: false, error: { code, message, hint, data? } }` with the status from [Errors](#errors).
+
+### Idempotency
+
+A mutation sent with an idempotency key runs at most once per key for 24 h. The
+retry gets the stored value back. The handler does not run again, nothing is
+invalidated and no subscription re-runs.
+
+- HTTP: header `Idempotency-Key: <key>`. WebSocket: field `idempotencyKey` on the
+  `mut` message. Keys are 1–255 visible ASCII characters; otherwise
+  `INVALID_IDEMPOTENCY_KEY` (400).
+- Reusing a key with different args fails with `IDEMPOTENCY_KEY_REUSED` (409).
+  Keys are scoped per mutation and per caller (pebble token, else user, else anonymous).
+- A failed mutation stores nothing, so a retry runs it again.
+- To dedupe calls the client cannot retry for you (a form resubmitted after a reload),
+  derive the key from the args. A transport key wins over this one:
+
+```ts
+send: mutation({
+  args: v.object({ requestId: v.string(), body: v.string() }),
+  idempotencyKey: args => args.requestId, // null/undefined = no key
+  run: ({ db }, { body }) => db.insert(messages).values({ body }).returning(),
+}),
+```
+
+`client.mutate()` sends a fresh `crypto.randomUUID()` key with every call and
+retries a lost result automatically (see [Browser client and React](#browser-client-and-react)).
 
 ### Errors
 
@@ -655,7 +681,8 @@ client.close();
 The client accepts `{ url?, sync?, pollInterval?, headers?, token?, autoReload?, beforeReload? }`; url defaults to browser origin.
 Pass an absolute URL outside the browser. `sync: false` uses HTTP; without server
 sync, subscriptions poll every 5 seconds (`pollInterval: 0` disables polling). Connections reconnect and resubscribe
-with backoff; uncertain mutations are never automatically replayed. Upload options
+with backoff. A mutation whose result is lost (`CONNECTION_LOST`, `MUTATION_TIMEOUT`, or no HTTP
+response) is retried with the same [idempotency key](#idempotency), up to 3 attempts in total. Upload options
 include `onProgress` (0–1), `signal`, `meta`, `uploadId`, and `onUploadId`.
 Browsers report byte progress via XHR; Bun uses fetch boundary progress. Chunked
 uploads hash incrementally and resume missing chunks with a saved upload id.
