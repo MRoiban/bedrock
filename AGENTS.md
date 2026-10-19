@@ -22,6 +22,8 @@ sections you touch.
 - Comments explain *why*, never *what*.
 - Errors: throw `BedrockError(code, message, hint)` for anything a user or agent can hit.
 - Never touch `$HOME/.bedrock` in tests; use a temp `BEDROCK_HOME`.
+- Tests that `bun link` or install a `link:` pebble use `linkedBunEnv` (`packages/bedrock/test/helpers.ts`):
+  a temp `BUN_INSTALL` keeps the real link registry untouched while the package cache stays shared.
 
 ## Verification (required before reporting done)
 

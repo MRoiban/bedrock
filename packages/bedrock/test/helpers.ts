@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, mkdirSync, readdirSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { run } from "../src/cli/terminal";
 import { chmod } from "node:fs/promises";
 
 export function tempDirectory() {
@@ -15,6 +16,16 @@ export async function testExecutable(path: string, source: string) {
 }
 export function testCommand(path: string) {
   return process.platform === "win32" ? [process.execPath, path] : path;
+}
+// Pebbles from a source checkout use link: dependencies; a temporary BUN_INSTALL keeps
+// bun link out of the user's global registry while the package cache stays shared.
+export async function linkedBunEnv(dir: string): Promise<NodeJS.ProcessEnv> {
+  const cache = await run([process.execPath, "pm", "cache"]);
+  const env: NodeJS.ProcessEnv = { ...process.env, BUN_INSTALL: join(dir, "bun"), BUN_INSTALL_CACHE_DIR: cache };
+  delete env.BUN_INSTALL_GLOBAL_DIR;
+  delete env.BUN_INSTALL_BIN;
+  for (const name of ["bedrock", "ui"]) await run([process.execPath, "link"], { cwd: resolve(import.meta.dir, "../..", name), env });
+  return env;
 }
 export function linkDependencies(source: string, target: string) {
   mkdirSync(target, { recursive: true });

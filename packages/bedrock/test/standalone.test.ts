@@ -6,7 +6,8 @@ import { newPebble } from "../src/cli/new";
 import { run, createArchive } from "../src/daemon/archive";
 import { setup } from "../src/daemon/config";
 import { startDaemon } from "../src/daemon";
-import { tempDirectory } from "./helpers";
+import { linkedBunEnv, tempDirectory } from "./helpers";
+import { bunGlobalModules } from "../src/links";
 
 for (const template of ["react", "minimal"]) {
   test(`standalone ${template} installs, typechecks and deploys daemon-owned packages`, async () => {
@@ -15,9 +16,10 @@ for (const template of ["react", "minimal"]) {
     let daemon: Awaited<ReturnType<typeof startDaemon>> | undefined;
     try {
       expect(resolve(temp.dir).startsWith(root + "/")).toBe(false);
-      const created = await newPebble(`standalone-${template}`, template, { cwd: temp.dir, json: true, terminal: {
+      const env = { ...await linkedBunEnv(temp.dir), BEDROCK_HOME: join(temp.dir, "home") };
+      const created = await newPebble(`standalone-${template}`, template, { cwd: temp.dir, json: true, globalModules: bunGlobalModules(env), terminal: {
         // A fresh host may have packages cached without their semver manifests.
-        run: (args, options) => runCommand(args[1] === "install" ? [...args, "--prefer-offline"] : args, { ...options, env: { ...process.env, BEDROCK_HOME: join(temp.dir, "home") } }),
+        run: (args, options) => runCommand(args[1] === "install" ? [...args, "--prefer-offline"] : args, { ...options, env }),
       } });
       expect(await Bun.file(join(created.dir, "bun.lock")).exists()).toBe(true);
       await run([process.execPath, "run", "typecheck"], created.dir);

@@ -1,4 +1,5 @@
 import { BedrockError } from "./error";
+import { linkCheckout } from "./links";
 import { buildInfo, checkoutRoot } from "./version";
 import type { RunOptions } from "./cli/terminal";
 
@@ -33,6 +34,7 @@ export async function updateCheckout(options: { checkout?: string; run?: typeof 
   try { output = await execute([platform === "win32" ? "git.exe" : "git", "pull", "--ff-only"], { cwd: checkout }); }
   catch (error) { throw new BedrockError("UPDATE_PULL_FAILED", `Could not fast-forward Bedrock. ${error instanceof Error ? redactOutput(error.message) : ""}`, "Resolve divergent history or Git connectivity on the server, then retry self-update."); }
   output += "\n" + await execute([process.execPath, "install"], { cwd: checkout });
+  output += "\n" + await linkCheckout(checkout, execute);
   const after = await buildInfo(checkout, execute, platform);
   if (!after.commit) throw new BedrockError("CHECKOUT_REQUIRED", "Could not read the updated commit.", "Inspect the server checkout before restarting.");
   return { from: before.commit, to: after.commit, updated: before.commit !== after.commit, output: redactOutput(output.trim()) };

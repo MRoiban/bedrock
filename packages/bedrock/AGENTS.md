@@ -59,6 +59,10 @@ export default definePebble({
 
 Run `bedrock db generate`, commit `migrations/` (including `meta/`), then
 `bedrock dev`. Data lives in `.bedrock/db.sqlite` and `.bedrock/files/`.
+From a source install, `new`/`init` depend on `"bedrock": "link:bedrock"` (and
+`"@bedrock/ui": "link:@bedrock/ui"`); the lockfile has no paths, so copies and
+git worktrees just work. Never write `file:` paths; `bedrock doctor` in the
+pebble flags them and prints the fix.
 Dev uses a localhost daemon and a private child; the printed URL is
 `http://notes.localhost:3000`. Protected pages use an email-picker login.
 The default `bedrock new notes` React template includes a complete frontend, installs
@@ -704,8 +708,10 @@ and `bun run build:css` in `packages/ui`.
 
 ## Host operations and backups
 
-From `packages/bedrock`, `bun link` registers the `bedrock` bin globally. Ensure
-Bun's bin directory is on PATH. `bedrock --version` prints local package/checkout identity, platform, architecture and Bun version; `--json` exposes version, commit, branch, dirty, platform, arch and bun. Git fields are null outside a checkout.
+`install.sh`/`install.ps1` run `bun link` in `packages/bedrock` (the `bedrock`
+bin and `link:bedrock`) and `packages/ui` (`link:@bedrock/ui`); `self-update`
+repeats both and `new` registers any that are missing. Ensure Bun's bin
+directory is on PATH. `bedrock --version` prints local package/checkout identity, platform, architecture and Bun version; `--json` exposes version, commit, branch, dirty, platform, arch and bun. Git fields are null outside a checkout.
 All commands support `--json` (one object; doctor returns a checks array).
 Errors carry `code`, `message`, `hint`; failures set exit code 1.
 `new`, `init`, `db`, `deploy`, `rm`, `start`, `stop`, `restart`, `rollback`,
@@ -730,7 +736,7 @@ bedrock dev
 bedrock deploy             # prints/opens URL; --no-open disables opening
 bedrock whoami
 bedrock status --json
-bedrock self-update        # local clean checkout: git pull --ff-only, bun install, service restart
+bedrock self-update        # local clean checkout: git pull --ff-only, bun install, bun link, service restart
 bedrock self-update --remote # logged-in daemon: update, restart, poll new boot/commit (120 s)
 bedrock backup run
 bedrock backup ls notes --json

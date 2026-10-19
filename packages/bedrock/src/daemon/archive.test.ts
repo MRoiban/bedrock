@@ -11,6 +11,7 @@ test("releases use daemon-owned first-party packages from every dependency secti
     await Bun.write(join(temp, "package.json"), JSON.stringify({ name: "test-release", ...Object.fromEntries(sections.map(section => [section, { bedrock: "workspace:*", "@bedrock/ui": "workspace:*" }])) }));
     const source = await Bun.file(join(temp, "package.json")).json();
     source.devDependencies.typescript = "^5.9.3";
+    source.dependencies = { bedrock: "link:bedrock", "@bedrock/ui": "link:@bedrock/ui" };
     await Bun.write(join(temp, "package.json"), JSON.stringify(source));
     await installRelease(temp);
     const pkg = await Bun.file(join(temp, "package.json")).json();

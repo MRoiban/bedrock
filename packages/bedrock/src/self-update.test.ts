@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { join } from "node:path";
 import { tempDirectory } from "../test/helpers";
 import { updateCheckout, redactOutput, updateRun } from "./self-update";
 import { buildInfo } from "./version";
@@ -7,14 +8,17 @@ for (const platform of ["darwin", "linux", "win32"] as const) {
   test(`checkout update uses git and the running Bun on ${platform}`, async () => {
     const temp = tempDirectory();
     const calls: string[][] = [];
+    const links: string[] = [];
     let commit = "a".repeat(40);
     try {
+      for (const dir of ["packages/bedrock", "packages/ui"]) await Bun.write(join(temp.dir, dir, "package.json"), "{}");
       const execute: typeof updateRun = async (args, options) => {
         calls.push(args);
         if (args.includes("--show-toplevel")) return temp.dir;
         if (args.includes("rev-parse")) return commit;
         if (args.includes("symbolic-ref")) return "main";
         if (args.includes("status")) return "";
+        if (args.includes("link")) { links.push(options!.cwd!); return "linked"; }
         expect(options?.cwd).toBe(temp.dir);
         if (args.includes("pull")) { commit = "b".repeat(40); return "Updated https://user:password@example.com/repo br_abcdef"; }
         return "installed";
@@ -25,6 +29,8 @@ for (const platform of ["darwin", "linux", "win32"] as const) {
       expect(result.output).not.toContain("br_abcdef");
       expect(calls).toContainEqual([platform === "win32" ? "git.exe" : "git", "pull", "--ff-only"]);
       expect(calls).toContainEqual([process.execPath, "install"]);
+      // Pebbles' link: dependencies must keep resolving after an update.
+      expect(links).toEqual([join(temp.dir, "packages/bedrock"), join(temp.dir, "packages/ui")]);
     } finally { temp.cleanup(); }
   });
 }

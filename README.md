@@ -73,9 +73,9 @@ Google; use `access: "creators"` to limit it to server creators.
 
 Use `bedrock new hello --template minimal` for a public HTML starter, or
 `bedrock init hello` to scaffold in the current empty directory. Source installs
-use local `file:` dependencies for the workspace packages until they are published.
-The daemon replaces these first-party dependencies with its own installed packages
-on deployment. Commit `migrations/`, including `meta/`.
+use `link:` dependencies for the workspace packages, so pebble copies and git
+worktrees install anywhere. The daemon replaces these first-party dependencies
+with its own installed packages on deployment. Commit `migrations/`, including `meta/`.
 
 Setup saves its checklist in `$BEDROCK_HOME/setup.json`. Rerun `bedrock setup`
 to resume after a failure. Use `bedrock setup --status`, or redo a single step:
@@ -130,8 +130,8 @@ backups before uploading, with an update hint. Doctor warns
 when the local daemon does not advertise sockets/services.
 
 Remote update requires a creator deploy token, an installed daemon service, and a
-clean source checkout. It runs `git pull --ff-only` and `bun install` on the server,
-returns `{ from, to, updated, output }`, then schedules service restart after a
+clean source checkout. It runs `git pull --ff-only`, `bun install` and `bun link`
+on the server, returns `{ from, to, updated, output }`, then schedules service restart after a
 two-second response-flush delay. The CLI polls for the new daemon boot and target
 commit for up to 120 seconds. Running/restarting pebbles are restored on startup;
 stopped pebbles stay stopped. An already-current checkout is also restarted.
