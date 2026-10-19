@@ -25,7 +25,7 @@ export type StartPebbleOptions = ({ dir: string; pebble?: never } | { pebble: Pe
 export async function startPebble(options: StartPebbleOptions) {
   const dir = resolve(options.dir ?? process.cwd());
   const pebble = options.pebble ? definePebble(options.pebble) : await loadPebble(dir);
-  const database = openDatabase(options.dataDir ?? defaultDataDir(pebble.name), pebble.schema, pebble.tokens === true);
+  const database = openDatabase(options.dataDir ?? defaultDataDir(pebble.name), pebble.schema, !!pebble.tokens);
   const services = createServices(pebble.services ?? {});
   let executor: ReturnType<typeof createExecutor> | undefined;
   try {

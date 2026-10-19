@@ -148,3 +148,50 @@ export default definePebble({ name: "tokens", access: "users", tokens: true,
     expect(invalid.headers.get("location")).toBeNull();
   } finally { await daemon.stop(); temp.cleanup(); }
 }, 15000);
+
+test("daemon-hosted tokens follow profile changes across a redeploy", async () => {
+  const temp = tempDirectory();
+  const dir = join(temp.dir, "pebble");
+  await mkdir(join(dir, "node_modules"), { recursive: true });
+  const { symlink } = await import("node:fs/promises");
+  await symlink(resolve(import.meta.dir, ".."), join(dir, "node_modules/bedrock"));
+  const release = (profiles: Record<string, string[]>) => Bun.write(join(dir, "pebble.ts"), `import { definePebble, mutation, query } from "bedrock";
+export default definePebble({ name: "tokens", access: "users", tokens: { profiles: ${JSON.stringify(profiles)} },
+ queries: { list: query(ctx => ctx.tokens.list()) },
+ mutations: { mint: mutation(ctx => ctx.tokens.create({ name: "chrono", permissions: ["profile:sync"], metadata: { kind: "device" } })) },
+ routes: { "GET /notes": (_r, _s, ctx) => Response.json(ctx.token), "GET /stats": () => Response.json("stats") }
+});`);
+  const home = join(temp.dir, "home");
+  const serve = async () => {
+    const daemon = await startDaemon({ home, port: 0, domain: "localhost", dev: true, devPebble: { name: "tokens", dir } });
+    const origin = `http://tokens.localhost:${daemon.server.port}`;
+    const call = (path: string, headers: Record<string, string>, method = "GET") => fetch(new URL(path, daemon.server.url), { method, redirect: "manual", headers: { host: new URL(origin).host, ...headers }, ...(method === "POST" ? { body: "null" } : {}) });
+    return { daemon, origin, call };
+  };
+  await release({ sync: ["route:GET /notes"] });
+  let server = await serve();
+  try {
+    const login = await fetch(new URL("/_bedrock/dev-login", server.daemon.server.url), { method: "POST", redirect: "manual", body: new URLSearchParams({ email: alice.email }), headers: { host: new URL(server.origin).host, origin: server.origin } });
+    const session = { origin: server.origin, cookie: login.headers.get("set-cookie")!.split(";")[0]! };
+    const minted = (await (await server.call("/_bedrock/m/mint", session, "POST")).json()).value;
+    const bearer = { authorization: `Bearer ${minted.token}` };
+    const notes = await server.call("/notes", bearer);
+    expect(notes.status).toBe(200);
+    expect(await notes.json()).toMatchObject({ permissions: ["profile:sync"], effective: ["route:GET /notes"], profiles: ["sync"], metadata: { kind: "device" } });
+    expect((await server.call("/stats", bearer)).status).toBe(403);
+    await server.daemon.stop();
+
+    await release({ sync: ["route:GET /notes", "route:GET /stats"] });
+    server = await serve();
+    expect((await server.call("/stats", bearer)).status).toBe(200);
+    await server.daemon.stop();
+
+    await release({});
+    server = await serve();
+    const denied = await server.call("/notes", bearer);
+    expect(denied.status).toBe(403);
+    expect((await denied.json()).error.code).toBe("FORBIDDEN");
+    const listed = await (await server.call("/_bedrock/q/list", { ...session, origin: server.origin }, "POST")).json();
+    expect(listed.value).toEqual([expect.objectContaining({ id: minted.id, effective: [], profiles: [], unknownProfiles: ["sync"] })]);
+  } finally { await server.daemon.stop(); temp.cleanup(); }
+}, 30000);

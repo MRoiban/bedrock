@@ -86,7 +86,7 @@ test('staged upload hooks retain the same token and user in authorize and commit
     expect(seen.map(entry => entry.hook)).toEqual(['admit', 'admit', 'stored']);
     for (const entry of seen) {
       expect(entry.user).toEqual(alice);
-      expect(entry.token).toEqual({ id: upload.id, name: 'upload', permissions: ['files:assets:upload'] });
+      expect(entry.token).toEqual({ id: upload.id, name: 'upload', permissions: ['files:assets:upload'], effective: ['files:assets:upload'], profiles: [], metadata: {} });
       expect(entry.meta).toEqual(meta);
       expect(entry.user).toBe(seen[0]!.user);
       expect(entry.token).toBe(seen[0]!.token);

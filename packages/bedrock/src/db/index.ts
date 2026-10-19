@@ -1,4 +1,4 @@
-import { pebbleTokens, tokenMigration } from "../runtime/token-schema";
+import { pebbleTokens, migrateTokens } from "../runtime/token-schema";
 import { files, storageMigration } from "../storage/schema";
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
@@ -25,7 +25,7 @@ export function openDatabase(dataDir: string, schema: Record<string, unknown> = 
     sqlite = new Database(join(dataDir, "db.sqlite"), { create: true, strict: true });
     sqlite.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     sqlite.exec(storageMigration);
-    if (tokens) sqlite.exec(tokenMigration);
+    if (tokens) migrateTokens(sqlite);
     schema = { ...schema, _bedrockFiles: files, ...(tokens ? { _bedrockTokens: pebbleTokens } : {}) };
     const tableNames = new Set(Object.values(schema).filter(t => is(t, Table)).map(t => getTableName(t as Table)));
     const tracker = new TableTracker(tableNames);
