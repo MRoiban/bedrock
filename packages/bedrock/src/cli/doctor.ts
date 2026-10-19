@@ -7,6 +7,7 @@ import { cloudflaredBinary } from "../tunnel/supervisor";
 import { BedrockError } from "../error";
 import { linkChecks } from "../links";
 import { sourceCheckout } from "../version";
+import { bundlerPlugin } from "../runtime/bundler";
 
 export interface Check { name: string; status: "pass" | "warn" | "fail"; message: string; hint: string; skipped?: boolean }
 export async function doctor(home: string, options: { fetch?: typeof fetch; apiToken?: string; cloudflare?: Cloudflare; binary?: () => string; disk?: typeof statfs; version?: string; checkout?: string | null; cwd?: string; bunGlobal?: string } = {}): Promise<Check[]> {
@@ -18,6 +19,7 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
   add("bun", major > 1 || major === 1 && minor >= 2 ? "pass" : "fail", `Bun ${version}`, "Install Bun >= 1.2.");
   const checkout = options.checkout === undefined ? await sourceCheckout() : options.checkout;
   if (checkout) checks.push(...await linkChecks(checkout, options.cwd ?? process.cwd(), options.bunGlobal));
+  checks.push(...await bunfigChecks(options.cwd ?? process.cwd()));
   const config = await readConfig(home).catch(error => { add("config", "fail", "Configuration is missing or invalid.", error.hint ?? "Run bedrock setup."); return null; });
   if (config) {
     add("config", "pass", "Configuration is valid.", "Use bedrock setup to update configuration.");
@@ -73,4 +75,14 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
   if (status) for (const pebble of status.pebbles) add(`pebble:${pebble.name}`, pebble.healthy ? "pass" : "fail", `${pebble.name}: ${pebble.status}${pebble.healthy ? ", healthy" : ", unhealthy"}`, `Inspect bedrock logs ${pebble.name}; restart or redeploy it.`);
   else add("pebbles", "warn", "Skipped: daemon unavailable.", "Start the daemon and retry doctor.", true);
   return checks;
+}
+
+// A pebble's own bunfig.toml replaces the one Bedrock runs pebbles with, so it must load the bundler plugin itself.
+export async function bunfigChecks(cwd: string): Promise<Check[]> {
+  const file = Bun.file(join(cwd, "bunfig.toml"));
+  if (!await Bun.file(join(cwd, "pebble.ts")).exists() || !await file.exists()) return [];
+  let plugins: unknown;
+  try { plugins = (Bun.TOML.parse(await file.text()) as { serve?: { static?: { plugins?: unknown } } }).serve?.static?.plugins; } catch { /* Reported as missing below. */ }
+  if (Array.isArray(plugins) && plugins.includes(bundlerPlugin)) return [{ name: "pebble-bunfig", status: "pass", message: `bunfig.toml loads ${bundlerPlugin}.`, hint: "Keep it in [serve.static] plugins." }];
+  return [{ name: "pebble-bunfig", status: "warn", message: `bunfig.toml does not load ${bundlerPlugin}, so React pages can bundle two Reacts and render blank.`, hint: `Add "${bundlerPlugin}" to [serve.static] plugins in bunfig.toml.` }];
 }

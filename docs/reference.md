@@ -453,6 +453,19 @@ failed attempt and are resent with the same idempotency key after `pageshow`
   HTML is never served from the previous release.
 - Bun HTML-bundle mode keeps Bun's own asset handling.
 
+**Bun HTML bundles and React.** Bedrock runs every pebble process with
+`bun --config=<bedrock>/src/runtime/bunfig.toml`, whose `[serve.static] plugins`
+loads `bedrock/bundler`. The plugin resolves every `react` and `react-dom` import
+(including subpaths such as `react/jsx-runtime` and `react-dom/client`, but not
+`react-dom/server*`/`static*`) from the pebble directory, so linked Bedrock
+packages, `@bedrock/ui` and its dependencies share the pebble's single React copy
+in `bedrock dev` and in hosted releases. Without it they would resolve React from
+their real path in the Bedrock checkout and the page would render blank
+(`Cannot read properties of null (reading 'useContext')`). A pebble without
+React falls back to normal resolution. A pebble's own `bunfig.toml` replaces
+Bedrock's (Bun reads one config), so it must list the plugin itself:
+`[serve.static] plugins = ["bedrock/bundler", …]`; `bedrock doctor` warns otherwise.
+
 **Connection and HTTP freshness.** `ClientOptions.pollInterval?: number` defaults to
 5000 ms; 0 preserves one-shot HTTP subscriptions. `client.connection(): Connection`
 and `client.onConnection(fn: (c: Connection) => void): () => void` expose
@@ -637,7 +650,9 @@ $BEDROCK_HOME (default ~/.bedrock)
   `bedrock@link:bedrock` with no path, so copies and git worktrees of a pebble
   just work with `bun install --frozen-lockfile`, and local dev runs the
   daemon checkout's code. Deployment substitutes the daemon's own first-party
-  packages whatever the specifier.
+  packages whatever the specifier. The release installs its own React; the
+  daemon's copies of first-party peers (`react`, `react-dom`, `drizzle-kit`) are
+  linked in only when the release does not install them.
 - `new`, `init`, `db`, `deploy`, `rm`, `start`, `stop`, `restart`, `rollback`,
   `secrets`, `token`, `backup`, and `jobs` accept `--help` or `-h`: print command
   usage and a description, exit 0, and perform no actions. With `--json`, help
@@ -697,7 +712,8 @@ $BEDROCK_HOME (default ~/.bedrock)
   to that checkout (`link:<name>`); run in a pebble directory, it warns when the
   pebble still uses `file:` dependencies (`pebble-deps`, hint: the `bun add
   …@link:…` fix) or `node_modules/<name>` does not resolve to the checkout
-  (`pebble-link:<name>`). Offline DNS and unavailable API credentials are
+  (`pebble-link:<name>`), or when the pebble's own `bunfig.toml` does not list
+  `bedrock/bundler` in `[serve.static] plugins` (`pebble-bunfig`). Offline DNS and unavailable API credentials are
   skipped warnings; any failed check sets exit code 1. `doctor --json` emits an
   array of checks `{name, status: pass|warn|fail, message, hint, skipped?}`.
 

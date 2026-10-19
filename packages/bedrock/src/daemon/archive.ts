@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, symlink } from "node:fs/promises";
+import { lstat, mkdir, readdir, rm, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { BedrockError } from "../error";
 
@@ -47,24 +47,24 @@ async function firstPartyPackages() {
     const pkg = await file.json();
     if (typeof pkg.name === "string" && /^@bedrock\/[a-z0-9_-]+$/.test(pkg.name)) packages.push({ name: pkg.name, dir });
   }
-  // Source-linked packages and their consumers must share peer singletons such as React.
-  for (const { dir } of [...packages]) {
+  // Peers such as React fill in only for releases that do not install their own.
+  const peers: { name: string; dir: string }[] = [];
+  for (const { dir } of packages) {
     const pkg = await Bun.file(join(dir, "package.json")).json();
     for (const name of Object.keys(pkg.peerDependencies ?? {})) {
-      if (packages.some(item => item.name === name)) continue;
+      if (packages.some(item => item.name === name) || peers.some(item => item.name === name)) continue;
       try {
-        const peer = resolve(Bun.resolveSync(`${name}/package.json`, dir), "..");
-        packages.push({ name, dir: peer });
+        peers.push({ name, dir: resolve(Bun.resolveSync(`${name}/package.json`, dir), "..") });
       } catch (error) {
         if (!pkg.peerDependenciesMeta?.[name]?.optional) throw new BedrockError("DAEMON_PEER_MISSING", `Daemon package ${pkg.name} needs peer ${name}.`, `Install ${name} alongside the daemon's first-party packages.`);
       }
     }
   }
-  return packages;
+  return { packages, peers };
 }
 
 export async function installRelease(release: string) {
-  const packages = await firstPartyPackages();
+  const { packages, peers } = await firstPartyPackages();
   const path = join(release, "package.json");
   if (await Bun.file(path).exists()) {
     const pkg = await Bun.file(path).json();
@@ -86,6 +86,17 @@ export async function installRelease(release: string) {
     await rm(target, { recursive: true, force: true });
     await symlink(dir, target, process.platform === "win32" ? "junction" : "dir");
   }
+  // The release owns its React version; the web bundler routes Bedrock's imports to it.
+  for (const { name, dir } of peers) {
+    const target = join(release, "node_modules", name);
+    if (await exists(target)) continue;
+    await mkdir(resolve(target, ".."), { recursive: true });
+    await symlink(dir, target, process.platform === "win32" ? "junction" : "dir");
+  }
+}
+
+async function exists(path: string) {
+  return lstat(path).then(() => true, () => false);
 }
 
 export async function createArchive(dir: string, archive: string) {

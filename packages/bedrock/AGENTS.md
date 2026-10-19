@@ -783,7 +783,11 @@ All hooks need BedrockProvider. `useQuery` returns `{ data, error, isLoading, co
 `{ user, isLoading, error, retry }`; errors preserve the last user and retry with backoff.
 `useConnection()` returns the client connection state. `useUpload<typeof pebble>("attachments")` returns
 `{ upload, progress, error, isUploading }` and passes all upload options through. Args without a schema are `undefined`.
-HTML references `./app.tsx` with a module script; Bun bundles it.
+HTML references `./app.tsx` with a module script; Bun bundles it. Keep `react` and
+`react-dom` in the pebble's dependencies: Bedrock's `bedrock/bundler` plugin makes
+`bedrock/react`, `@bedrock/ui` and Onyx use that one copy in dev and in releases.
+No setup is needed unless the pebble has its own `bunfig.toml`; then list
+`"bedrock/bundler"` in its `[serve.static] plugins` (`bedrock doctor` checks this).
 
 `@bedrock/ui` exports every Onyx primitive (forms such as Field, Input, Select,
 Combobox and DatePicker; overlays such as Dialog, Sheet, Menu, Popover, Tooltip
@@ -1038,6 +1042,8 @@ is unchanged.
   production dependencies in dependencies.
 - Hooks outside BedrockProvider, missing @bedrock/ui/styles.css, or assuming the
   shipped stylesheet generates arbitrary consumer Tailwind classes.
+- A pebble `bunfig.toml` without `"bedrock/bundler"` in `[serve.static] plugins`.
+  The page bundles two Reacts and renders blank (`reading 'useContext'` of null).
 - Replaying an uncertain mutation or assuming jobs provide exactly-once delivery.
   Use idempotent application operations. Job overlap protection is process-local;
   a deploy handoff can briefly have two schedulers.

@@ -9,6 +9,7 @@ import { BedrockError, asBedrockError } from "../error";
 import type { Access } from "../config";
 import type { DaemonDatabase, PebbleRecord } from "./db";
 import { PebbleLogs } from "./logs";
+import { bunConfigArgs } from "../runtime/bundler";
 
 export interface Child {
   process: Bun.Subprocess<"ignore", "pipe", "pipe">;
@@ -95,7 +96,7 @@ export class Supervisor {
     const secretEnv = await createSecrets(this.home).env(name);
     logs.protect(Object.values(secretEnv));
     const requests = this.requests;
-    const processChild = Bun.spawn([process.execPath, join(import.meta.dir, "../runtime/child.ts")], {
+    const processChild = Bun.spawn([process.execPath, ...await bunConfigArgs(release), join(import.meta.dir, "../runtime/child.ts")], {
       cwd: release, stdin: "ignore", stdout: "pipe", stderr: "pipe",
       env: childEnvironment(process.env, secretEnv, devSource, { BEDROCK_API_URL: this.apiUrl, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
         BEDROCK_RELEASE_ID: releaseId, BEDROCK_PREVIOUS_RELEASE: previous ? resolve(previous) : "",
