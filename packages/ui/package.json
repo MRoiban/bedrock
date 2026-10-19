@@ -24,7 +24,7 @@
     "bedrock": "^0.1.0"
   },
   "dependencies": {
-    "@mroiban/onyx": "https://github.com/MRoiban/onyx/releases/download/v0.2.1/mroiban-onyx-0.2.1.tgz"
+    "@mroiban/onyx": "https://github.com/MRoiban/onyx/releases/download/v0.2.2/mroiban-onyx-0.2.2.tgz"
   },
   "devDependencies": {
     "postcss": "^8.5.6",
