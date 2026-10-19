@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { createClient } from "./index";
 import { fakeBrowser } from "./browser-fake";
 import { savePlace } from "./restore";
@@ -501,7 +502,7 @@ test("unsubscribing during discovery stays idle and temporary polling retries af
 }));
 
 test("browser token clients poll without attempting WebSockets", async () => setup(async env => {
-  const bundle = await Bun.build({ entrypoints: [new URL("./index.ts", import.meta.url).pathname], target: "browser", define: { Bun: "undefined" } });
+  const bundle = await Bun.build({ entrypoints: [fileURLToPath(new URL("./index.ts", import.meta.url))], target: "browser", define: { Bun: "undefined" } });
   expect(bundle.success).toBe(true);
   const source = await bundle.outputs[0]!.text();
   const { createClient: browserClient } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`) as { createClient: typeof createClient };

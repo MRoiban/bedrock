@@ -42,7 +42,7 @@ test("self-update fast-forwards checkout, installs dependencies and requests ser
       if (args.includes("pull")) head = "b".repeat(40);
       return "";
     }, restart: async () => ({ restarted: true }) })).toMatchObject({ updated: true, restarted: true, from: "a".repeat(40), to: "b".repeat(40) });
-    expect(calls).toEqual([["git", "pull", "--ff-only"], [process.execPath, "install"]]);
+    expect(calls).toEqual([[process.platform === "win32" ? "git.exe" : "git", "pull", "--ff-only"], [process.execPath, "install"]]);
   } finally { temp.cleanup(); }
 });
 
