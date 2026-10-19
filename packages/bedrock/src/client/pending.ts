@@ -1,5 +1,5 @@
 import { BedrockError } from "../error";
-import { disconnected } from "./wire";
+import { closedBeforeResult, disconnected } from "./wire";
 
 interface Pending {
   message: { op: "mut"; id: string; mutation: string; args: unknown; idempotencyKey: string };
@@ -63,7 +63,7 @@ export function pendingMutations(hooks: { settled: () => void; checkRelease: () 
     return true;
   }
   function close() {
-    for (const item of pending.values()) item.reject(disconnected());
+    for (const item of pending.values()) item.reject(closedBeforeResult());
     pending.clear();
   }
   return { size: () => pending.size, enqueue, flush, rejectSent, fallback, complete, close };
