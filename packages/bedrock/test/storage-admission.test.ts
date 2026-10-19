@@ -132,7 +132,7 @@ test('disconnect and body errors remove single-upload staging and partial chunk 
     expect((await f.call(`/uploads/${start.uploadId}/0`, { method: 'PUT', body: 'hello' })).status).toBe(204);
     const failed = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array([1])); c.error(new Error('disconnected')); } });
     expect((await f.call(`/uploads/${start.uploadId}/0`, { method: 'PUT', body: failed })).status).toBe(500);
-    expect(await readdir(join(f.temp.dir, 'uploads', start.uploadId))).toEqual(['0', 'manifest.json']);
+    expect((await readdir(join(f.temp.dir, 'uploads', start.uploadId))).sort()).toEqual(['0', 'manifest.json']);
     expect((await f.call(`/uploads/${start.uploadId}/complete`, { method: 'POST' })).status).toBe(201);
   } finally { await f.cleanup(); }
 });

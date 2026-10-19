@@ -63,8 +63,9 @@ test("new registers only missing links and never re-points an existing one", asy
   try {
     const { checkout, global } = await fixture(temp.dir);
     for (const dir of ["packages/bedrock", "packages/ui"]) await Bun.write(join(checkout, dir, "package.json"), "{}");
-    await symlink(join(temp.dir, "elsewhere"), join(global, "bedrock"));
+    // Windows makes a file symlink when the target is missing, so create it first.
     await mkdir(join(temp.dir, "elsewhere"));
+    await symlink(join(temp.dir, "elsewhere"), join(global, "bedrock"), "dir");
     expect((await unlinkedPackages(checkout, global)).map(item => item.name)).toEqual(["@bedrock/ui"]);
   } finally { temp.cleanup(); }
 });

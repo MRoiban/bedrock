@@ -35,7 +35,7 @@ test('cancellation removes all upload files, binds user/bucket, and repeats as U
     expect((await fetch(new URL('/_bedrock/files/assets' + path, f.server.url), { method: 'DELETE' })).status).toBe(403);
     expect((await f.call(path, { method: 'DELETE' }, 'bob')).status).toBe(403);
     expect((await f.call(path, { method: 'DELETE' }, 'alice', 'other')).status).toBe(403);
-    expect(await readdir(join(f.temp.dir, 'uploads', id))).toEqual(['0', 'manifest.json']);
+    expect((await readdir(join(f.temp.dir, 'uploads', id))).sort()).toEqual(['0', 'manifest.json']);
     expect((await f.call(path, { method: 'DELETE' })).status).toBe(204);
     expect(await Bun.file(join(f.temp.dir, 'uploads', id, 'manifest.json')).exists()).toBe(false);
     expect((await readdir(join(f.temp.dir, 'uploads'))).includes(id)).toBe(false);
