@@ -12,6 +12,7 @@ import { createSync, type SocketData } from "../sync";
 import { requirePermission } from "./tokens";
 import { checkAccess } from "./access";
 import { createExecutor } from "./functions";
+import { slotOptions } from "./slots";
 import { loadWeb } from "./web";
 import { errorResponse, functionHandler } from "./http";
 import { loadPebble } from "./load";
@@ -20,6 +21,8 @@ export type StartPebbleOptions = ({ dir: string; pebble?: never } | { pebble: Pe
   dataDir?: string;
   port?: number;
   dev?: boolean;
+  /** Reject fetch inside queue slots. On unless the caller opts out; production child processes decide from their environment. */
+  strictSlots?: boolean;
 };
 
 export async function startPebble(options: StartPebbleOptions) {
@@ -31,12 +34,12 @@ export async function startPebble(options: StartPebbleOptions) {
   try {
     await applyMigrations(database.sqlite, join(dir, "migrations"));
     database.refreshTracking();
-    const execute = executor = createExecutor(pebble, database, services.values);
-    const serviceContext = await execute.detached(new Request("http://localhost"), ctx => ctx, { user: null });
+    const execute = executor = createExecutor(pebble, database, services.values, slotOptions(pebble.name, options.strictSlots ?? true));
+    const serviceContext = await execute.detached(new Request("http://localhost"), ctx => ctx, { user: null }, undefined, "services");
     await services.start({ pebble, dataDir: database.dataDir, read: serviceContext.read, write: serviceContext.write, log: (...values) => console.log(`[${pebble.name}]`, ...values) });
-    const jobs = createJobs(pebble.jobs ?? {}, (_name, _handler, definition) => definition.transaction === false
-      ? execute.detached(new Request("http://localhost/_bedrock/jobs"), definition.run, { user: null })
-      : execute.job(definition.run));
+    const jobs = createJobs(pebble.jobs ?? {}, (name, _handler, definition) => definition.transaction === false
+      ? execute.detached(new Request("http://localhost/_bedrock/jobs"), definition.run, { user: null }, undefined, `job ${name}`)
+      : execute.job(definition.run, name));
     const files = createFileHandler(pebble, execute, join(database.dataDir, "uploads"));
     await files.cleanup();
     const release = process.env.BEDROCK_RELEASE_ID || `local-${crypto.randomUUID().slice(0, 8)}`;
@@ -59,8 +62,8 @@ export async function startPebble(options: StartPebbleOptions) {
             for (const name of [...request.headers.keys()]) if (name === "cookie" || name === "authorization" || name.startsWith("x-bedrock-")) request.headers.delete(name);
           }
           return typeof handler === "function"
-            ? (await execute.route(request, ctx => handler(request, server, ctx), identity ? undefined : `route:${key}`, identity)).value as Response
-            : await execute.detached(request, ctx => handler.run(request, server, ctx), identity, identity ? undefined : `route:${key}`);
+            ? (await execute.route(request, ctx => handler(request, server, ctx), identity ? undefined : `route:${key}`, identity, key)).value as Response
+            : await execute.detached(request, ctx => handler.run(request, server, ctx), identity, identity ? undefined : `route:${key}`, key);
         } catch (error) { return errorResponse(error); }
       };
     }

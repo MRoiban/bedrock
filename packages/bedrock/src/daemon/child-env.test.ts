@@ -17,3 +17,8 @@ test("attached dev sources inherit the developer's shell environment", () => {
   expect(childEnvironment({ OPENAI_API_KEY: "dev", PATH: "/bin" }, { APP_SECRET: "secret" }, true, { BEDROCK_DEV: "1" }))
     .toEqual({ OPENAI_API_KEY: "dev", PATH: "/bin", APP_SECRET: "secret", BEDROCK_DEV: "1" });
 });
+
+test("operator slot guards reach production children", () => {
+  expect(childEnvironment({ BEDROCK_STRICT_SLOTS: "1", BEDROCK_SLOW_SLOT_MS: "500", BEDROCK_OTHER: "x" }, {}, false, {}))
+    .toEqual({ BEDROCK_STRICT_SLOTS: "1", BEDROCK_SLOW_SLOT_MS: "500" });
+});

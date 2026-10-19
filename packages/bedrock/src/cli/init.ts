@@ -36,7 +36,7 @@ Writes through ctx.db in mutations, jobs, and routes are tracked automatically f
 For slow network I/O, import detached/job from bedrock: use detached(handler) for routes or job(cron, handler, { transaction: false }).
 Detached ctx has { user, pebble, request, read, write }; db/storage/invalidate are available only inside queued callbacks.
 Example route: detached(async (_req, _server, ctx) => { const rows = await fetch("https://example.com/items").then(r => r.json()); await ctx.write(({ db }) => db.insert(items).values(rows).run()); return new Response("ok"); }).
-Await every slot; keep network I/O outside callbacks. Failed slots roll back individually; writes notify sync. Existing routes/jobs remain transactional.
+Await every slot; fetch inside a slot throws NETWORK_IN_SLOT in dev, and slots over BEDROCK_SLOW_SLOT_MS (200 ms) log a warning. Failed slots roll back individually; writes notify sync. Existing routes/jobs remain transactional.
 invalidate is only needed for raw SQL via $client or writes outside bedrock; notify from a mutation, job, or route.
 Prefer ctx.invalidate([items]) with registered Drizzle tables; SQL names like ctx.invalidate(["items"]) also work.
 Export Drizzle tables from pebble.ts. Run bedrock db generate after schema changes.
@@ -148,7 +148,7 @@ Writes through ctx.db in mutations, jobs, and routes are tracked automatically f
 For slow network I/O, import detached/job from bedrock: use detached(handler) for routes or job(cron, handler, { transaction: false }).
 Detached ctx has { user, pebble, request, read, write }; db/storage/invalidate are available only inside queued callbacks.
 Example route: detached(async (_req, _server, ctx) => { const rows = await fetch("https://example.com/items").then(r => r.json()); await ctx.write(({ db }) => db.insert(items).values(rows).run()); return new Response("ok"); }).
-Await every slot; keep network I/O outside callbacks. Failed slots roll back individually; writes notify sync. Existing routes/jobs remain transactional.
+Await every slot; fetch inside a slot throws NETWORK_IN_SLOT in dev, and slots over BEDROCK_SLOW_SLOT_MS (200 ms) log a warning. Failed slots roll back individually; writes notify sync. Existing routes/jobs remain transactional.
 invalidate is only needed for raw SQL via $client or writes outside bedrock; notify from a mutation, job, or route.
 Prefer ctx.invalidate([notes]) with registered Drizzle tables; SQL names like ctx.invalidate(["notes"]) also work.
 web/app.tsx is a Bun HTML-bundled React app. Import @bedrock/ui/styles.css once.
