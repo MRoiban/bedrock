@@ -221,22 +221,27 @@ the daemon as before, except requests rejected by the child recheck return 401.
 Opt in with `definePebble({ tokens: true, ... })`. Pebble tokens are per-user,
 per-pebble credentials for native and scripted clients, separate from creator
 deploy tokens. The pebble DB owns reserved `_bedrock_tokens(id, hash, user_id,
-user_json, name, permissions, created_at, last_used_at, expires_at, revoked_at)`,
-created through the same internal startup migration mechanism as `_bedrock_files`.
+user_json, name, permissions, created_at, last_used_at, expires_at, revoked_at,
+metadata)`, created through the same internal startup migration mechanism as
+`_bedrock_files`; older tables gain the nullable `metadata` column on startup.
 Backups and restores include it. Tokens are `brk_` plus 32 random bytes encoded as
 base64url; only their SHA-256 hash is stored. Creation returns the raw token once.
 
-`ctx.tokens.create({ name, permissions, expiresAt? })` requires a user and a
-mutation slot, returns `{ id, token, name, permissions, createdAt, expiresAt }`,
-and refuses token-authenticated callers. `ctx.tokens.list()` returns the current
-user's non-revoked metadata (`id, name, permissions, createdAt, lastUsedAt,
-expiresAt`). `ctx.tokens.revoke(id)` requires a mutation slot, only permits owned
+`ctx.tokens.create({ name, permissions, expiresAt?, metadata? })` requires a user
+and a mutation slot, returns `{ id, token, name, permissions, effective, profiles,
+metadata, createdAt, expiresAt }`, and refuses token-authenticated callers.
+`metadata` is an optional object of at most 32 string values whose JSON is at most
+4 KB; anything else throws `INVALID_TOKEN_METADATA`. Absent metadata reads as `{}`.
+`ctx.tokens.list()` returns the current user's non-revoked tokens (`id, name,
+permissions, effective, profiles, unknownProfiles, metadata, createdAt,
+lastUsedAt, expiresAt`). `ctx.tokens.revoke(id)` requires a mutation slot, only permits owned
 tokens, and is idempotent. Creation/revocation participate in the caller's
 transaction. Disabled methods throw `TOKENS_DISABLED`. Timestamps are Unix
 milliseconds; absent expiry and unused timestamps are null.
 
-`ctx.token` is `{ id, name, permissions }` for token authentication, otherwise
-null. Detached contexts also expose it, and read/write callbacks retain it.
+`ctx.token` is `{ id, name, permissions, effective, profiles, metadata }` for token
+authentication, otherwise null. `permissions` are the stored grants; `effective`
+is what the request is authorized against (see profiles below). Detached contexts also expose it, and read/write callbacks retain it.
 Jobs always have `token: null`. A valid signed daemon identity wins over bearer
 authentication. Otherwise enabled pebbles resolve `Authorization: Bearer brk_…`
 from the stored user snapshot; unknown, revoked, or expired credentials yield
@@ -253,6 +258,28 @@ Permissions default to deny, and creation validates registered targets:
 - `socket:<path>`: the registered application socket path.
 - `files:<bucket>:upload|read|delete`: built-in storage endpoints; all chunk
   operations, including status, require upload.
+- `profile:<name>`: every entry of a profile configured by the running pebble.
+
+Profiles name permission sets in the pebble config instead of copying them into
+each token:
+
+```ts
+definePebble({ tokens: { profiles: {
+  sync: ["query:changes", "mutation:push", "files:attachments:upload"],
+  "read-only": ["query:changes"],
+} }, ... });
+```
+
+`tokens: true` is the same as `tokens: {}`. Profile names match
+`^[a-z][a-z0-9-]{0,47}$`; entries use the explicit forms above, so `*` and
+`profile:` are rejected. Unknown targets or invalid names fail pebble load with
+`INVALID_TOKEN_PROFILE`, naming the profile and entry. A token may mix profiles
+and explicit grants. Profiles expand on every request from the running config, so
+an operation added to a profile reaches existing tokens on the next deploy without
+re-minting. `ctx.tokens.create` accepts `profile:<name>` only for a configured
+profile. A stored profile the running config no longer defines grants nothing,
+does not fail authentication, and is listed in `unknownProfiles`. `profiles` lists
+the token's profiles that do exist; `effective` is the de-duplicated expansion.
 
 Missing grants yield 403 `FORBIDDEN` with a hint naming the needed permission.
 Sync WS upgrades require `*`; application WS upgrades require `socket:<path>` or `*`; token validity and access are checked again for WS

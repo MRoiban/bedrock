@@ -1,5 +1,6 @@
 import { isPublicRoute, publicRouteKeys, validatePublicRouteKey } from "./public-route";
 import { socketSize } from "./hosting";
+import { validateTokenProfiles } from "./token-permissions";
 import { validateDirectories } from "../backup/directories";
 import { validateBucket, validateBuckets } from "../storage/config";
 import { is, Table, getTableName } from "drizzle-orm";
@@ -70,6 +71,7 @@ export function definePebble<const P extends PebbleConfig>(config: P): P {
       }
     }
   }
+  validateTokenProfiles(config);
   for (const table of Object.values(config.schema ?? {})) {
     if (is(table, Table) && getTableName(table).startsWith("_bedrock_")) {
       throw new BedrockError("RESERVED_TABLE", "Table names starting with _bedrock_ are reserved.", "Rename the table in the schema and migrations.");

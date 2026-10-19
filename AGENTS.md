@@ -31,7 +31,9 @@ bun run typecheck
 bun test
 ```
 
-All three must pass. Tests use `bun test`, live next to code as `*.test.ts`, and
+All three must pass. Under full-suite load on slow machines (e.g. WSL2), the
+"React starter is idempotent…" test can hit its 5 s timeout; rerun it alone
+(`bun test -t "React starter"`) before treating it as a regression. Tests use `bun test`, live next to code as `*.test.ts`, and
 e2e tests that start real servers go in `packages/bedrock/test/`.
 
 ## Commits

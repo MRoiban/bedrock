@@ -268,12 +268,39 @@ curl https://uploads.example.com/api/upload \
 `ctx.tokens.list()` returns only your non-revoked metadata. Create/revoke require
 write slots and participate in the transaction; token callers cannot mint tokens
 or revoke another user's token. Disabled APIs throw `TOKENS_DISABLED`.
-`ctx.token` (also on detached contexts) is `{ id, name, permissions }` or null;
-jobs always get null. Expiry is an optional future Unix millisecond timestamp.
+`ctx.token` (also on detached contexts) is `{ id, name, permissions, effective,
+profiles, metadata }` or null; jobs always get null. Expiry is an optional future
+Unix millisecond timestamp.
 
 Permissions default to deny: `*`, `query:<name>`, `mutation:<name>`,
-`route:<exact METHOD /path-pattern>`, `socket:<registered /path>`, and
-`files:<bucket>:upload|read|delete`.
+`route:<exact METHOD /path-pattern>`, `socket:<registered /path>`,
+`files:<bucket>:upload|read|delete`, and `profile:<name>`.
+
+Prefer profiles for tokens a client keeps for a long time, so new operations do
+not require re-minting:
+
+```ts
+export default definePebble({
+  name: "chrono", access: "users",
+  tokens: { profiles: { device: ["query:entries", "mutation:track"] } },
+  mutations: {
+    pairDevice: mutation(ctx => ctx.tokens.create({
+      name: "Phone", permissions: ["profile:device"], metadata: { kind: "device" },
+    })),
+  },
+  // ...
+});
+```
+
+Profiles expand from the running config on every request: add an operation to
+`device` and deploy, and every existing `profile:device` token can call it.
+Profile entries must be registered explicit permissions (no `*`, no nested
+`profile:`), and names match `^[a-z][a-z0-9-]{0,47}$`; mistakes fail at load with
+`INVALID_TOKEN_PROFILE`. Authorize with `ctx.token.effective`; `permissions` stays
+the stored grants. A profile removed from config grants nothing and appears in
+`ctx.tokens.list()` as `unknownProfiles`. Use `metadata` (≤32 string values, ≤4 KB
+JSON, else `INVALID_TOKEN_METADATA`) to label a token's kind instead of guessing
+from its permissions; it is returned by `list()` and on `ctx.token`.
 Targets must exist in the registered maps. Chunk operations require upload,
 and WS sync requires `*`. Grants supplement user, row, and bucket authorization;
 current pebble access policies still apply to the stored user snapshot. Invalid,
