@@ -57,7 +57,7 @@ export default definePebble({
 });
 ```
 
-Run `bedrock db generate`, commit `migrations/` (including `meta/`), then
+Run `bedrock db generate`, commit `migrations/*.sql` (there is no `meta/`), then
 `bedrock dev`. Data lives in `.bedrock/db.sqlite` and `.bedrock/files/`.
 From a source install, `new`/`init` depend on `"bedrock": "link:bedrock"` (and
 `"@bedrock/ui": "link:@bedrock/ui"`); the lockfile has no paths, so copies and
@@ -179,12 +179,32 @@ error?.data; // { candidates: [...] }; error?.status === 409
 
 ## Schema and migrations
 
-`bedrock db generate` makes an automatic Drizzle config from the pebble's registered
-schema, including imported tables even when they are not separately exported from
-`pebble.ts`. `bedrock db plan` previews pending SQL; `bedrock db migrate` applies
-it locally. Dev/deploy apply migrations automatically. Commit both SQL and metadata.
-Never edit applied SQL: checksums are recorded in `_bedrock_migrations`. Put each
-schema change in a new migration. Bedrock owns migration transaction boundaries.
+The migration baseline is the `migrations/*.sql` files themselves; there is no
+`meta/` folder (delete an old one, Bedrock ignores it). `bedrock db generate [name]`
+replays every SQL file into a scratch database, diffs the result with the
+pebble's registered schema (including imported tables not separately exported from
+`pebble.ts`), and writes `migrations/<UTC YYYYMMDDHHMMSS>_<name>.sql`, or nothing when
+the schema is unchanged. Timestamped names let two branches add migrations without
+conflicts. Commit `migrations/*.sql` and run `bedrock db check` before you commit or
+deploy: it fails when the files no longer replay (for example, two merged branches
+added the same column; the error names the file) or when the schema changed
+without a migration. `bedrock dev` warns about both at startup.
+
+Generate refuses to drop columns unless you pass `--allow-data-loss`, refuses a new
+NOT NULL column on an existing table without `.default(...)` (`$defaultFn` is not a
+SQL default), and refuses a table that both loses and gains columns, because a rename looks like a drop plus an
+add. For renames and backfills run `bedrock db new <name>` and write the SQL
+(`ALTER TABLE notes RENAME COLUMN body TO text;`) by hand. Tables in the migrations
+but not in `schema` (FTS, raw-SQL tables) are left alone; to drop a schema table,
+remove it and write `DROP TABLE` with `db new`. Changes SQLite cannot `ALTER`
+rebuild the table; a generated rebuild starts with `PRAGMA foreign_keys=OFF`, which
+the runner honours outside the transaction, then checks foreign keys before commit.
+Rebuilds drop the table's triggers, so recreate them in the same migration.
+
+`bedrock db plan` previews pending SQL; `bedrock db migrate` applies it locally.
+Dev/deploy apply migrations automatically. Never edit applied SQL: checksums are
+recorded in `_bedrock_migrations`. Put each schema change in a new migration.
+Bedrock owns migration transaction boundaries.
 
 Deploy keeps the last three code releases. `bedrock rollback notes` switches code,
 not data; it refuses a target missing applied migrations. `--force` bypasses the
@@ -1013,8 +1033,8 @@ is unchanged.
   than schema export keys.
 - Returning BigInt or executing transaction-control SQL in a handler/migration.
   Return JSON-compatible values and let Bedrock own transaction boundaries.
-- Editing applied migrations, skipping migration generation, or putting
-  runtime dependencies only in devDependencies. Commit new migrations and put
+- Editing applied migrations, skipping migration generation or `bedrock db check`
+  after merging branches, or putting runtime dependencies only in devDependencies. Commit new migrations and put
   production dependencies in dependencies.
 - Hooks outside BedrockProvider, missing @bedrock/ui/styles.css, or assuming the
   shipped stylesheet generates arbitrary consumer Tailwind classes.

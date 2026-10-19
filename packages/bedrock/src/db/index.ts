@@ -13,7 +13,7 @@ import { TableTracker } from "./tracker";
 
 export { TableTracker } from "./tracker";
 export type { TableUsage } from "./tracker";
-export { migrationPlan, applyMigrations } from "./migrations";
+export { migrationPlan, applyMigrations, readMigrations, replayMigrations, validateMigrationSql } from "./migrations";
 
 export function defaultDataDir(name: string) {
   return join(process.env.BEDROCK_HOME ?? join(homedir(), ".bedrock"), "pebbles", name, "data");

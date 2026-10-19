@@ -61,3 +61,20 @@ test("hidden files such as macOS AppleDouble ._*.sql are not migrations", async 
     expect((await migrationPlan(database.sqlite, dir)).map(m => m.name)).toEqual(["0001_create.sql"]);
   } finally { database.close(); temp.cleanup(); }
 });
+
+test("a migration that turns foreign keys off runs outside them and must pass foreign_key_check", async () => {
+  const temp = tempDirectory();
+  const database = openDatabase(temp.dir);
+  try {
+    const { sqlite } = database;
+    const dir = join(temp.dir, "migrations");
+    await Bun.write(join(dir, "0001.sql"), "CREATE TABLE parents (id TEXT PRIMARY KEY); CREATE TABLE kids (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES parents(id) ON DELETE CASCADE); INSERT INTO parents VALUES ('p'); INSERT INTO kids VALUES ('k', 'p');");
+    await Bun.write(join(dir, "0002.sql"), "PRAGMA foreign_keys=OFF;\nCREATE TABLE __new_parents (id TEXT PRIMARY KEY, name TEXT);\nINSERT INTO __new_parents (id) SELECT id FROM parents;\nDROP TABLE parents;\nALTER TABLE __new_parents RENAME TO parents;\nPRAGMA foreign_keys=ON;");
+    expect(await applyMigrations(sqlite, dir)).toEqual(["0001.sql", "0002.sql"]);
+    expect(sqlite.query("SELECT id FROM kids").all()).toEqual([{ id: "k" }]);
+    await Bun.write(join(dir, "0003.sql"), "PRAGMA foreign_keys=OFF;\nDELETE FROM parents;\nPRAGMA foreign_keys=ON;");
+    await expect(applyMigrations(sqlite, dir)).rejects.toMatchObject({ code: "MIGRATION_FOREIGN_KEY" });
+    expect(sqlite.query("SELECT id FROM parents").all()).toEqual([{ id: "p" }]);
+    expect(sqlite.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
+  } finally { database.close(); temp.cleanup(); }
+});
