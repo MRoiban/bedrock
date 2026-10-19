@@ -6,6 +6,7 @@ import { definePebble, query, mutation } from "../config";
 import { openDatabase } from "../db";
 import { createExecutor } from "./functions";
 import { functionHandler } from "./http";
+import { BedrockError } from "../error";
 import { tempDirectory } from "../../test/helpers";
 
 test("function endpoints validate, enforce read-only queries, roll back, and keep async calls isolated", async () => {
@@ -26,6 +27,7 @@ test("function endpoints validate, enforce read-only queries, roll back, and kee
         return db.select().from(items);
       }),
       fail: mutation(({ db }) => { db.insert(items).values({ id: "rolled-back" }).run(); throw new Error("failure"); }),
+      missing: mutation(() => { throw new BedrockError("CUSTOM_NOT_FOUND", "Missing", "Retry.", undefined, { data: { candidates: [1, 2] } }); }),
     },
   });
   const execute = createExecutor(pebble, database);
@@ -40,6 +42,9 @@ test("function endpoints validate, enforce read-only queries, roll back, and kee
     expect((await call("query", "constructor")).status).toBe(404);
     expect((await call("query", "bad")).json.error.code).toBe("FUNCTION_FAILED");
     expect((await call("mutation", "fail")).status).toBe(500);
+    const missing = await call("mutation", "missing");
+    expect(missing.status).toBe(404);
+    expect(missing.json.error.data).toEqual({ candidates: [1, 2] });
     expect((await call("query", "list")).json).toEqual({ ok: true, value: [] });
     const [a, b] = await Promise.all([call("mutation", "add", '{"id":"a"}'), call("mutation", "add", '{"id":"b"}')]);
     expect(a.json.value).toEqual([{ id: "a" }]);

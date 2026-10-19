@@ -115,7 +115,31 @@ be rolled back with SQLite.
 
 HTTP: `POST /_bedrock/q/<name>` or `POST /_bedrock/m/<name>`, with JSON arguments
 (`null` without args), gives `{ ok: true, value }` or
-`{ ok: false, error: { code, message, hint } }`.
+`{ ok: false, error: { code, message, hint, data? } }` with the status from [Errors](#errors).
+
+### Errors
+
+Throw `new BedrockError(code, message, hint, detail?, { status?, data? })` for
+expected failures. `data` is JSON context for the client (`error.data`);
+unserializable data (cycles, BigInt) is dropped with a warning, never a 500.
+
+The HTTP status (also `status` on WebSocket error frames) is, first match wins:
+an explicit `status` from 400–599; Bedrock's own codes (`UNAUTHENTICATED` 401,
+`FORBIDDEN` 403, `PEBBLE_STOPPED` 503, programming faults such as `READ_ONLY` 500, …);
+`NOT_FOUND`/`*_NOT_FOUND` 404; `CONFLICT`/`*_CONFLICT` 409; `RATE_LIMITED` 429;
+`INVALID_*` 400; any other `BedrockError` you throw 400. A plain `Error` or other
+non-Bedrock throw becomes `FUNCTION_FAILED`/`INTERNAL_ERROR` with 500. Client and
+React hook errors are `BedrockError`s carrying the same `data` and `status`.
+
+```ts
+// 01:30 happens twice when clocks go back; let the user pick a reading.
+throw new BedrockError("TIME_CONFLICT", "This local time is ambiguous.",
+  "Choose the earlier or later reading.", undefined,
+  { data: { candidates: ["2026-10-25T00:30:00Z", "2026-10-25T01:30:00Z"] } }); // 409
+
+const { mutate, error } = useMutation("schedule");
+error?.data; // { candidates: [...] }; error?.status === 409
+```
 
 ## Schema and migrations
 

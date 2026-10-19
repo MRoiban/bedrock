@@ -26,7 +26,7 @@ export function httpClient(base: URL, options: ClientOptions, hooks: {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(wireArgs(args)),
       });
       const result = await response.json();
-      if (!result.ok) throw remoteError(result.error);
+      if (!result.ok) throw remoteError(result.error, response.status);
       return result.value;
     } catch (error) { throw asBedrockError(error, "REQUEST_FAILED", "Check your network connection and pebble URL."); }
   }
@@ -35,7 +35,7 @@ export function httpClient(base: URL, options: ClientOptions, hooks: {
     try {
       const response = await request(path, { method }, networkCode);
       const result = await response.json();
-      if (!response.ok) throw remoteError(result.error);
+      if (!response.ok) throw remoteError(result.error, response.status);
       return result;
     } catch (error) { throw asBedrockError(error, "REQUEST_FAILED", "Check your network connection and pebble URL."); }
   }
