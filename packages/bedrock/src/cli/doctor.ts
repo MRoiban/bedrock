@@ -5,15 +5,19 @@ import { Cloudflare } from "../tunnel/client";
 import { tunnelStatus } from "../tunnel";
 import { cloudflaredBinary } from "../tunnel/supervisor";
 import { BedrockError } from "../error";
+import { linkChecks } from "../links";
+import { sourceCheckout } from "../version";
 
 export interface Check { name: string; status: "pass" | "warn" | "fail"; message: string; hint: string; skipped?: boolean }
-export async function doctor(home: string, options: { fetch?: typeof fetch; apiToken?: string; cloudflare?: Cloudflare; binary?: () => string; disk?: typeof statfs; version?: string } = {}): Promise<Check[]> {
+export async function doctor(home: string, options: { fetch?: typeof fetch; apiToken?: string; cloudflare?: Cloudflare; binary?: () => string; disk?: typeof statfs; version?: string; checkout?: string | null; cwd?: string; bunGlobal?: string } = {}): Promise<Check[]> {
   const checks: Check[] = [];
   const add = (name: string, status: Check["status"], message: string, hint: string, skipped = false) => { checks.push({ name, status, message, hint, ...(skipped ? { skipped } : {}) }); };
   const fetcher = options.fetch ?? fetch;
   const version = options.version ?? Bun.version;
   const [major = 0, minor = 0] = version.split(".").map(Number);
   add("bun", major > 1 || major === 1 && minor >= 2 ? "pass" : "fail", `Bun ${version}`, "Install Bun >= 1.2.");
+  const checkout = options.checkout === undefined ? await sourceCheckout() : options.checkout;
+  if (checkout) checks.push(...await linkChecks(checkout, options.cwd ?? process.cwd(), options.bunGlobal));
   const config = await readConfig(home).catch(error => { add("config", "fail", "Configuration is missing or invalid.", error.hint ?? "Run bedrock setup."); return null; });
   if (config) {
     add("config", "pass", "Configuration is valid.", "Use bedrock setup to update configuration.");

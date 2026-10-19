@@ -42,16 +42,18 @@ Prefer ctx.invalidate([items]) with registered Drizzle tables; SQL names like ct
 Export Drizzle tables from pebble.ts. Run bedrock db generate after schema changes.
 Run bedrock db plan to inspect pending SQL; bedrock db migrate applies it.
 Run bun install, then bun run dev. Data lives in .bedrock/; never commit it.
+Bedrock packages are link: dependencies, so copies and git worktrees of this pebble install anywhere; never change them to file: paths.
 Read node_modules/bedrock/llms.txt for the index and node_modules/bedrock/AGENTS.md for the complete API, jobs, auth, storage, sync, client/react, and @bedrock/ui.
 All CLI commands support --json. Never open real ~/.bedrock in tests.
 `,
     ".gitignore": "node_modules/\n.bedrock/\n",
   };
   if (template === "react") Object.assign(files, reactTemplate(name));
+  // link: resolves through Bun's global link registry, so the lockfile holds no path and copies install anywhere.
   if (checkout) {
     const pkg = JSON.parse(files["package.json"]!);
-    pkg.dependencies.bedrock = `file:${join(checkout, "packages/bedrock").replaceAll("\\", "/")}`;
-    if (pkg.dependencies["@bedrock/ui"]) pkg.dependencies["@bedrock/ui"] = `file:${join(checkout, "packages/ui").replaceAll("\\", "/")}`;
+    pkg.dependencies.bedrock = "link:bedrock";
+    if (pkg.dependencies["@bedrock/ui"]) pkg.dependencies["@bedrock/ui"] = "link:@bedrock/ui";
     files["package.json"] = JSON.stringify(pkg, null, 2) + "\n";
   }
   let entries: string[];
@@ -151,6 +153,7 @@ invalidate is only needed for raw SQL via $client or writes outside bedrock; not
 Prefer ctx.invalidate([notes]) with registered Drizzle tables; SQL names like ctx.invalidate(["notes"]) also work.
 web/app.tsx is a Bun HTML-bundled React app. Import @bedrock/ui/styles.css once.
 Run bun install, bunx bedrock db generate, then bun run dev. Dev login needs no Google credentials.
+Bedrock packages are link: dependencies, so copies and git worktrees of this pebble install anywhere; never change them to file: paths.
 Hooks run inside BedrockProvider. useQuery subscribes live; writes use useMutation.
 UploadButton uploads immediately; keep the attachment id for the next mutation.
 Use document.documentElement.dataset.theme = "light" or "dark" to change Onyx tokens.

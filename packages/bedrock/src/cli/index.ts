@@ -5,7 +5,7 @@ import { newPebble } from "./new";
 import { selfUpdate, remoteSelfUpdate } from "./update";
 import { backupCommand } from "./backup";
 import { jobsCommand } from "./jobs";
-import { buildInfo, formatBuild } from "../version";
+import { buildInfo, formatBuild, sourceCheckout } from "../version";
 import { opsCommand, opsCommands } from "./ops";
 import { BedrockError, asBedrockError } from "../error";
 import { daemonCommand, daemonCommands } from "./daemon";
@@ -67,7 +67,7 @@ async function main() {
     result = await daemonCommand(command, args, json);
     if (result === undefined) return;
   }
-  else if (command === "init" && !args[0]?.startsWith("-") && (args.length === 1 || args.length === 3 && args[1] === "--template")) result = { command: "init", ...await init(args[0]!, process.cwd(), args[2], true) };
+  else if (command === "init" && !args[0]?.startsWith("-") && (args.length === 1 || args.length === 3 && args[1] === "--template")) result = { command: "init", ...await init(args[0]!, process.cwd(), args[2], true, await sourceCheckout()) };
   else if (command === "db" && args.length === 1 && ["generate", "plan", "migrate"].includes(args[0]!)) result = await dbCommand(args[0]!);
   else if (command && ["new", "init", "db", "self-update"].includes(command)) {
     const usage = command === "new" || command === "init" ? " <name> [--template react|minimal]" : command === "db" ? " generate|plan|migrate" : " [--remote]";

@@ -1,8 +1,12 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { version } from "../package.json";
 import { run } from "./cli/terminal";
 
 export const checkoutRoot = resolve(import.meta.dir, "../../..");
+// install.sh marks Bedrock's own source checkout; a published package has none.
+export async function sourceCheckout(root = checkoutRoot) {
+  return await Bun.file(join(root, "install.sh")).exists() ? root : undefined;
+}
 export interface BuildInfo { version: string; commit: string | null; branch: string | null; dirty: boolean | null; platform: string; arch: string; bun: string }
 export async function buildInfo(checkout = checkoutRoot, execute = run, platform = process.platform): Promise<BuildInfo> {
   const info: BuildInfo = { version, commit: null, branch: null, dirty: null, platform, arch: process.arch, bun: Bun.version };

@@ -138,6 +138,7 @@ test("new React scaffold installs, migrates, commits, builds and deploy prints U
     const created = await newPebble("my-app", "react", { cwd: temp.dir, terminal: {
       write: line => output.push(line),
       run: async (args, options) => {
+        if (args[1] === "link") return "";
         if (args[1] === "install") { linkDependencies(join(root, "examples/notes/node_modules"), join(options!.cwd!, "node_modules")); return ""; }
         return run(args, options);
       },

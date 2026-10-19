@@ -19,8 +19,9 @@ export async function dbCommand(command: string, dir = process.cwd()) {
       let kit: string;
       try {
         let entry: string;
-        try { entry = Bun.resolveSync("drizzle-kit", dir); }
-        catch { entry = Bun.resolveSync("drizzle-kit", import.meta.dir); }
+        // Bedrock's own drizzle-kit sees its drizzle-orm; a link:ed bedrock installs none into the pebble.
+        try { entry = Bun.resolveSync("drizzle-kit", import.meta.dir); }
+        catch { entry = Bun.resolveSync("drizzle-kit", dir); }
         kit = join(dirname(entry), "bin.cjs");
       } catch {
         throw new BedrockError("DRIZZLE_KIT_MISSING", "drizzle-kit is required for migration generation.", "Run bun add --dev drizzle-kit in the pebble directory, then retry.");
