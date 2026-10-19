@@ -19,15 +19,26 @@ export function httpClient(base: URL, options: ClientOptions, hooks: {
     hooks.received(response);
     return response;
   }
-  async function http(kind: "q" | "m", name: string, args: unknown) {
+  async function http(kind: "q" | "m", name: string, args: unknown, idempotencyKey?: string) {
     if (hooks.closed()) throw new BedrockError("CLIENT_CLOSED", "The client is closed.", "Create a new client.");
     try {
-      const response = await request(`/_bedrock/${kind}/${encodeURIComponent(name)}`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(wireArgs(args)),
-      });
-      const result = await response.json();
-      if (!result.ok) throw remoteError(result.error, response.status);
-      return result.value;
+      const headers = new Headers({ "Content-Type": "application/json" });
+      if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
+      const body = JSON.stringify(wireArgs(args));
+      const attempts = kind === "m" && idempotencyKey ? 3 : 1;
+      for (let attempt = 1; ; attempt++) {
+        let response: Response, result: any;
+        try {
+          response = await request(`/_bedrock/${kind}/${encodeURIComponent(name)}`, { method: "POST", headers, body });
+          result = await response.json();
+        } catch (error) {
+          if (attempt >= attempts || hooks.closed()) throw error;
+          await new Promise(resolve => setTimeout(resolve, 250 * attempt));
+          continue;
+        }
+        if (!result.ok) throw remoteError(result.error, response.status);
+        return result.value;
+      }
     } catch (error) { throw asBedrockError(error, "REQUEST_FAILED", "Check your network connection and pebble URL."); }
   }
   async function authRequest(path: string, method = "GET", networkCode = "REQUEST_FAILED") {

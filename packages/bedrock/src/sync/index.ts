@@ -2,9 +2,10 @@ import type { ServerWebSocket } from "bun";
 import type { User } from "../config";
 import type { createExecutor } from "../runtime/functions";
 import { BedrockError, asBedrockError, errorStatus } from "../error";
+import { checkIdempotencyKey } from "../runtime/idempotency";
 
 /* JSON protocol:
- * client: {op:"sub",id,query,args} | {op:"unsub",id} | {op:"mut",id,mutation,args}
+ * client: {op:"sub",id,query,args} | {op:"unsub",id} | {op:"mut",id,mutation,args,idempotencyKey?}
  * server: {op:"hello",release} | {op:"data",id,result} | {op:"result",id,ok,value|status,error} | {op:"error",id,status,error}
  * Errors contain BedrockError's {code,message,hint,detail?,data?}; status is the HTTP status the same error would get. IDs are nonempty strings.
  */
@@ -101,7 +102,8 @@ export function createSync(execute: ReturnType<typeof createExecutor>, release: 
           } else if (message.op === "mut") {
             if (typeof message.mutation !== "string") throw fail("INVALID_MESSAGE", "A mutation needs a mutation name.");
             try {
-              const result = await execute("mutation", message.mutation, message.args, socket.data.request, socket.data.token ? undefined : { user: socket.data.user });
+              const options = message.idempotencyKey === undefined ? undefined : { idempotencyKey: checkIdempotencyKey(message.idempotencyKey) };
+              const result = await execute("mutation", message.mutation, message.args, socket.data.request, socket.data.token ? undefined : { user: socket.data.user }, undefined, undefined, options);
               for (const sub of subscriptions.values()) {
                 if (![...sub.reads].some(table => table === "*" || result.writes.has(table))) continue;
                 clearTimeout(sub.timer);

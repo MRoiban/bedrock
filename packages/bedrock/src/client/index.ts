@@ -50,10 +50,10 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     release.observe(response.headers.get("x-bedrock-release"));
   }
   const http = httpClient(base, options, { closed: transport.closed, received, offline: transport.offline });
-  async function trackedMutation(name: string, args: unknown) {
+  async function trackedMutation(name: string, args: unknown, idempotencyKey: string) {
     mutations++;
     transport.httpMutation();
-    try { const value = await http.http("m", name, args); await subscriptions.refreshAll(); return value; }
+    try { const value = await http.http("m", name, args, idempotencyKey); await subscriptions.refreshAll(); return value; }
     finally { mutations--; transport.settled(); release.check(); }
   }
   return {
@@ -84,12 +84,13 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     ...storageClient(base, options, transport.closed, received, change => { uploads += change; release.check(); }, transport.offline),
     query: (name, args) => http.http("q", name, args),
     mutate(name, args) {
+      const idempotencyKey = crypto.randomUUID();
       if (transport.closed()) return Promise.reject(new BedrockError("CLIENT_CLOSED", "The client is closed.", "Create a new client."));
-      if (transport.polling()) return trackedMutation(name, args);
+      if (transport.polling()) return trackedMutation(name, args, idempotencyKey);
       if (pending.size() >= 1000) return Promise.reject(new BedrockError("MUTATION_LIMIT", "Too many pending mutations.", "Wait for earlier mutations to finish."));
       let serialized: unknown;
       try { serialized = wireArgs(args); } catch (error) { return Promise.reject(error); }
-      return pending.enqueue(`m${++sequence}`, name, serialized, () => {
+      return pending.enqueue(`m${++sequence}`, name, serialized, idempotencyKey, () => {
         if (transport.socket()?.readyState === 1) pending.flush(transport.send); else transport.connect();
       });
     },
