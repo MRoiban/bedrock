@@ -22,6 +22,17 @@ export async function devWorker() {
   process.on("disconnect", stop);
 }
 
+const MIGRATION_WARNINGS = new Set(["SCHEMA_DRIFT", "MIGRATION_REPLAY_FAILED", "MIGRATION_AMBIGUOUS"]);
+
+// A separate process: drizzle-kit mutes stdout while it diffs, which would swallow the pebble's own logs.
+async function warnOnMigrationDrift() {
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "index.ts"), "db", "check", "--json"], { cwd: process.cwd(), stdout: "pipe", stderr: "ignore" });
+  const output = await new Response(child.stdout).text();
+  let result: { ok: boolean; error?: { code: string; message: string; hint: string } };
+  try { result = JSON.parse(output); } catch { return; }
+  if (result.error && MIGRATION_WARNINGS.has(result.error.code)) console.error(`Warning: ${result.error.code}: ${result.error.message}\nHint: ${result.error.hint}`);
+}
+
 export async function dev(json: boolean, port: number) {
   let child: Bun.Subprocess;
   let stopped = false;
@@ -85,6 +96,7 @@ export async function dev(json: boolean, port: number) {
     timer = setTimeout(() => { void restart().catch(error => console.error(asBedrockError(error).toJSON())); }, 100);
   });
   child = launch();
+  void warnOnMigrationDrift().catch(() => {});
   const stop = async () => {
     if (stopped) return;
     stopped = true;

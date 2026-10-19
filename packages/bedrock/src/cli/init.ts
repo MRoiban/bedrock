@@ -39,8 +39,8 @@ Example route: detached(async (_req, _server, ctx) => { const rows = await fetch
 Await every slot; fetch inside a slot throws NETWORK_IN_SLOT in dev, and slots over BEDROCK_SLOW_SLOT_MS (200 ms) log a warning. Failed slots roll back individually; writes notify sync. Existing routes/jobs remain transactional.
 invalidate is only needed for raw SQL via $client or writes outside bedrock; notify from a mutation, job, or route.
 Prefer ctx.invalidate([items]) with registered Drizzle tables; SQL names like ctx.invalidate(["items"]) also work.
-Export Drizzle tables from pebble.ts. Run bedrock db generate after schema changes.
-Run bedrock db plan to inspect pending SQL; bedrock db migrate applies it.
+Export Drizzle tables from pebble.ts. Run bedrock db generate after schema changes and commit migrations/*.sql (there is no meta/).
+Use bedrock db new <name> for renames and backfills. Run bedrock db check before committing; bedrock db plan shows pending SQL.
 Run bun install, then bun run dev. Data lives in .bedrock/; never commit it.
 Bedrock packages are link: dependencies, so copies and git worktrees of this pebble install anywhere; never change them to file: paths.
 Read node_modules/bedrock/llms.txt for the index and node_modules/bedrock/AGENTS.md for the complete API, jobs, auth, storage, sync, client/react, and @bedrock/ui.
@@ -158,7 +158,8 @@ Hooks run inside BedrockProvider. useQuery subscribes live; writes use useMutati
 UploadButton uploads immediately; keep the attachment id for the next mutation.
 Use document.documentElement.dataset.theme = "light" or "dark" to change Onyx tokens.
 Read node_modules/bedrock/llms.txt for the index and node_modules/bedrock/AGENTS.md for the full author API and common mistakes.
-Run bun run typecheck and bedrock db plan before deploying. Never commit .bedrock/.
+Commit migrations/*.sql (there is no meta/); use bedrock db new <name> for renames and backfills.
+Run bun run typecheck and bedrock db check before deploying. Never commit .bedrock/.
 `,
   };
 }

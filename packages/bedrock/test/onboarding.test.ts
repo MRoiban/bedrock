@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { BedrockError } from "../src/error";
 import { join, resolve } from "node:path";
 import { stat } from "node:fs/promises";
+import { readdirSync } from "node:fs";
 import { tempDirectory } from "./helpers";
 import { wizardHarness, fakeCloudflare } from "./onboarding-harness";
 import { setupWizard } from "../src/cli/setup";
@@ -143,7 +144,7 @@ test("new React scaffold installs, migrates, commits, builds and deploy prints U
         return run(args, options);
       },
     } });
-    expect(await Bun.file(join(created.dir, "migrations/meta/_journal.json")).exists()).toBe(true);
+    expect(readdirSync(join(created.dir, "migrations"))).toEqual([expect.stringMatching(/^\d{14}_schema\.sql$/)]);
     expect(await run(["git", "log", "-1", "--format=%s"], { cwd: created.dir })).toBe("feat: create my-app");
     const build = await Bun.build({ entrypoints: [join(created.dir, "web/index.html")], target: "browser" });
     expect(build.success).toBe(true);

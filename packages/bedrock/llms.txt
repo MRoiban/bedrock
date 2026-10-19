@@ -40,7 +40,9 @@ export default definePebble({
 ```sh
 bedrock new hello --template minimal
 bedrock dev
-bedrock db generate
+bedrock db generate [name]
+bedrock db new <name>
+bedrock db check
 bedrock db plan
 bedrock db migrate
 bedrock setup

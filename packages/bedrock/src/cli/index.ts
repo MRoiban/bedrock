@@ -16,7 +16,7 @@ import { dev, devWorker } from "./dev";
 const commandHelp: Record<string, [usage: string, description: string]> = {
   new: ["<name> [--template react|minimal]", "Create a pebble directory, install dependencies, and initialize Git and migrations."],
   init: ["<name> [--template react|minimal]", "Scaffold a pebble in the current empty directory."],
-  db: ["generate|plan|migrate", "Generate, inspect, or apply pebble database migrations."],
+  db: ["generate [name] [--allow-data-loss] | new <name> | check | plan | migrate", "Generate, create, check, inspect, or apply pebble database migrations."],
   deploy: ["[dir] [--no-open] [--url <url>] [--token <token>]", "Deploy a pebble to the daemon."],
   rm: ["<name> --yes [--url <url>] [--token <token>]", "Remove a deployed pebble."],
   start: ["<name> [--url <url>] [--token <token>]", "Start a deployed pebble."],
@@ -54,6 +54,7 @@ async function main() {
     return;
   }
   let result: unknown;
+  const dbOptions = command === "db" ? dbArgs(args) : undefined;
   if (command === "setup") { result = await setupWizard(args, json); if (!json) return; }
   else if (command === "self-update" && (!args.length || args.length === 1 && args[0] === "--remote")) { const update = args[0] === "--remote" ? await remoteSelfUpdate(json ? {} : { onUpdate: update => console.log(`Updating remote bedrock ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)} · waiting for daemon…`) }) : await selfUpdate(); result = update; if (!json) { console.log("remote" in update ? `✓ Updated bedrock on ${update.domain} ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)} · daemon back in ${update.seconds}s` : `✓ Updated bedrock ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)}${update.restarted ? " · service restarted" : ""}`); return; } }
   else if (command === "new" && !args[0]?.startsWith("-") && (args.length === 1 || args.length === 3 && args[1] === "--template")) { result = await newPebble(args[0]!, args[2] ?? "react", { json }); if (!json) return; }
@@ -68,13 +69,23 @@ async function main() {
     if (result === undefined) return;
   }
   else if (command === "init" && !args[0]?.startsWith("-") && (args.length === 1 || args.length === 3 && args[1] === "--template")) result = { command: "init", ...await init(args[0]!, process.cwd(), args[2], true, await sourceCheckout()) };
-  else if (command === "db" && args.length === 1 && ["generate", "plan", "migrate"].includes(args[0]!)) result = await dbCommand(args[0]!);
+  else if (dbOptions) result = await dbCommand(args[0]!, process.cwd(), dbOptions);
   else if (command && ["new", "init", "db", "self-update"].includes(command)) {
-    const usage = command === "new" || command === "init" ? " <name> [--template react|minimal]" : command === "db" ? " generate|plan|migrate" : " [--remote]";
+    const usage = command === "new" || command === "init" ? " <name> [--template react|minimal]" : command === "db" ? ` ${commandHelp.db![0]}` : " [--remote]";
     throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, `Use bedrock ${command}${usage} [--json].`);
   }
-  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], db generate|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, secrets ls|set|unset, tunnel setup|status|teardown, service install|uninstall|status, doctor, login <domain>, logout, new <name>, self-update, whoami, status, backup setup|run|ls|restore, jobs ls|run, or --version; add --json for machine-readable output.");
+  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], db generate|new|check|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, secrets ls|set|unset, tunnel setup|status|teardown, service install|uninstall|status, doctor, login <domain>, logout, new <name>, self-update, whoami, status, backup setup|run|ls|restore, jobs ls|run, or --version; add --json for machine-readable output.");
   console.log(json ? JSON.stringify({ ok: true, ...(result as object) }) : JSON.stringify(result, null, 2));
+}
+
+function dbArgs(args: string[]) {
+  const [sub, ...rest] = args;
+  const names = rest.filter(arg => !arg.startsWith("-"));
+  const flags = rest.filter(arg => arg.startsWith("-"));
+  if (sub === "generate" && names.length <= 1 && flags.every(flag => flag === "--allow-data-loss")) return { name: names[0], allowDataLoss: flags.length > 0 };
+  if (sub === "new" && names.length === 1 && !flags.length) return { name: names[0] };
+  if (["check", "plan", "migrate"].includes(sub!) && !rest.length) return {};
+  return undefined;
 }
 
 if (import.meta.main) {

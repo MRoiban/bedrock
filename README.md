@@ -75,7 +75,7 @@ Use `bedrock new hello --template minimal` for a public HTML starter, or
 `bedrock init hello` to scaffold in the current empty directory. Source installs
 use `link:` dependencies for the workspace packages, so pebble copies and git
 worktrees install anywhere. The daemon replaces these first-party dependencies
-with its own installed packages on deployment. Commit `migrations/`, including `meta/`.
+with its own installed packages on deployment. Commit `migrations/*.sql`; there is no `meta/`. Run `bedrock db check` before committing.
 
 Setup saves its checklist in `$BEDROCK_HOME/setup.json`. Rerun `bedrock setup`
 to resume after a failure. Use `bedrock setup --status`, or redo a single step:
