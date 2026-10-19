@@ -112,8 +112,14 @@ Drizzle table objects or SQL table names to post-commit sync notifications. Pref
 Queries run inside read-only transactions. Mutations, and by default jobs and custom routes, run
 inside write transactions, serialized within a process. Throwing rolls back SQL
 and storage effects; errors become `BedrockError(code, message, hint)`. Middleware
-executes inside the same transaction. Avoid slow network work inside handlers,
-which delays other database requests. Do not open nested transactions or schedule
+executes inside the same transaction. Each call is one slot of the pebble's
+serialized queue, so slow work inside it delays every other database request.
+A slot longer than `BEDROCK_SLOW_SLOT_MS` (default 200 ms) logs one warning with
+its kind, name and duration. In `bedrock dev`, in tests, and in production with
+`BEDROCK_STRICT_SLOTS=1`, `fetch()` inside a slot throws `NETWORK_IN_SLOT` and
+the slot rolls back. Move the fetch to a detached route, a detached job or a
+service, then use `ctx.write` for the database part (see Detached routes and
+jobs). Do not open nested transactions or schedule
 detached writes after your handler returns. External network side effects cannot
 be rolled back with SQLite.
 

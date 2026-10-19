@@ -157,7 +157,7 @@ WebSocket error frames use one status rule, first match wins:
    `UNAUTHENTICATED` → 401; `FORBIDDEN`, `INVALID_IDENTITY` → 403;
    `FILE_TOO_LARGE` → 413; `LOGIN_LIMIT` → 429; `PEBBLE_STOPPED` → 503;
    `READ_ONLY`, `UNKNOWN_TABLE`, `UNKNOWN_BUCKET`, `DETACHED_CONTEXT`,
-   `TOKENS_DISABLED`, `OAUTH_NOT_CONFIGURED` → 500 (programming or server faults);
+   `NETWORK_IN_SLOT`, `TOKENS_DISABLED`, `OAUTH_NOT_CONFIGURED` → 500 (programming or server faults);
    storage rejections (`QUOTA_EXCEEDED`, `FILE_TYPE_REJECTED`, …) → 400.
 3. `NOT_FOUND` or `*_NOT_FOUND` → 404; `CONFLICT` or `*_CONFLICT` → 409;
    `RATE_LIMITED` → 429; `INVALID_*` → 400.
@@ -918,6 +918,24 @@ Custom HTTP routes may set `definePebble({ maxRequestBodySize: bytes })` (positi
 
 Proxied pebble HTTP requests have no idle timeout, so slow handlers and long streams work; Cloudflare still applies its own ~100-second limit for time to the first response byte.
 
+Queries, mutations, transactional routes and jobs, storage requests and each
+detached `ctx.read`/`ctx.write` run as one slot of the pebble's serialized queue;
+a slot that awaits anything slow holds every other database request. Every slot
+is timed from when it starts (the previous slot has released) to when it ends.
+A slot longer than `BEDROCK_SLOW_SLOT_MS` (milliseconds, default 200, read when
+the runtime starts) logs one `console.warn` line naming its kind (`query`,
+`mutation`, `route`, `job`, `storage read`/`storage write`, `detached read`/`detached write`), its
+name (function name, `METHOD /path` route key, job name, or request path) and
+its duration. In `bedrock dev`, in tests that call `startPebble` directly, and
+in production when the daemon runs with `BEDROCK_STRICT_SLOTS=1`, calling
+`fetch()` inside a slot throws `NETWORK_IN_SLOT` (HTTP 500), so a mutation that
+fetches rolls back. Fetches outside slots, including detached handlers and
+services while another slot is open, are unaffected; production without the
+flag never replaces `fetch`. The daemon forwards both variables from its own
+environment to pebble processes. Fix either signal by moving the slow work into
+a detached route, a detached job or a service and keeping only the database part
+in `ctx.write`/`ctx.read`.
+
 Routes and jobs can opt out of the outer queue/transaction for slow network I/O:
 
 ```ts
@@ -938,7 +956,7 @@ jobs: { refresh: job("0 * * * *", async ctx => {
 `db`, `storage`, or `invalidate`; accessing those throws a repair-hinted
 `BedrockError`. `read(fn)` and `write(fn)` resolve the callback's value in short
 queued slots with the same FunctionContext and transaction/storage/tracking
-semantics as queries and mutations. Await every slot, keep network I/O outside callbacks, and do not
+semantics as queries and mutations. Await every slot, keep network I/O outside callbacks (see above), and do not
 retain a slot's context. A failed slot rolls back only itself; earlier committed
 slots survive later handler errors. Writes notify sync after each commit.
 Normal detached routes retain daemon and child access gating and signed user

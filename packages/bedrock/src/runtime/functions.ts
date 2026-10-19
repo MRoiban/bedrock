@@ -5,12 +5,17 @@ import type { DetachedContext, FunctionContext, PebbleConfig, User } from "../co
 import type { openDatabase } from "../db";
 import { BedrockError, asBedrockError } from "../error";
 import { checkAccess } from "./access";
+import { runSlot, slotInfo, slotOptions, type SlotOptions } from "./slots";
 import { createTokens, requirePermission, storagePermission, type RequestIdentity } from "./tokens";
 import { chooseIdempotencyKey, createIdempotency, idempotencyScope } from "./idempotency";
 
-export interface ExecuteOptions { idempotencyKey?: string }
+export interface ExecuteOptions {
+  idempotencyKey?: string;
+  /** Names internal slots (route key, job name) in slow-slot warnings. */
+  label?: string;
+}
 
-export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof openDatabase>, services: Record<string, any> = {}) {
+export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof openDatabase>, services: Record<string, any> = {}, slots: SlotOptions = slotOptions(pebble.name, true)) {
   const tokens = createTokens(pebble, database.sqlite, database.db);
   const idempotency = createIdempotency(database.sqlite);
   let tail: Promise<unknown> = Promise.resolve();
@@ -19,7 +24,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
   const listeners = new Set<(writes: Set<string>) => void>();
   function execute(kind: "query" | "mutation", name: string, args: unknown, request: Request, identity?: { user: User | null; token?: RequestIdentity["token"]; validated?: boolean }, handler?: (ctx: FunctionContext) => unknown, permission?: string, options?: ExecuteOptions) {
     if (closed) return Promise.reject(new BedrockError("PEBBLE_STOPPED", "The pebble has stopped.", "Start a new pebble runtime before executing functions."));
-    const run = tail.then(async () => {
+    const run = tail.then(() => runSlot(slots, slotInfo(kind, name, !!handler, options?.label), async () => {
       const definitions = kind === "query" ? pebble.queries : pebble.mutations;
       if (!handler && (!definitions || !Object.hasOwn(definitions, name))) {
         throw new BedrockError("FUNCTION_NOT_FOUND", `Unknown ${kind}: ${name}`, "Check the function name in pebble.ts.");
@@ -84,7 +89,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
       } finally {
         if (kind === "query") sqlite.exec("PRAGMA query_only=OFF");
       }
-    });
+    }));
     // Rejections must not poison the queue for later requests.
     tail = run.catch(() => {});
     // Observers run outside the queue slot, so they can safely enqueue queries.
@@ -93,7 +98,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
     }, () => {});
     return run;
   }
-  async function detached<R>(request: Request, handler: (ctx: DetachedContext) => R, identity?: { user: User | null; token?: RequestIdentity["token"] }, permission?: string): Promise<Awaited<R>> {
+  async function detached<R>(request: Request, handler: (ctx: DetachedContext) => R, identity?: { user: User | null; token?: RequestIdentity["token"] }, permission?: string, label?: string): Promise<Awaited<R>> {
     const run = Promise.resolve().then(async () => {
       if (closed) throw new BedrockError("PEBBLE_STOPPED", "The pebble has stopped.", "Start a new pebble runtime before executing functions.");
       const resolved = identity ? { ...identity, token: identity.token ?? null } : await identify(request);
@@ -104,7 +109,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         if (!identity) checkAccess(pebble, user);
       }
       const slot = async <T>(kind: "query" | "mutation", fn: (ctx: FunctionContext) => T): Promise<Awaited<T>> => {
-        const result = await execute(kind, "detached", null, request, token ? undefined : { user, token }, fn);
+        const result = await execute(kind, "detached", null, request, token ? undefined : { user, token }, fn, undefined, { label: label ?? new URL(request.url).pathname });
         return result.value;
       };
       const unavailable = () => { throw new BedrockError("DETACHED_CONTEXT", "Detached handlers cannot access db, storage, or invalidate directly.", "Use ctx.read(ctx => ...) or ctx.write(ctx => ...) for database and storage work."); };
@@ -133,13 +138,13 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
     flushTokens() { return execute("mutation", "tokens", null, new Request("http://localhost"), { user: null }, () => {}); },
     detached,
     storage(kind: "query" | "mutation", request: Request, handler: (ctx: FunctionContext) => unknown, identity?: RequestIdentity) {
-      return execute(kind, "storage", null, request, identity, handler);
+      return execute(kind, "storage", null, request, identity, handler, undefined, { label: new URL(request.url).pathname });
     },
-    job(handler: (ctx: FunctionContext) => unknown) {
-      return execute("mutation", "job", null, new Request("http://localhost/_bedrock/jobs"), { user: null }, handler);
+    job(handler: (ctx: FunctionContext) => unknown, name = "job") {
+      return execute("mutation", "job", null, new Request("http://localhost/_bedrock/jobs"), { user: null }, handler, undefined, { label: name });
     },
-    route(request: Request, handler: (ctx: FunctionContext) => unknown, permission?: string, identity?: RequestIdentity) {
-      return execute("mutation", "route", null, request, identity, handler, permission);
+    route(request: Request, handler: (ctx: FunctionContext) => unknown, permission?: string, identity?: RequestIdentity, key = new URL(request.url).pathname) {
+      return execute("mutation", "route", null, request, identity, handler, permission, { label: key });
     },
     onCommit(listener: (writes: Set<string>) => void) {
       listeners.add(listener);
