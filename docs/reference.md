@@ -142,6 +142,39 @@ Rules:
 - Queries are read-only (enforced: run inside a read transaction). Mutations run inside a write transaction.
 - Types flow end-to-end: the client infers query/mutation names, args and results from `typeof pebble`.
 
+### Errors
+
+`new BedrockError(code, message, hint, detail?, { status?, data? })`; the first four
+arguments are unchanged. `data` is optional JSON context sent as `error.data`
+(after a `JSON.stringify` round trip). If it cannot be serialized (cycles, BigInt),
+it is dropped with a `console.warn` and the error is otherwise sent normally.
+
+Functions, routes (including `publicRoute` and `detached`), file endpoints and
+WebSocket error frames use one status rule, first match wins:
+
+1. `status`, if it is an integer from 400 to 599.
+2. Bedrock's table: `*_NOT_FOUND` for functions, files, buckets and uploads → 404;
+   `UNAUTHENTICATED` → 401; `FORBIDDEN`, `INVALID_IDENTITY` → 403;
+   `FILE_TOO_LARGE` → 413; `LOGIN_LIMIT` → 429; `PEBBLE_STOPPED` → 503;
+   `READ_ONLY`, `UNKNOWN_TABLE`, `UNKNOWN_BUCKET`, `DETACHED_CONTEXT`,
+   `TOKENS_DISABLED`, `OAUTH_NOT_CONFIGURED` → 500 (programming or server faults);
+   storage rejections (`QUOTA_EXCEEDED`, `FILE_TYPE_REJECTED`, …) → 400.
+3. `NOT_FOUND` or `*_NOT_FOUND` → 404; `CONFLICT` or `*_CONFLICT` → 409;
+   `RATE_LIMITED` → 429; `INVALID_*` → 400.
+4. Any other deliberately thrown `BedrockError` → 400.
+5. A non-`BedrockError` throw is wrapped (`FUNCTION_FAILED`, `INTERNAL_ERROR`) → 500.
+
+WebSocket `result` (with `ok: false`) and `error` frames carry the same number as
+`status` beside `error`. Clients rebuild `BedrockError` with `data` and `status`
+(the HTTP status, or the frame's), and the React hooks return that object as `error`.
+
+```ts
+// 01:30 happens twice when clocks go back; let the user pick a reading.
+throw new BedrockError("TIME_CONFLICT", "This local time is ambiguous.",
+  "Choose the earlier or later reading.", undefined,
+  { data: { candidates: ["2026-10-25T00:30:00Z", "2026-10-25T01:30:00Z"] } }); // 409
+```
+
 ## 4. Database
 
 - File: `$BEDROCK_HOME/pebbles/<name>/data/db.sqlite`, opened with `PRAGMA journal_mode=WAL; foreign_keys=ON; busy_timeout=5000`.
@@ -308,7 +341,7 @@ work. Unknown names throw `BedrockError("UNKNOWN_TABLE", message, hint)`.
 3. Each mutation, job, and route records the tables it wrote the same way.
 4. After a mutation commits, every subscription whose read-set intersects the write-set is re-run **for its own user** (permissions are just the query's `where` clause). If the result hash changed, the server pushes `{ op: "data", id, result }`.
 5. Re-runs are debounced/coalesced per subscription (~16 ms) so bursts of writes cause one push.
-6. Clients reconnect with exponential backoff and resubscribe automatically. Mutations over WS return `{ op: "result", id, ok, value | error }`.
+6. Clients reconnect with exponential backoff and resubscribe automatically. Mutations over WS return `{ op: "result", id, ok, value | status, error }` (see [Errors](#errors)).
 
 Without `sync`, the same queries/mutations are callable over plain HTTP:
 `POST /_bedrock/q/<name>` and `POST /_bedrock/m/<name>`.

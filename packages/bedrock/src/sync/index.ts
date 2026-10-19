@@ -1,12 +1,12 @@
 import type { ServerWebSocket } from "bun";
 import type { User } from "../config";
 import type { createExecutor } from "../runtime/functions";
-import { BedrockError, asBedrockError } from "../error";
+import { BedrockError, asBedrockError, errorStatus } from "../error";
 
 /* JSON protocol:
  * client: {op:"sub",id,query,args} | {op:"unsub",id} | {op:"mut",id,mutation,args}
- * server: {op:"hello",release} | {op:"data",id,result} | {op:"result",id,ok,value|error} | {op:"error",id,error}
- * Errors contain BedrockError's {code,message,hint}. IDs are nonempty strings.
+ * server: {op:"hello",release} | {op:"data",id,result} | {op:"result",id,ok,value|status,error} | {op:"error",id,status,error}
+ * Errors contain BedrockError's {code,message,hint,detail?,data?}; status is the HTTP status the same error would get. IDs are nonempty strings.
  */
 export interface SocketData { token?: import("../config").TokenIdentity | null; user: User | null; request: Request }
 type Socket = ServerWebSocket<SocketData>;
@@ -22,6 +22,10 @@ interface Subscription {
   active: boolean;
 }
 const fail = (code: string, message: string) => new BedrockError(code, message, "Use the documented Bedrock WebSocket protocol.");
+const failure = (error: unknown, code?: string, hint?: string) => {
+  const typed = asBedrockError(error, code, hint);
+  return { status: errorStatus(typed), error: typed.toJSON() };
+};
 const hash = (value: unknown) => new Bun.CryptoHasher("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 
 export function createSync(execute: ReturnType<typeof createExecutor>, release: string) {
@@ -48,7 +52,7 @@ export function createSync(execute: ReturnType<typeof createExecutor>, release: 
         send(sub.socket, { op: "data", id: sub.id, result: result.value ?? null });
       }
     } catch (error) {
-      if (sub.active) send(sub.socket, { op: "error", id: sub.id, error: asBedrockError(error).toJSON() });
+      if (sub.active) send(sub.socket, { op: "error", id: sub.id, ...failure(error) });
       // Failed queries may not have a complete read-set; retry on any write.
       sub.reads = new Set(["*"]);
     }
@@ -105,9 +109,9 @@ export function createSync(execute: ReturnType<typeof createExecutor>, release: 
                 await refresh(sub, sub.hash !== undefined);
               }
               send(socket, { op: "result", id, ok: true, value: result.value ?? null });
-            } catch (error) { send(socket, { op: "result", id, ok: false, error: asBedrockError(error).toJSON() }); }
+            } catch (error) { send(socket, { op: "result", id, ok: false, ...failure(error) }); }
           } else throw fail("INVALID_MESSAGE", "Unknown operation.");
-        } catch (error) { send(socket, { op: "error", id, error: asBedrockError(error, "INVALID_MESSAGE", "Send a JSON protocol message.").toJSON() }); }
+        } catch (error) { send(socket, { op: "error", id, ...failure(error, "INVALID_MESSAGE", "Send a JSON protocol message.") }); }
       },
     },
     close() {

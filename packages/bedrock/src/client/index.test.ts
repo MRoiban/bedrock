@@ -51,6 +51,15 @@ test("hello mismatch waits for pending mutation; data arrives before mutation re
   client.close();
 }));
 
+test("WebSocket mutation errors retain structured data and status", async () => setup(async env => {
+  const client = createClient({ url: "https://pebble.test" });
+  const mutation = client.mutate("notes", undefined).catch(error => error);
+  latest().open();
+  latest().message({ op: "result", id: "m1", ok: false, status: 409, error: { code: "TIME_CONFLICT", message: "Ambiguous", hint: "Choose", data: { candidates: ["early", "late"] } } });
+  expect(await mutation).toMatchObject({ status: 409, data: { candidates: ["early", "late"] } });
+  client.close();
+}));
+
 test("1012 retries in 100–1000 ms without consuming failed attempt", async () => setup(async env => {
   const client = createClient({ url: "https://pebble.test", autoReload: false });
   client.subscribe("notes", undefined, () => {}); latest().open(); latest().close(1006);

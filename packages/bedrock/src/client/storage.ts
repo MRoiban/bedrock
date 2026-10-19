@@ -21,7 +21,7 @@ export function storageClient(base: URL, options: ClientOptions, isClosed: () =>
       received(response);
       if (response.status === 204) return;
       const result = await response.json();
-      if (!response.ok) throw new BedrockError(result.error?.code ?? 'UPLOAD_FAILED', result.error?.message ?? 'File request failed.', result.error?.hint ?? 'Retry the upload.');
+      if (!response.ok) throw new BedrockError(result.error?.code ?? 'UPLOAD_FAILED', result.error?.message ?? 'File request failed.', result.error?.hint ?? 'Retry the upload.', result.error?.detail, { status: response.status, data: result.error?.data });
       return result;
     } catch (error) { throw asBedrockError(error, 'UPLOAD_FAILED', 'Check your connection and retry the file request.'); }
   }
