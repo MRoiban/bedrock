@@ -1,0 +1,3 @@
+# Pebble processes run with this config unless the pebble has its own bunfig.toml.
+[serve.static]
+plugins = ["./bundler.ts"]

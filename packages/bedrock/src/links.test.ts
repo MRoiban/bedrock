@@ -3,7 +3,7 @@ import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tempDirectory } from "../test/helpers";
 import { bunGlobalModules, linkChecks, unlinkedPackages } from "./links";
-import { doctor } from "./cli/doctor";
+import { bunfigChecks, doctor } from "./cli/doctor";
 
 async function fixture(dir: string) {
   const checkout = join(dir, "checkout");
@@ -67,5 +67,19 @@ test("new registers only missing links and never re-points an existing one", asy
     await mkdir(join(temp.dir, "elsewhere"));
     await symlink(join(temp.dir, "elsewhere"), join(global, "bedrock"), "dir");
     expect((await unlinkedPackages(checkout, global)).map(item => item.name)).toEqual(["@bedrock/ui"]);
+  } finally { temp.cleanup(); }
+});
+
+test("doctor warns when a pebble's own bunfig.toml does not load the bundler plugin", async () => {
+  const temp = tempDirectory();
+  try {
+    expect(await bunfigChecks(temp.dir)).toEqual([]);
+    await Bun.write(join(temp.dir, "pebble.ts"), "");
+    expect(await bunfigChecks(temp.dir)).toEqual([]);
+    await Bun.write(join(temp.dir, "bunfig.toml"), '[serve.static]\nplugins = ["bun-plugin-tailwind"]\n');
+    const [missing] = await bunfigChecks(temp.dir);
+    expect(missing).toMatchObject({ name: "pebble-bunfig", status: "warn", hint: 'Add "bedrock/bundler" to [serve.static] plugins in bunfig.toml.' });
+    await Bun.write(join(temp.dir, "bunfig.toml"), '[serve.static]\nplugins = ["bun-plugin-tailwind", "bedrock/bundler"]\n');
+    expect((await bunfigChecks(temp.dir))[0]!.status).toBe("pass");
   } finally { temp.cleanup(); }
 });

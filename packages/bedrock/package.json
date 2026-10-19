@@ -7,7 +7,8 @@
     "./server": "./src/runtime/index.ts",
     "./daemon": "./src/daemon/index.ts",
     "./client": "./src/client/index.ts",
-    "./react": "./src/react/index.ts"
+    "./react": "./src/react/index.ts",
+    "./bundler": "./src/runtime/bundler.ts"
   },
   "bin": {
     "bedrock": "./src/cli/index.ts"
