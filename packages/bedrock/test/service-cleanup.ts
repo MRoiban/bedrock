@@ -55,7 +55,7 @@ if ($failures.Count) { throw ($failures | Out-String) }
 }
 
 export function powershellCommand(script: string) {
-  return ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
+  return ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(`$ProgressPreference = "SilentlyContinue"\n${script}`, "utf16le").toString("base64")];
 }
 
 export function cleanupWindowsTestServices(path?: string) {

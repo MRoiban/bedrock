@@ -19,10 +19,10 @@ export function socketProtocol(
     if (message.op === "hello") observe(message.release);
     else if (message.op === "data") subscriptions.socketData(message.id, message.result);
     else if (message.op === "result") {
-      if (!pending.complete(message.id, message.ok, message.value, remoteError(message.error))) return;
+      if (!pending.complete(message.id, message.ok, message.value, remoteError(message.error, message.status))) return;
     } else if (message.op === "error") {
-      pending.complete(message.id, false, undefined, remoteError(message.error));
-      subscriptions.entries.get(message.id)?.onError?.(remoteError(message.error));
+      pending.complete(message.id, false, undefined, remoteError(message.error, message.status));
+      subscriptions.entries.get(message.id)?.onError?.(remoteError(message.error, message.status));
     }
     settled();
   }

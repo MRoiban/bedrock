@@ -18,8 +18,11 @@ try {
     New-Item -ItemType Directory -Force -Path $bin | Out-Null
     $cli = Join-Path $checkout 'packages\bedrock\src\cli\index.ts'
     # Bun's executable shim works in PowerShell and CMD without changing execution policy.
-    Push-Location (Join-Path $checkout 'packages\bedrock')
-    try { & $bun link; if ($LASTEXITCODE -ne 0) { throw 'bun link failed.' } } finally { Pop-Location }
+    # Pebbles depend on link:bedrock and link:@bedrock/ui, so both packages must be registered.
+    foreach ($package in 'bedrock', 'ui') {
+        Push-Location (Join-Path $checkout "packages\$package")
+        try { & $bun link; if ($LASTEXITCODE -ne 0) { throw 'bun link failed.' } } finally { Pop-Location }
+    }
     & $bun $cli --version
     if ($LASTEXITCODE -ne 0) { throw 'Bedrock verification failed.' }
 } finally { Pop-Location }

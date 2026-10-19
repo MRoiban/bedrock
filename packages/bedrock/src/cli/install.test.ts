@@ -12,6 +12,7 @@ test.skipIf(process.platform === "win32")("POSIX installer has valid syntax and 
     const checkout = join(temp.dir, "checkout");
     const bin = join(temp.dir, "bin");
     await mkdir(join(checkout, "packages/bedrock/src/cli"), { recursive: true });
+    await mkdir(join(checkout, "packages/ui"), { recursive: true });
     await mkdir(bin);
     await copyFile(source, join(checkout, "install.sh"));
     await Bun.write(join(bin, "bun"), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/bun-calls"\n');
@@ -22,6 +23,7 @@ test.skipIf(process.platform === "win32")("POSIX installer has valid syntax and 
     for (let i = 0; i < 2; i++) expect(await run(["sh", join(checkout, "install.sh")], { env })).toContain("Next: bedrock setup");
     expect(await readlink(join(temp.dir, ".bun/bin/bedrock"))).toBe(join(checkout, "packages/bedrock/src/cli/index.ts"));
     expect((await Bun.file(join(temp.dir, "bun-calls")).text()).match(/install --frozen-lockfile/g)).toHaveLength(2);
+    expect((await Bun.file(join(temp.dir, "bun-calls")).text()).match(/^link$/gm)).toHaveLength(4);
   } finally { temp.cleanup(); }
 });
 
@@ -40,7 +42,7 @@ test("self-update fast-forwards checkout, installs dependencies and requests ser
       if (args.includes("pull")) head = "b".repeat(40);
       return "";
     }, restart: async () => ({ restarted: true }) })).toMatchObject({ updated: true, restarted: true, from: "a".repeat(40), to: "b".repeat(40) });
-    expect(calls).toEqual([["git", "pull", "--ff-only"], [process.execPath, "install"]]);
+    expect(calls).toEqual([[process.platform === "win32" ? "git.exe" : "git", "pull", "--ff-only"], [process.execPath, "install"]]);
   } finally { temp.cleanup(); }
 });
 

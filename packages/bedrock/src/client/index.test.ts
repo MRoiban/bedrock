@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { createClient } from "./index";
 import { fakeBrowser } from "./browser-fake";
 import { savePlace } from "./restore";
@@ -48,6 +49,15 @@ test("hello mismatch waits for pending mutation; data arrives before mutation re
   latest().message({ op: "data", id: "s1", result: ["saved"] });
   latest().message({ op: "result", id: "m2", ok: true, value: "ok" });
   expect(await mutation).toBe("ok"); expect(data).toEqual(["saved"]); expect(env.reloads()).toBe(1);
+  client.close();
+}));
+
+test("WebSocket mutation errors retain structured data and status", async () => setup(async env => {
+  const client = createClient({ url: "https://pebble.test" });
+  const mutation = client.mutate("notes", undefined).catch(error => error);
+  latest().open();
+  latest().message({ op: "result", id: "m1", ok: false, status: 409, error: { code: "TIME_CONFLICT", message: "Ambiguous", hint: "Choose", data: { candidates: ["early", "late"] } } });
+  expect(await mutation).toMatchObject({ status: 409, data: { candidates: ["early", "late"] } });
   client.close();
 }));
 
@@ -389,7 +399,7 @@ test("unsubscribing during discovery stays idle and temporary polling retries af
 }));
 
 test("browser token clients poll without attempting WebSockets", async () => setup(async env => {
-  const bundle = await Bun.build({ entrypoints: [new URL("./index.ts", import.meta.url).pathname], target: "browser", define: { Bun: "undefined" } });
+  const bundle = await Bun.build({ entrypoints: [fileURLToPath(new URL("./index.ts", import.meta.url))], target: "browser", define: { Bun: "undefined" } });
   expect(bundle.success).toBe(true);
   const source = await bundle.outputs[0]!.text();
   const { createClient: browserClient } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`) as { createClient: typeof createClient };

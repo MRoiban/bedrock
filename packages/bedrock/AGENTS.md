@@ -59,6 +59,10 @@ export default definePebble({
 
 Run `bedrock db generate`, commit `migrations/` (including `meta/`), then
 `bedrock dev`. Data lives in `.bedrock/db.sqlite` and `.bedrock/files/`.
+From a source install, `new`/`init` depend on `"bedrock": "link:bedrock"` (and
+`"@bedrock/ui": "link:@bedrock/ui"`); the lockfile has no paths, so copies and
+git worktrees just work. Never write `file:` paths; `bedrock doctor` in the
+pebble flags them and prints the fix.
 Dev uses a localhost daemon and a private child; the printed URL is
 `http://notes.localhost:3000`. Protected pages use an email-picker login.
 The default `bedrock new notes` React template includes a complete frontend, installs
@@ -115,7 +119,31 @@ be rolled back with SQLite.
 
 HTTP: `POST /_bedrock/q/<name>` or `POST /_bedrock/m/<name>`, with JSON arguments
 (`null` without args), gives `{ ok: true, value }` or
-`{ ok: false, error: { code, message, hint } }`.
+`{ ok: false, error: { code, message, hint, data? } }` with the status from [Errors](#errors).
+
+### Errors
+
+Throw `new BedrockError(code, message, hint, detail?, { status?, data? })` for
+expected failures. `data` is JSON context for the client (`error.data`);
+unserializable data (cycles, BigInt) is dropped with a warning, never a 500.
+
+The HTTP status (also `status` on WebSocket error frames) is, first match wins:
+an explicit `status` from 400–599; Bedrock's own codes (`UNAUTHENTICATED` 401,
+`FORBIDDEN` 403, `PEBBLE_STOPPED` 503, programming faults such as `READ_ONLY` 500, …);
+`NOT_FOUND`/`*_NOT_FOUND` 404; `CONFLICT`/`*_CONFLICT` 409; `RATE_LIMITED` 429;
+`INVALID_*` 400; any other `BedrockError` you throw 400. A plain `Error` or other
+non-Bedrock throw becomes `FUNCTION_FAILED`/`INTERNAL_ERROR` with 500. Client and
+React hook errors are `BedrockError`s carrying the same `data` and `status`.
+
+```ts
+// 01:30 happens twice when clocks go back; let the user pick a reading.
+throw new BedrockError("TIME_CONFLICT", "This local time is ambiguous.",
+  "Choose the earlier or later reading.", undefined,
+  { data: { candidates: ["2026-10-25T00:30:00Z", "2026-10-25T01:30:00Z"] } }); // 409
+
+const { mutate, error } = useMutation("schedule");
+error?.data; // { candidates: [...] }; error?.status === 409
+```
 
 ## Schema and migrations
 
@@ -268,12 +296,39 @@ curl https://uploads.example.com/api/upload \
 `ctx.tokens.list()` returns only your non-revoked metadata. Create/revoke require
 write slots and participate in the transaction; token callers cannot mint tokens
 or revoke another user's token. Disabled APIs throw `TOKENS_DISABLED`.
-`ctx.token` (also on detached contexts) is `{ id, name, permissions }` or null;
-jobs always get null. Expiry is an optional future Unix millisecond timestamp.
+`ctx.token` (also on detached contexts) is `{ id, name, permissions, effective,
+profiles, metadata }` or null; jobs always get null. Expiry is an optional future
+Unix millisecond timestamp.
 
 Permissions default to deny: `*`, `query:<name>`, `mutation:<name>`,
-`route:<exact METHOD /path-pattern>`, `socket:<registered /path>`, and
-`files:<bucket>:upload|read|delete`.
+`route:<exact METHOD /path-pattern>`, `socket:<registered /path>`,
+`files:<bucket>:upload|read|delete`, and `profile:<name>`.
+
+Prefer profiles for tokens a client keeps for a long time, so new operations do
+not require re-minting:
+
+```ts
+export default definePebble({
+  name: "chrono", access: "users",
+  tokens: { profiles: { device: ["query:entries", "mutation:track"] } },
+  mutations: {
+    pairDevice: mutation(ctx => ctx.tokens.create({
+      name: "Phone", permissions: ["profile:device"], metadata: { kind: "device" },
+    })),
+  },
+  // ...
+});
+```
+
+Profiles expand from the running config on every request: add an operation to
+`device` and deploy, and every existing `profile:device` token can call it.
+Profile entries must be registered explicit permissions (no `*`, no nested
+`profile:`), and names match `^[a-z][a-z0-9-]{0,47}$`; mistakes fail at load with
+`INVALID_TOKEN_PROFILE`. Authorize with `ctx.token.effective`; `permissions` stays
+the stored grants. A profile removed from config grants nothing and appears in
+`ctx.tokens.list()` as `unknownProfiles`. Use `metadata` (≤32 string values, ≤4 KB
+JSON, else `INVALID_TOKEN_METADATA`) to label a token's kind instead of guessing
+from its permissions; it is returned by `list()` and on `ctx.token`.
 Targets must exist in the registered maps. Chunk operations require upload,
 and WS sync requires `*`. Grants supplement user, row, and bucket authorization;
 current pebble access policies still apply to the stored user snapshot. Invalid,
@@ -704,8 +759,10 @@ and `bun run build:css` in `packages/ui`.
 
 ## Host operations and backups
 
-From `packages/bedrock`, `bun link` registers the `bedrock` bin globally. Ensure
-Bun's bin directory is on PATH. `bedrock --version` prints local package/checkout identity, platform, architecture and Bun version; `--json` exposes version, commit, branch, dirty, platform, arch and bun. Git fields are null outside a checkout.
+`install.sh`/`install.ps1` run `bun link` in `packages/bedrock` (the `bedrock`
+bin and `link:bedrock`) and `packages/ui` (`link:@bedrock/ui`); `self-update`
+repeats both and `new` registers any that are missing. Ensure Bun's bin
+directory is on PATH. `bedrock --version` prints local package/checkout identity, platform, architecture and Bun version; `--json` exposes version, commit, branch, dirty, platform, arch and bun. Git fields are null outside a checkout.
 All commands support `--json` (one object; doctor returns a checks array).
 Errors carry `code`, `message`, `hint`; failures set exit code 1.
 `new`, `init`, `db`, `deploy`, `rm`, `start`, `stop`, `restart`, `rollback`,
@@ -730,7 +787,7 @@ bedrock dev
 bedrock deploy             # prints/opens URL; --no-open disables opening
 bedrock whoami
 bedrock status --json
-bedrock self-update        # local clean checkout: git pull --ff-only, bun install, service restart
+bedrock self-update        # local clean checkout: git pull --ff-only, bun install, bun link, service restart
 bedrock self-update --remote # logged-in daemon: update, restart, poll new boot/commit (120 s)
 bedrock backup run
 bedrock backup ls notes --json

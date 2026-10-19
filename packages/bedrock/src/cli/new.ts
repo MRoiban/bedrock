@@ -1,13 +1,16 @@
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { sourceCheckout } from "../version";
+import { unlinkedPackages } from "../links";
 import { init } from "./init";
 import { dbCommand } from "./db";
 import { terminal, type Terminal } from "./terminal";
 
-export async function newPebble(name: string, template = "react", options: { cwd?: string; terminal?: Partial<Terminal>; generate?: typeof dbCommand; json?: boolean } = {}) {
+export async function newPebble(name: string, template = "react", options: { cwd?: string; terminal?: Partial<Terminal>; generate?: typeof dbCommand; json?: boolean; globalModules?: string } = {}) {
   const io = { ...terminal, ...options.terminal };
-  const checkout = resolve(import.meta.dir, "../../../..");
-  const source = await Bun.file(join(checkout, "install.sh")).exists() ? checkout : undefined;
-  const result = await init(name, options.cwd ?? process.cwd(), template, false, source);
+  const checkout = await sourceCheckout();
+  const result = await init(name, options.cwd ?? process.cwd(), template, false, checkout);
+  // A checkout updated by an older self-update may not have registered every link yet.
+  if (checkout) for (const { dir } of await unlinkedPackages(checkout, options.globalModules)) await io.run([process.execPath, "link"], { cwd: join(checkout, dir) });
   await io.run([process.execPath, "install"], { cwd: result.dir });
   if (template === "react") await (options.generate ?? dbCommand)("generate", result.dir);
   if (io.which("git") && !await Bun.file(join(result.dir, ".git/HEAD")).exists()) {

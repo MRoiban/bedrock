@@ -79,7 +79,7 @@ export function clientTransport(base: URL, options: ClientOptions, browser: Brow
         if (response.status === 404 && body?.error?.code === "NOT_FOUND") { fallback(true); return; }
         if (response.status === 401 || response.status === 403) {
           hooks.stopPoll(); dispatch({ type: "denied" });
-          hooks.report(remoteError(body?.error));
+          hooks.report(remoteError(body?.error, response.status));
         } else fallback();
       }
     } catch {

@@ -22,6 +22,8 @@ sections you touch.
 - Comments explain *why*, never *what*.
 - Errors: throw `BedrockError(code, message, hint)` for anything a user or agent can hit.
 - Never touch `$HOME/.bedrock` in tests; use a temp `BEDROCK_HOME`.
+- Tests that `bun link` or install a `link:` pebble use `linkedBunEnv` (`packages/bedrock/test/helpers.ts`):
+  a temp `BUN_INSTALL` keeps the real link registry untouched while the package cache stays shared.
 
 ## Verification (required before reporting done)
 
@@ -31,7 +33,9 @@ bun run typecheck
 bun test
 ```
 
-All three must pass. Tests use `bun test`, live next to code as `*.test.ts`, and
+All three must pass. Under full-suite load on slow machines (e.g. WSL2), the
+"React starter is idempotent…" test can hit its 5 s timeout; rerun it alone
+(`bun test -t "React starter"`) before treating it as a regression. Tests use `bun test`, live next to code as `*.test.ts`, and
 e2e tests that start real servers go in `packages/bedrock/test/`.
 
 ## Commits

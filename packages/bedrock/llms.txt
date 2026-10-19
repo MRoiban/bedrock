@@ -18,8 +18,9 @@ export default definePebble({
 
 ## Author guide
 
-- [A complete pebble](AGENTS.md#a-complete-pebble): runnable example and setup.
+- [A complete pebble](AGENTS.md#a-complete-pebble): runnable example, setup and `link:` dependencies.
 - [Configuration and functions](AGENTS.md#configuration-and-functions): config, context and HTTP functions.
+- [Errors](AGENTS.md#errors): structured error data and HTTP status mapping.
 - [Schema and migrations](AGENTS.md#schema-and-migrations): database changes, rollback and detached work.
 - [Public HTTP routes](AGENTS.md#public-http-routes): anonymous HTTP handlers on protected pebbles.
 - [Authentication, authorization and trust](AGENTS.md#authentication-authorization-and-trust): access policies and pebble tokens.
@@ -29,7 +30,7 @@ export default definePebble({
 - [Composition](AGENTS.md#composition): share schema/routes/jobs/sockets/services maps.
 - [Application sockets and long-lived services](AGENTS.md#application-sockets-and-long-lived-services): protocols and lifecycle.
 - [Browser client and React](AGENTS.md#browser-client-and-react): client, hooks, UI and release freshness.
-- [Host operations and backups](AGENTS.md#host-operations-and-backups): deploy, tunnel, service and recovery.
+- [Host operations and backups](AGENTS.md#host-operations-and-backups): install, doctor, deploy, tunnel, service and recovery.
 - [Secrets, scoped deploy tokens and service tokens](AGENTS.md#secrets-scoped-deploy-tokens-and-service-tokens): credentials and delegated administration.
 - [Common mistakes](AGENTS.md#common-mistakes): author checks.
 

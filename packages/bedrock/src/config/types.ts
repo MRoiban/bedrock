@@ -9,10 +9,20 @@ export interface User {
   avatarUrl?: string;
 }
 
-export interface TokenIdentity { id: string; name: string; permissions: string[] }
-export interface TokenMetadata extends TokenIdentity { createdAt: number; lastUsedAt: number | null; expiresAt: number | null }
+export interface TokenIdentity {
+  id: string;
+  name: string;
+  /** Grants as stored at creation, including profile:<name> entries. */
+  permissions: string[];
+  /** Grants after expanding profiles from the running pebble's config. */
+  effective: string[];
+  /** Granted profiles that exist in the running pebble's config. */
+  profiles: string[];
+  metadata: Record<string, string>;
+}
+export interface TokenMetadata extends TokenIdentity { createdAt: number; lastUsedAt: number | null; expiresAt: number | null; unknownProfiles: string[] }
 export interface TokenApi {
-  create(input: { name: string; permissions: string[]; expiresAt?: number }): TokenIdentity & { token: string; createdAt: number; expiresAt: number | null };
+  create(input: { name: string; permissions: string[]; expiresAt?: number; metadata?: Record<string, string> }): TokenIdentity & { token: string; createdAt: number; expiresAt: number | null };
   list(): TokenMetadata[];
   revoke(id: string): void;
 }
@@ -91,7 +101,8 @@ export interface PebbleConfig<Q extends FunctionMap = FunctionMap, M extends Fun
   mutations?: M;
   storage?: readonly Bucket[];
   sync?: boolean;
-  tokens?: boolean;
+  /** true, or named permission profiles that tokens reference as profile:<name>. */
+  tokens?: boolean | { profiles?: Record<string, readonly string[]> };
   backup?: import("./hosting").DirectoryBackup;
   /** HTTP body ceiling in bytes (default 90 MiB, maximum 1 TiB). Stream large custom bodies. */
   maxRequestBodySize?: number;

@@ -12,6 +12,7 @@ bun -e 'const [a,b]=Bun.version.split(".").map(Number); if(a<1 || (a===1 && b<2)
 cd "$checkout"
 bun install --frozen-lockfile
 (cd packages/bedrock && bun link)
+(cd packages/ui && bun link)
 bedrock_bin=$(command -v bedrock || true)
 if [ "$bedrock_bin" != "$BUN_INSTALL/bin/bedrock" ]; then
   mkdir -p "$BUN_INSTALL/bin"

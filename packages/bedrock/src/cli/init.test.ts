@@ -18,6 +18,18 @@ test("init writes a runnable scaffold, repeats safely, and never overwrites exis
   } finally { temp.cleanup(); }
 });
 
+test("source checkouts get location-independent link: dependencies", async () => {
+  const temp = tempDirectory();
+  try {
+    for (const template of ["default", "react"]) {
+      await init(template, temp.dir, template, false, "/opt/bedrock");
+      const { dependencies } = await Bun.file(join(temp.dir, template, "package.json")).json();
+      expect(dependencies.bedrock).toBe("link:bedrock");
+      expect(dependencies["@bedrock/ui"]).toBe(template === "react" ? "link:@bedrock/ui" : undefined);
+    }
+  } finally { temp.cleanup(); }
+});
+
 async function runCli(args: string[], cwd: string) {
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "index.ts"), ...args], {
     cwd, env: { ...process.env, BEDROCK_HOME: join(cwd, "home") }, stdout: "pipe", stderr: "pipe",
