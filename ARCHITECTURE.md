@@ -54,6 +54,10 @@ Bedrock is a foundation, not a platform. It does not and will not:
 5. **Removal is a feature.** Unused surface (no real pebble uses it) is a
    candidate for deletion, as plugins were.
 
+Accepted with one pebble (Chrono), by owner decision, because most future pebbles
+are expected to need them: token profiles, mutation idempotency keys, and
+structured error `data`. Rule 5 still applies if none do.
+
 ## 4. Stack
 
 | Concern      | Choice |
