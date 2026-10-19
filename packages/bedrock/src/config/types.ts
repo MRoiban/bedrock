@@ -52,6 +52,7 @@ export interface DetachedContext<S = import("./hosting").ServiceValues> {
 export interface FunctionDefinition<Args = any, Result = any, Input = Args> {
   readonly kind: "query" | "mutation";
   readonly schema?: StandardSchemaV1<Input, Args>;
+  readonly idempotencyKey?: (args: Args) => string | null | undefined;
   readonly run: (ctx: FunctionContext, args: Args) => Result;
 }
 

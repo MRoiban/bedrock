@@ -1,9 +1,10 @@
 import { BedrockError } from "../error";
-import { disconnected } from "./wire";
+import { closedBeforeResult, disconnected } from "./wire";
 
 interface Pending {
-  message: { op: "mut"; id: string; mutation: string; args: unknown };
+  message: { op: "mut"; id: string; mutation: string; args: unknown; idempotencyKey: string };
   sent: boolean;
+  failures: number;
   cancelTimeout: () => void;
   resolve: (value: any) => void;
   reject: (error: BedrockError) => void;
@@ -11,19 +12,28 @@ interface Pending {
 
 export function pendingMutations(hooks: { settled: () => void; checkRelease: () => void }) {
   const pending = new Map<string, Pending>();
-  function enqueue(id: string, mutation: string, args: unknown, start: () => void) {
+  function failed(id: string, item: Pending, error: BedrockError) {
+    if (++item.failures < 3) { item.sent = false; return true; }
+    pending.delete(id); item.reject(error); hooks.settled();
+    return false;
+  }
+  function enqueue(id: string, mutation: string, args: unknown, idempotencyKey: string, start: () => void) {
     return new Promise<any>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pending.delete(id);
-        reject(new BedrockError("MUTATION_TIMEOUT", "No mutation result arrived within 30 seconds.", "Check whether the mutation committed before retrying."));
-        hooks.settled(); hooks.checkRelease();
-      }, 30_000);
-      pending.set(id, {
-        message: { op: "mut", id, mutation, args }, sent: false,
+      let timeout: ReturnType<typeof setTimeout>;
+      const item: Pending = {
+        message: { op: "mut", id, mutation, args, idempotencyKey }, sent: false, failures: 0,
         cancelTimeout: () => clearTimeout(timeout),
         resolve(value) { clearTimeout(timeout); resolve(value); hooks.checkRelease(); },
         reject(error) { clearTimeout(timeout); reject(error); hooks.checkRelease(); },
-      });
+      };
+      function timedOut() {
+        const error = new BedrockError("MUTATION_TIMEOUT", "No mutation result arrived after 3 attempts.", "The client retried with the same idempotency key. Check the server; a new call uses a new key, so check whether the mutation committed before calling again.");
+        if (!failed(id, item, error)) return;
+        timeout = setTimeout(timedOut, 30_000);
+        start();
+      }
+      pending.set(id, item);
+      timeout = setTimeout(timedOut, 30_000);
       start();
     });
   }
@@ -34,15 +44,15 @@ export function pendingMutations(hooks: { settled: () => void; checkRelease: () 
   }
   function rejectSent() {
     for (const [id, item] of pending) {
-      if (item.sent) { pending.delete(id); item.reject(disconnected()); }
+      if (item.sent) failed(id, item, disconnected());
     }
     hooks.checkRelease();
   }
-  function fallback(mutate: (name: string, args: unknown) => Promise<any>) {
+  function fallback(mutate: (name: string, args: unknown, idempotencyKey: string) => Promise<any>) {
     for (const [id, item] of pending) {
       if (item.sent) continue;
       pending.delete(id); item.cancelTimeout();
-      void mutate(item.message.mutation, item.message.args).then(item.resolve, item.reject);
+      void mutate(item.message.mutation, item.message.args, item.message.idempotencyKey).then(item.resolve, item.reject);
     }
   }
   function complete(id: string, ok: boolean, value: unknown, error: BedrockError) {
@@ -53,7 +63,7 @@ export function pendingMutations(hooks: { settled: () => void; checkRelease: () 
     return true;
   }
   function close() {
-    for (const item of pending.values()) item.reject(disconnected());
+    for (const item of pending.values()) item.reject(closedBeforeResult());
     pending.clear();
   }
   return { size: () => pending.size, enqueue, flush, rejectSent, fallback, complete, close };

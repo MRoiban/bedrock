@@ -87,22 +87,125 @@ test("online and becoming visible cancel backoff and reset failures", async () =
   client.close(); env.clock.advance(30_000); expect(FakeSocket.instances).toHaveLength(3);
 }));
 
-test("pagehide rejects sent mutations, keeps unsent work, pageshow resubscribes, close removes listeners", async () => setup(async env => {
+test("pagehide keeps sent and unsent mutations, pageshow resubscribes, close removes listeners", async () => setup(async env => {
   const client = createClient({ url: "https://pebble.test" });
   client.subscribe("notes", undefined, () => {}); latest().open();
   const sent = client.mutate("save", undefined);
-  const rejection = sent.catch(error => error);
-  env.window.emit("pagehide"); expect(await rejection).toMatchObject({ code: "CONNECTION_LOST" });
+  const message = latest().sent.at(-1);
+  env.window.emit("pagehide");
   expect(latest().closes).toEqual([1000]);
   const unsent = client.mutate("later", undefined);
   expect(FakeSocket.instances).toHaveLength(1);
   env.window.emit("pageshow"); expect(FakeSocket.instances).toHaveLength(2);
   latest().open();
-  expect(latest().sent).toEqual([{ op: "sub", id: "s1", query: "notes", args: null }, { op: "mut", id: "m3", mutation: "later", args: null }]);
+  expect(latest().sent).toEqual([
+    { op: "sub", id: "s1", query: "notes", args: null }, message,
+    { op: "mut", id: "m3", mutation: "later", args: null, idempotencyKey: expect.any(String) },
+  ]);
+  latest().message({ op: "result", id: "m2", ok: true, value: "resumed" }); expect(await sent).toBe("resumed");
   latest().message({ op: "result", id: "m3", ok: true, value: "saved" }); expect(await unsent).toBe("saved");
   client.close(); expect(env.window.listenerCount()).toBe(0); expect(env.document.listenerCount()).toBe(0);
   env.window.emit("pageshow"); env.window.emit("online"); env.document.emit("visibilitychange");
   expect(FakeSocket.instances).toHaveLength(2);
+}));
+
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+test("mutation reconnect preserves its UUID key and message id without subscriptions", async () => setup(async env => {
+  const client = createClient({ url: "https://pebble.test", autoReload: false });
+  const mutation = client.mutate("save", { body: "once" });
+  latest().open();
+  const message = latest().sent[0];
+  expect(message).toEqual({ op: "mut", id: "m1", mutation: "save", args: { body: "once" }, idempotencyKey: expect.stringMatching(uuid) });
+  latest().close(); env.clock.advance(250);
+  expect(FakeSocket.instances).toHaveLength(2);
+  latest().open(); expect(latest().sent).toEqual([message]);
+  latest().message({ op: "result", id: message.id, ok: true, value: "saved" });
+  latest().message({ op: "result", id: message.id, ok: true, value: "duplicate" });
+  expect(await mutation).toBe("saved");
+  const next = client.mutate("save", { body: "once" });
+  expect(latest().sent.at(-1).idempotencyKey).not.toBe(message.idempotencyKey);
+  latest().message({ op: "result", id: "m2", ok: true, value: "new call" }); await next;
+  client.close();
+}));
+
+test("mutation rejects after three socket drops with the same idempotency key", async () => setup(async env => {
+  const client = createClient({ url: "https://pebble.test", autoReload: false });
+  let settled = false;
+  const mutation = client.mutate("save", null).catch(error => { settled = true; return error; });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    latest().open(); latest().close(); await tick();
+    expect(settled).toBe(attempt === 2);
+    if (attempt < 2) env.clock.advance(250);
+  }
+  expect(FakeSocket.instances.map(socket => socket.sent[0])).toEqual(Array(3).fill(FakeSocket.instances[0]!.sent[0]));
+  expect(await mutation).toMatchObject({ code: "CONNECTION_LOST", hint: "The client retried 3 times with the same idempotency key. Check the network; a new call uses a new key, so check whether the mutation committed before calling again." });
+  env.clock.advance(30_000); expect(FakeSocket.instances).toHaveLength(3);
+  client.close(); expect(env.clock.timers.size).toBe(0);
+}));
+
+test("mutation timeouts resend the same message and reject on the third failure", async () => setup(async env => {
+  const client = createClient({ url: "https://pebble.test", autoReload: false });
+  let settled = false;
+  const mutation = client.mutate("save", null).catch(error => { settled = true; return error; });
+  latest().open();
+  const message = latest().sent[0];
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    env.clock.advance(30_000); await tick();
+    expect(settled).toBe(attempt === 3);
+    expect(latest().sent).toEqual(Array(Math.min(attempt + 1, 3)).fill(message));
+  }
+  expect(await mutation).toMatchObject({ code: "MUTATION_TIMEOUT", message: "No mutation result arrived after 3 attempts.", hint: "The client retried with the same idempotency key. Check the server; a new call uses a new key, so check whether the mutation committed before calling again." });
+  client.close(); expect(env.clock.timers.size).toBe(0);
+}));
+
+test("socket drops and timeouts share one mutation failure counter", async () => setup(async env => {
+  const client = createClient({ url: "https://pebble.test", autoReload: false });
+  const mutation = client.mutate("save", null).catch(error => error);
+  latest().open(); latest().close(); env.clock.advance(250); latest().open();
+  env.clock.advance(30_000); expect(latest().sent).toHaveLength(2);
+  latest().close(); expect(await mutation).toMatchObject({ code: "CONNECTION_LOST" });
+  client.close();
+}));
+
+test("client close rejects both sent and unsent mutations immediately", async () => setup(async env => {
+  for (const sent of [false, true]) {
+    const client = createClient({ url: "https://pebble.test", autoReload: false });
+    const mutation = client.mutate("save", null).catch(error => error);
+    if (sent) latest().open();
+    const socket = latest();
+    client.close(); expect(await mutation).toMatchObject({ code: "CONNECTION_LOST" });
+    expect(socket.sent).toHaveLength(sent ? 1 : 0);
+    expect(env.clock.timers.size).toBe(0);
+    env.clock.advance(90_000); expect(latest()).toBe(socket);
+  }
+}));
+
+test("polling mutations receive a fresh UUID idempotency header per call", async () => setup(async () => {
+  const keys: (string | null)[] = [];
+  globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    keys.push(new Headers(init?.headers).get("Idempotency-Key"));
+    return Response.json({ ok: true, value: "saved" });
+  }) as unknown as typeof fetch;
+  const client = createClient({ url: "https://pebble.test", sync: false, autoReload: false });
+  await client.mutate("save", null); await client.mutate("save", null);
+  expect(keys).toEqual([expect.stringMatching(uuid), expect.stringMatching(uuid)]);
+  expect(keys[0]).not.toBe(keys[1]); client.close();
+}));
+
+test("a sent mutation falling back to HTTP preserves its WebSocket idempotency key", async () => setup(async env => {
+  let key: string | null = null;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    if (String(input).endsWith("/ws")) return new Response("proxy", { status: 502 });
+    key = new Headers(init?.headers).get("Idempotency-Key");
+    return Response.json({ ok: true, value: "saved" });
+  }) as unknown as typeof fetch;
+  const client = createClient({ url: "https://pebble.test", autoReload: false });
+  const mutation = client.mutate("save", null); latest().open();
+  const message = latest().sent[0];
+  latest().close(); env.clock.advance(250); latest().close();
+  expect(await mutation).toBe("saved"); expect(key).toBe(message.idempotencyKey);
+  client.close();
 }));
 
 test("HTTP functions, auth, storage and uploads observe headers, including failed responses", async () => setup(async env => {

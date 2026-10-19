@@ -20,6 +20,7 @@ export default definePebble({
 
 - [A complete pebble](AGENTS.md#a-complete-pebble): runnable example, setup and `link:` dependencies.
 - [Configuration and functions](AGENTS.md#configuration-and-functions): config, context and HTTP functions.
+- [Idempotency](AGENTS.md#idempotency): idempotency keys and safe mutation retries.
 - [Errors](AGENTS.md#errors): structured error data and HTTP status mapping.
 - [Schema and migrations](AGENTS.md#schema-and-migrations): database changes, rollback and detached work.
 - [Public HTTP routes](AGENTS.md#public-http-routes): anonymous HTTP handlers on protected pebbles.

@@ -5,6 +5,8 @@ const allowed = new Set([
   "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "APPDATA", "LOCALAPPDATA", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
   "SYSTEMDRIVE", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "COMMONPROGRAMFILES", "NUMBER_OF_PROCESSORS",
   "PROCESSOR_ARCHITECTURE", "OS", "PSMODULEPATH",
+  // Operator-wide runtime guards; pebble secrets cannot set BEDROCK_* names.
+  "BEDROCK_SLOW_SLOT_MS", "BEDROCK_STRICT_SLOTS",
 ]);
 
 export function childEnvironment(parent: Record<string, string | undefined>, secrets: Record<string, string>, devSource: boolean, bedrock: Record<string, string>) {

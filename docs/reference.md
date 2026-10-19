@@ -157,7 +157,7 @@ WebSocket error frames use one status rule, first match wins:
    `UNAUTHENTICATED` → 401; `FORBIDDEN`, `INVALID_IDENTITY` → 403;
    `FILE_TOO_LARGE` → 413; `LOGIN_LIMIT` → 429; `PEBBLE_STOPPED` → 503;
    `READ_ONLY`, `UNKNOWN_TABLE`, `UNKNOWN_BUCKET`, `DETACHED_CONTEXT`,
-   `TOKENS_DISABLED`, `OAUTH_NOT_CONFIGURED` → 500 (programming or server faults);
+   `NETWORK_IN_SLOT`, `TOKENS_DISABLED`, `OAUTH_NOT_CONFIGURED` → 500 (programming or server faults);
    storage rejections (`QUOTA_EXCEEDED`, `FILE_TYPE_REJECTED`, …) → 400.
 3. `NOT_FOUND` or `*_NOT_FOUND` → 404; `CONFLICT` or `*_CONFLICT` → 409;
    `RATE_LIMITED` → 429; `INVALID_*` → 400.
@@ -346,6 +346,39 @@ work. Unknown names throw `BedrockError("UNKNOWN_TABLE", message, hint)`.
 Without `sync`, the same queries/mutations are callable over plain HTTP:
 `POST /_bedrock/q/<name>` and `POST /_bedrock/m/<name>`.
 
+### Idempotency
+
+A mutation can commit while its response is lost. An idempotency key makes the
+retry safe: the first committed result is stored and replayed.
+
+- **Transport.** HTTP sends header `Idempotency-Key: <key>` on
+  `POST /_bedrock/m/<name>`; WebSocket sends
+  `{ op: "mut", id, mutation, args, idempotencyKey }`. A key is 1–255 visible
+  ASCII characters (0x21–0x7E); anything else, including an empty header, fails
+  with `INVALID_IDEMPOTENCY_KEY` (400). Queries ignore the header.
+- **Args key source.** `mutation({ args: schema, idempotencyKey: args => args.requestId, run })`
+  derives a key from the validated args. `null`/`undefined` means no key; any other
+  non-string or invalid result fails with `INVALID_IDEMPOTENCY_KEY`. A transport key wins
+  over the args key.
+- **Scope.** Keys are per mutation name and per caller: `token:<id>` for pebble-token
+  requests, else `user:<id>`, else `anon` (all anonymous callers share one scope).
+- **Replay.** Inside the mutation's `BEGIN IMMEDIATE` slot, an unexpired key with the same
+  args (sha256 of key-sorted JSON of the validated args) returns the stored value without
+  running the handler. The replay writes nothing, so nothing is invalidated and no
+  subscription re-runs. The same key with different args fails with
+  `IDEMPOTENCY_KEY_REUSED` (409).
+- **Storage.** After a successful run the result is stored in the internal table
+  `_bedrock_idempotency` before `COMMIT`, so result and key commit atomically. Failed
+  mutations store nothing; a retry runs the handler again.
+- **Window.** Keys expire after 24 h and never match afterwards. Expired rows are purged
+  lazily inside mutation slots, at most once per 10 minutes.
+- **Client.** Every `client.mutate()` call generates a `crypto.randomUUID()` key and keeps it
+  for all attempts. Over WS, a sent mutation whose socket closes (`CONNECTION_LOST`) or
+  that gets no result within 30 s (`MUTATION_TIMEOUT`) is resent with the same key after
+  reconnecting (or over the HTTP fallback), up to 3 attempts in total; then the last error
+  surfaces. HTTP mutations retry the same way, with a 250 ms × attempt pause, only when no
+  response arrived; an error response is never retried. A new `mutate()` call is a new key.
+
 ### Seamless
 
 Deploys, saves, and returning to a tab should be invisible. Nothing here adds UI;
@@ -399,8 +432,9 @@ any of their HTTP responses. On mismatch the client is stale:
 **Coming back is instant.** The browser client closes its socket on `pagehide`
 so the page can enter the back/forward cache, and reconnects on `pageshow`.
 `online`, and `visibilitychange` to visible, cancel any pending backoff and
-reconnect now with `attempt = 0`. Sent mutations pending at `pagehide` reject
-with the existing disconnected error.
+reconnect now with `attempt = 0`. Sent mutations pending at `pagehide` count one
+failed attempt and are resent with the same idempotency key after `pageshow`
+(see [Idempotency](#idempotency)).
 
 **Static caching (static `web` directories).**
 - `.html` responses: `Cache-Control: no-cache`.
@@ -884,6 +918,24 @@ Custom HTTP routes may set `definePebble({ maxRequestBodySize: bytes })` (positi
 
 Proxied pebble HTTP requests have no idle timeout, so slow handlers and long streams work; Cloudflare still applies its own ~100-second limit for time to the first response byte.
 
+Queries, mutations, transactional routes and jobs, storage requests and each
+detached `ctx.read`/`ctx.write` run as one slot of the pebble's serialized queue;
+a slot that awaits anything slow holds every other database request. Every slot
+is timed from when it starts (the previous slot has released) to when it ends.
+A slot longer than `BEDROCK_SLOW_SLOT_MS` (milliseconds, default 200, read when
+the runtime starts) logs one `console.warn` line naming its kind (`query`,
+`mutation`, `route`, `job`, `storage read`/`storage write`, `detached read`/`detached write`), its
+name (function name, `METHOD /path` route key, job name, or request path) and
+its duration. In `bedrock dev`, in tests that call `startPebble` directly, and
+in production when the daemon runs with `BEDROCK_STRICT_SLOTS=1`, calling
+`fetch()` inside a slot throws `NETWORK_IN_SLOT` (HTTP 500), so a mutation that
+fetches rolls back. Fetches outside slots, including detached handlers and
+services while another slot is open, are unaffected; production without the
+flag never replaces `fetch`. The daemon forwards both variables from its own
+environment to pebble processes. Fix either signal by moving the slow work into
+a detached route, a detached job or a service and keeping only the database part
+in `ctx.write`/`ctx.read`.
+
 Routes and jobs can opt out of the outer queue/transaction for slow network I/O:
 
 ```ts
@@ -904,7 +956,7 @@ jobs: { refresh: job("0 * * * *", async ctx => {
 `db`, `storage`, or `invalidate`; accessing those throws a repair-hinted
 `BedrockError`. `read(fn)` and `write(fn)` resolve the callback's value in short
 queued slots with the same FunctionContext and transaction/storage/tracking
-semantics as queries and mutations. Await every slot, keep network I/O outside callbacks, and do not
+semantics as queries and mutations. Await every slot, keep network I/O outside callbacks (see above), and do not
 retain a slot's context. A failed slot rolls back only itself; earlier committed
 slots survive later handler errors. Writes notify sync after each commit.
 Normal detached routes retain daemon and child access gating and signed user
