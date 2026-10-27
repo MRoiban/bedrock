@@ -232,6 +232,10 @@ test("dashboard redirects to Google, authorizes creators, and status reports rea
     const refusedHtml = await refused.text();
     expect(refusedHtml).toContain("outsider@example.com");
     expect(refusedHtml).toContain(`action="/sign-out"`);
+    const missing = await fetch(url + "/", { headers: { host: "nothing.example.com", accept: "text/html" } });
+    expect(missing.status).toBe(404);
+    expect(await missing.text()).toContain("<h1>Pebble not found</h1>");
+    expect(await (await fetch(url + "/", { headers: { host: "nothing.example.com" } })).text()).toStartWith("Pebble not found.");
     const signedOut = await fetch(url + "/sign-out", { method: "POST", headers: { ...headers, cookie, origin: "https://bedrock.example.com" }, redirect: "manual" });
     expect(signedOut.status).toBe(303);
     expect(signedOut.headers.get("location")).toBe("/");

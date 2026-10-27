@@ -696,7 +696,8 @@ $BEDROCK_HOME (default ~/.bedrock)
   `INVALID_PEBBLE_NAME`; names must start and end with a lowercase letter or digit.
 - The creator dashboard at `bedrock.<domain>/` uses Google session authorization;
   it redirects to sign-in and lists pebble links for creators only. A signed-in
-  non-creator gets a 403 page naming the account with a sign-out form (`POST /sign-out`). CLI status
+  non-creator gets a 403 page naming the account with a sign-out form (`POST /sign-out`);
+  so does CLI sign-in (`/cli-login`). CLI status
   includes domain, creator session presence and the current token's creator email
   (older/manual tokens have no recorded identity). It never returns session tokens.
 - One daemon process (`bedrock daemon`) listens on `127.0.0.1:<port>`.
@@ -711,6 +712,12 @@ $BEDROCK_HOME (default ~/.bedrock)
 - Reserved subdomains: `auth`, `bedrock` (daemon API/dashboard), `www`.
 - A deployed pebble that is not running (stopped, crashed, restarting) answers 503
   with `Retry-After: 5` and a `bedrock start <name>` hint; 404 means no such pebble.
+- Daemon-owned responses (auth, dashboard, CLI sign-in, sign-out, 404/503 and other
+  daemon errors) render as styled HTML pages that follow the system light/dark
+  setting when the request's `Accept` includes `text/html` and the path is not
+  under `/api/`. Every other request gets JSON `{ ok: false, error }` (404/503
+  stay plain text). Errors from pebble code are unaffected. The local CLI login
+  callback also answers with a styled page.
 - **Deploy**: `bedrock deploy` in a pebble directory. Local: copies to a new release. Remote: tars the directory and uploads to `https://bedrock.<domain>/api/deploy` with a creator deploy token (`bedrock login` stores it). Daemon then installs deps (`bun install --production`), migrates, swaps.
 - `bedrock service install|uninstall|status` manages a macOS **LaunchAgent**
   (`~/Library/LaunchAgents/dev.bedrock.daemon.plist`, RunAtLoad/KeepAlive) or Linux

@@ -1,7 +1,7 @@
 import type { DaemonConfig } from "../daemon/config";
 import type { DaemonDatabase } from "../daemon/db";
 import { BedrockError } from "../error";
-import { authPage, cookieToken, escapeHtml, requireOrigin } from "./http";
+import { authPage, cookieToken, escapeHtml, requireOrigin, wrongAccountPage } from "./http";
 import { enforceAccess } from "./policy";
 import { randomToken, type Sessions } from "./sessions";
 
@@ -14,7 +14,8 @@ export function createCliLogin(config: DaemonConfig, sessions: Sessions, db: Dae
       const returnTo = `${origin}${url.pathname}${url.search}`;
       return Response.redirect(`${dev ? `${origin}/_bedrock/dev-login` : `https://auth.${config.domain}/login`}?return=${encodeURIComponent(returnTo)}`, 302);
     }
-    enforceAccess("creators", session.user, config.creators);
+    try { enforceAccess("creators", session.user, config.creators); }
+    catch { return wrongAccountPage(session.user.email ?? "", "CLI sign-in", "/sign-out"); }
     if (request.method === "GET") {
       const port = Number(url.searchParams.get("port"));
       const state = url.searchParams.get("state") ?? "";

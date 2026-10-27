@@ -40,6 +40,7 @@ main{width:100%;max-width:400px;padding:26px 28px 28px;background:var(--card);bo
 .badge{margin-left:auto;padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:12px;font-weight:500;color:var(--muted)}
 h1{margin:0 0 8px;font-size:24px;line-height:1.2;font-weight:650;letter-spacing:-.022em;text-wrap:balance;overflow-wrap:anywhere}
 p{margin:0 0 22px;color:var(--muted);text-wrap:pretty}
+main>p:last-child{margin-bottom:0}
 strong{color:var(--ink);font-weight:600;overflow-wrap:anywhere}
 .host{font:13px/1.4 ${MONO};overflow-wrap:anywhere}
 form{margin:0}
@@ -57,7 +58,7 @@ button{display:flex;align-items:center;justify-content:center;gap:10px;width:100
 button:active{transform:translateY(1px);box-shadow:inset 0 -1px 0 rgba(0,0,0,.2)}
 button:focus-visible{outline:none;box-shadow:0 0 0 3px var(--focus)}
 .note{margin:18px 0 0;font-size:13px}
-code{padding:1px 5px;font:12.5px ${MONO};color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:5px}
+code{padding:1px 5px;white-space:nowrap;font:12.5px ${MONO};color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:5px}
 pre{margin:0;padding:12px 14px;font:13px/1.75 ${MONO};color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
 pre i{font-style:normal;color:var(--muted);user-select:none;-webkit-user-select:none}
 body.wide{justify-content:flex-start}
@@ -113,11 +114,20 @@ export function authPage(page: AuthPage) {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; frame-ancestors 'none'; base-uri 'none'`, "referrer-policy": "same-origin" },
   });
 }
+/** Browser navigations get a page; API and SDK calls keep machine-readable bodies. */
+export function wantsPage(request: Request) {
+  return (request.headers.get("accept") ?? "").includes("text/html") && !new URL(request.url).pathname.startsWith("/api/");
+}
+/** `hint` is trusted HTML: escape every interpolated value. */
+export function noticePage(status: number, heading: string, hint: string, code?: string) {
+  const note = code ? `<p class="note">Error code <code>${escapeHtml(code)}</code></p>` : "";
+  return authPage({ title: escapeHtml(heading), status, heading: escapeHtml(heading), body: `<p>${hint}</p>${note}` });
+}
 /** A signed-in but refused account needs a way out: without one it can never switch. */
 export function wrongAccountPage(email: string, place: string, signOutPath: string) {
   return authPage({
     title: "Wrong account", status: 403, heading: `This account can’t open ${escapeHtml(place)}`,
-    body: `<p>You’re signed in as <b>${escapeHtml(email)}</b>, which isn’t allowed here.</p><form method="post" action="${escapeHtml(signOutPath)}"><button class="primary">Sign out and switch account</button></form><p class="note">Signing out ends this session on every pebble of this server.</p>`,
+    body: `<p>You’re signed in as <strong>${escapeHtml(email)}</strong>, which isn’t allowed here.</p><form method="post" action="${escapeHtml(signOutPath)}"><button class="primary">Sign out and switch account</button></form><p class="note">Signing out ends this session on every pebble of this server.</p>`,
   });
 }
 export const escapeHtml = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);

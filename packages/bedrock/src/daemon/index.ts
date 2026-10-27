@@ -18,7 +18,7 @@ import { Releases } from "./releases";
 import { Supervisor } from "./supervisor";
 import { createSessions } from "../auth/sessions";
 import { createAuth, type AuthOptions } from "../auth/routes";
-import { cookieToken, requireOrigin, wrongAccountPage } from "../auth/http";
+import { cookieToken, escapeHtml, noticePage, requireOrigin, wantsPage, wrongAccountPage } from "../auth/http";
 import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
@@ -60,7 +60,10 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       } catch (error) { updating = false; throw error; }
     } };
     const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups, config, maintenance);
-    const notFound = () => new Response("Pebble not found. Deploy it with bedrock deploy, or check its hostname.", { status: 404 });
+    const notice = (request: Request, status: number, heading: string, hint: string) => wantsPage(request)
+      ? noticePage(status, heading, hint)
+      : new Response(`${heading}. ${hint.replace(/<\/?code>/g, "")}`, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
+    const notFound = (request: Request) => notice(request, 404, "Pebble not found", "Deploy it with <code>bedrock deploy</code>, or check its hostname.");
     server = Bun.serve<Relay>({
       hostname: "127.0.0.1", port: config.port, maxRequestBodySize: 1024 ** 4,
       websocket: relayWebSocket,
@@ -78,10 +81,15 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             return await api(request);
           }
           if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
-          if (!target || ["auth", "www"].includes(target)) return notFound();
+          if (!target || ["auth", "www"].includes(target)) return notFound(request);
           const child = supervisor.child(target);
           // A deployed but stopped pebble is a temporary condition, not a missing site.
-          if (!child) return db.get(target) ? new Response(`${target} is deployed but not running. Start it with bedrock start ${target}.`, { status: 503, headers: { "retry-after": "5" } }) : notFound();
+          if (!child) {
+            if (!db.get(target)) return notFound(request);
+            const stopped = notice(request, 503, `${target} isn’t running`, `It is deployed but not running. Start it with <code>bedrock start ${escapeHtml(target)}</code>.`);
+            stopped.headers.set("retry-after", "5");
+            return stopped;
+          }
           if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
           const websocket = request.headers.get("upgrade")?.toLowerCase() === "websocket";
           if (!websocket && matchesPublicRoute(child.publicRoutes, request.method, url.pathname)) {
@@ -132,9 +140,9 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           const response = await proxyHttp(request, child.port, child.releaseId, () => { child.requests--; }, identity);
           if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));
           return response;
-        } catch (error) { return daemonError(error); }
+        } catch (error) { return daemonError(error, request); }
       },
-      error: daemonError,
+      error: error => daemonError(error),
     });
     supervisor.apiUrl = `http://127.0.0.1:${server.port}`;
     if (options.devPebble) {

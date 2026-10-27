@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { authPage, validateReturn, cookieToken, requireOrigin, sessionCookie } from "./http";
+import { authPage, validateReturn, cookieToken, requireOrigin, sessionCookie, wantsPage } from "./http";
+import { BedrockError } from "../error";
 import { proxyHeaders } from "../daemon/proxy";
 import { enforceAccess } from "./policy";
 
@@ -36,4 +37,19 @@ test("all access modes enforce identity, creator emails and allow domains", () =
   expect(() => enforceAccess("creators", user, ["bob@company.test"])).toThrow();
   expect(() => enforceAccess({ allow: ["@other.test"] }, user)).toThrow();
   expect(() => enforceAccess({ allow: ["@company.test"] }, { ...user, email: "a@evilcompany.test" })).toThrow();
+});
+test("browser navigations get styled error pages; API and SDK calls keep JSON", async () => {
+  const { daemonError } = await import("../daemon/api");
+  const error = new BedrockError("FORBIDDEN", "Nope <here>.", "Try <again>.");
+  const page = daemonError(error, new Request("https://bedrock.example.test/sign-out", { headers: { accept: "text/html,*/*" } }));
+  expect(page.status).toBe(403);
+  expect(page.headers.get("content-type")).toContain("text/html");
+  const html = await page.text();
+  expect(html).toContain("Nope &lt;here&gt;.");
+  expect(html).toContain("Try &lt;again&gt;.");
+  expect(html).toContain("<code>FORBIDDEN</code>");
+  for (const request of [new Request("https://bedrock.example.test/api/status", { headers: { accept: "text/html" } }), new Request("https://notes.example.test/_bedrock/q/x"), undefined]) {
+    expect((await daemonError(error, request).json()).error.code).toBe("FORBIDDEN");
+  }
+  expect(wantsPage(new Request("https://notes.example.test/", { headers: { accept: "application/json" } }))).toBe(false);
 });

@@ -6,11 +6,12 @@ import { daemonFeatures } from "../features";
 import { tokenHash } from "./db";
 import { validateName } from "../config";
 import { BedrockError, asBedrockError } from "../error";
+import { escapeHtml, noticePage, wantsPage } from "../auth/http";
 import type { DaemonDatabase } from "./db";
 import type { Releases } from "./releases";
 import type { Supervisor } from "./supervisor";
 
-export function daemonError(error: unknown) {
+export function daemonError(error: unknown, request?: Request) {
   const typed = asBedrockError(error, "DAEMON_FAILED", "Check the daemon and pebble logs, then retry.");
   const status = ["UNAUTHORIZED", "UNAUTHENTICATED"].includes(typed.code) ? 401
     : ["FORBIDDEN", "INVALID_IDENTITY", "TOKEN_OWNER_REQUIRED"].includes(typed.code) ? 403
@@ -18,6 +19,7 @@ export function daemonError(error: unknown) {
     : ["PEBBLE_BUSY", "PEBBLE_STOPPED", "TOKENS_DISABLED"].includes(typed.code) ? 409
     : ["INVALID_ARGS", "INVALID_TOKEN_PERMISSION", "INVALID_RETURN_URL", "INVALID_OAUTH_STATE", "OAUTH_FAILED", "INVALID_PEBBLE_NAME", "CONFIRM_REQUIRED", "INVALID_ARCHIVE", "UNSAFE_ARCHIVE"].includes(typed.code) ? 400
     : typed.code === "UPSTREAM_UNAVAILABLE" ? 502 : 500;
+  if (request && wantsPage(request)) return noticePage(status, typed.message, escapeHtml(typed.hint), typed.code);
   return Response.json({ ok: false, error: typed.toJSON() }, { status });
 }
 export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Supervisor, tunnelStatus = () => ({ running: false, pid: null as number | null }), backups?: ReturnType<typeof import("../backup").createBackups>, config?: import("./config").DaemonConfig, maintenance?: { info: BuildInfo; update: () => Promise<unknown> }) {

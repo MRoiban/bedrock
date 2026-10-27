@@ -16,7 +16,10 @@ test("CLI callback checks state, token, method and consumes success only once", 
   expect(callback(new Request(`http://127.0.0.1/callback?state=wrong&token=${token}`)).status).toBe(400);
   expect(saved).toBe("");
   expect(callback(new Request("http://127.0.0.1/callback?state=state&token=bad")).status).toBe(400);
-  expect(callback(new Request(`http://127.0.0.1/callback?state=state&token=${token}`)).status).toBe(200);
+  const done = callback(new Request(`http://127.0.0.1/callback?state=state&token=${token}`));
+  expect(done.status).toBe(200);
+  expect(done.headers.get("content-type")).toContain("text/html");
+  expect(done.headers.get("referrer-policy")).toBe("no-referrer");
   expect(saved).toBe(token);
   expect(callback(new Request(`http://127.0.0.1/callback?state=state&token=${token}`)).status).toBe(400);
 });

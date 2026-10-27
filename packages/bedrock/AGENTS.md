@@ -261,7 +261,8 @@ Session/browser writes and WebSocket upgrades require the exact pebble Origin. B
 clients supply cookies/Origin automatically. Non-browser calls without a pebble bearer must
 provide Origin; use the SDK for normal requests. A signed-in account refused by a
 pebble's access gets a 403 page with a "Sign out and switch account" button; you
-need not build one. Logout closes the session's
+need not build one. Daemon errors, 404 and stopped-pebble 503 responses are
+styled HTML for browser navigations and JSON/text otherwise; your own route errors are unchanged. Logout closes the session's
 sockets; expiry/revocation is checked periodically. WebSocket traffic alone does
 not slide the 30-day session expiry.
 

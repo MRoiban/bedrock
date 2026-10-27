@@ -4,6 +4,7 @@ import { homedir, hostname } from "node:os";
 import { atomicWrite } from "../daemon/config";
 import { BedrockError } from "../error";
 import { randomToken } from "../auth/sessions";
+import { noticePage } from "../auth/http";
 
 export interface Credentials { url: string; token: string }
 export const credentialsPath = () => join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "bedrock/credentials.json");
@@ -46,7 +47,9 @@ export function loginCallback(state: string, complete: (token: string) => void) 
     if (!/^br_[a-f0-9]{64}$/.test(token)) return new Response("Invalid deploy token.", { status: 400 });
     consumed = true;
     complete(token);
-    return new Response("CLI authorized. You can close this tab.", { headers: { "cache-control": "no-store", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'", "content-type": "text/plain" } });
+    const page = noticePage(200, "CLI authorized", "You can close this tab and return to your terminal.");
+    page.headers.set("referrer-policy", "no-referrer");
+    return page;
   };
 }
 export function loginUrl(value: string) {
