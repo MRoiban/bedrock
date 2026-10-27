@@ -202,6 +202,8 @@ authorization is **per pebble**.
   - `{ allow: ["a@x.com", "@company.com"] }` — emails or whole domains.
   - `"creators"` — only the bedrock creators list (from daemon config).
 - Unauthenticated page requests to a protected pebble redirect to `auth.<domain>/login?return=...`; API/WS requests get 401.
+- A signed-in account refused by the pebble's access policy gets, for HTML page requests, a 403 page naming the account with a "Sign out and switch account" form that posts to `/_bedrock/sign-out` (same Origin rule as `/_bedrock/logout`; it revokes the session and redirects 303 to `/`). Other requests get 403 `FORBIDDEN`.
+- Google sign-in always asks Google for its account picker (`prompt=select_account`) so a browser signed in to Google can choose a different account.
 - A localhost daemon may use dev email authentication while accepting deployments.
   Deployed releases retain data under the daemon home across redeploy/restart;
   only an explicitly attached dev source uses its source-local `.bedrock` directory.
@@ -693,7 +695,8 @@ $BEDROCK_HOME (default ~/.bedrock)
   fail with `INVALID_ARGS` and a usage hint. Invalid pebble names fail with
   `INVALID_PEBBLE_NAME`; names must start and end with a lowercase letter or digit.
 - The creator dashboard at `bedrock.<domain>/` uses Google session authorization;
-  it redirects to sign-in and lists pebble links for creators only. CLI status
+  it redirects to sign-in and lists pebble links for creators only. A signed-in
+  non-creator gets a 403 page naming the account with a sign-out form (`POST /sign-out`). CLI status
   includes domain, creator session presence and the current token's creator email
   (older/manual tokens have no recorded identity). It never returns session tokens.
 - One daemon process (`bedrock daemon`) listens on `127.0.0.1:<port>`.

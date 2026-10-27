@@ -259,7 +259,9 @@ checks; they are trusted server code. Bucket access still applies in jobs.
 
 Session/browser writes and WebSocket upgrades require the exact pebble Origin. Browser
 clients supply cookies/Origin automatically. Non-browser calls without a pebble bearer must
-provide Origin; use the SDK for normal requests. Logout closes the session's
+provide Origin; use the SDK for normal requests. A signed-in account refused by a
+pebble's access gets a 403 page with a "Sign out and switch account" button; you
+need not build one. Logout closes the session's
 sockets; expiry/revocation is checked periodically. WebSocket traffic alone does
 not slide the 30-day session expiry.
 

@@ -40,6 +40,7 @@ test("Google OAuth uses PKCE, bound state and mocked token exchange without netw
     expect(google.hostname).toBe("accounts.google.com");
     expect(google.searchParams.get("scope")?.split(" ")).toEqual(["openid", "email", "profile"]);
     expect(google.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(google.searchParams.get("prompt")).toBe("select_account");
     expect(google.searchParams.get("code_challenge")!.length).toBeGreaterThan(30);
     const callback = `${origin}/callback?state=${google.searchParams.get("state")}&code=valid-code`;
     await expect(h.auth.handle(new Request(callback), origin)).rejects.toMatchObject({ code: "INVALID_OAUTH_STATE" });

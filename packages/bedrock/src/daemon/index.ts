@@ -18,7 +18,7 @@ import { Releases } from "./releases";
 import { Supervisor } from "./supervisor";
 import { createSessions } from "../auth/sessions";
 import { createAuth, type AuthOptions } from "../auth/routes";
-import { cookieToken, requireOrigin } from "../auth/http";
+import { cookieToken, requireOrigin, wrongAccountPage } from "../auth/http";
 import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
@@ -97,6 +97,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           const token = cookieToken(request);
           const session = sessions.resolve(token, !websocket);
           if (url.pathname === "/_bedrock/logout" && request.method === "POST") return auth.logout(request, origin);
+          if (url.pathname === "/_bedrock/sign-out" && request.method === "POST") return signOut(auth.logout(request, origin));
           if (url.pathname === "/_bedrock/me" && request.method === "GET") {
             const response = Response.json({ user: session?.user ?? null }, { headers: { "cache-control": "no-store" } });
             if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));
@@ -113,7 +114,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
               const login = dev ? `${origin}/_bedrock/dev-login` : `https://auth.${config.domain}/login`;
               return Response.redirect(`${login}?return=${encodeURIComponent(returnTo)}`, 302);
             }
-            if (page) return new Response("This account cannot access this pebble. Sign in with a permitted account.", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
+            if (page && session) return wrongAccountPage(session.user.email ?? "", target, "/_bedrock/sign-out");
             throw error;
           }
           if (hasSessionCookie) request.headers.delete("authorization");

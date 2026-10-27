@@ -102,13 +102,22 @@ export interface AuthPage {
   wide?: boolean;
   /** Extra CSP sources for redirects after form submission. */
   formAction?: string[];
+  status?: number;
 }
 export function authPage(page: AuthPage) {
   const badge = page.badge ? `<span class="badge">${page.badge}</span>` : "";
   const actions = page.actions ? `<span class="actions">${page.actions}</span>` : "";
   const formAction = ["'self'", ...(page.formAction ?? [])].join(" ");
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark"><meta name="theme-color" content="#f3f1eb" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#101211" media="(prefers-color-scheme: dark)"><title>${page.title} · Bedrock</title><style>${STYLE}</style></head><body${page.wide ? ' class="wide"' : ""}><main><div class="brand">${MARK}<span>bedrock</span>${badge}${actions}</div><h1>${page.heading}</h1>${page.body}</main></body></html>`, {
+    status: page.status ?? 200,
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; frame-ancestors 'none'; base-uri 'none'`, "referrer-policy": "same-origin" },
+  });
+}
+/** A signed-in but refused account needs a way out: without one it can never switch. */
+export function wrongAccountPage(email: string, place: string, signOutPath: string) {
+  return authPage({
+    title: "Wrong account", status: 403, heading: `This account can’t open ${escapeHtml(place)}`,
+    body: `<p>You’re signed in as <b>${escapeHtml(email)}</b>, which isn’t allowed here.</p><form method="post" action="${escapeHtml(signOutPath)}"><button class="primary">Sign out and switch account</button></form><p class="note">Signing out ends this session on every pebble of this server.</p>`,
   });
 }
 export const escapeHtml = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);

@@ -1,7 +1,7 @@
 import type { DaemonConfig } from "./config";
 import type { DaemonDatabase, PebbleRecord } from "./db";
 import type { Sessions } from "../auth/sessions";
-import { authPage, cookieToken, escapeHtml } from "../auth/http";
+import { authPage, cookieToken, escapeHtml, wrongAccountPage } from "../auth/http";
 import { enforceAccess } from "../auth/policy";
 
 // Problems first: the dashboard is opened to check whether anything needs you.
@@ -35,7 +35,8 @@ export function dashboard(request: Request, origin: string, config: DaemonConfig
     });
     return Response.redirect(`${dev ? `${origin}/_bedrock/dev-login` : `https://auth.${config.domain}/login`}?return=${encodeURIComponent(origin + "/")}`, 302);
   }
-  enforceAccess("creators", session.user, config.creators);
+  try { enforceAccess("creators", session.user, config.creators); }
+  catch { return wrongAccountPage(session.user.email ?? "", "the dashboard", "/sign-out"); }
   const records = db.list().sort((a, b) => (ORDER[a.status] ?? 1) - (ORDER[b.status] ?? 1) || a.name.localeCompare(b.name));
   const port = new URL(origin).port;
   const tiles = records.map(record => tile(record, dev ? `http://${record.name}.localhost:${port}` : `https://${record.name}.${config.domain}`)).join("");

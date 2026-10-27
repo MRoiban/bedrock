@@ -90,7 +90,10 @@ export function createAuth(config: DaemonConfig, dev: boolean, sessions: Session
       // __Host- prevents sibling pebbles from planting a parent-domain state cookie.
       const binding = randomToken();
       pending.set(state, { verifier, binding, returnTo, expiresAt: Date.now() + 10 * 60_000 });
-      return new Response(null, { status: 302, headers: { location: oauth.createAuthorizationURL(state, verifier, ["openid", "email", "profile"]).toString(), "set-cookie": `__Host-bedrock_oauth=${binding}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`, "cache-control": "no-store" } });
+      const google = oauth.createAuthorizationURL(state, verifier, ["openid", "email", "profile"]);
+      // Otherwise Google silently reuses its current account, so switching accounts is impossible.
+      google.searchParams.set("prompt", "select_account");
+      return new Response(null, { status: 302, headers: { location: google.toString(), "set-cookie": `__Host-bedrock_oauth=${binding}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`, "cache-control": "no-store" } });
     }
     if (url.pathname === "/callback" && request.method === "GET") {
       const state = url.searchParams.get("state") ?? "";

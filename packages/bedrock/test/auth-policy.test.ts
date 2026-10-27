@@ -48,7 +48,12 @@ routes: { "GET /page": () => new Response("permitted"), "GET /detached": detache
     }
     expect((await request("members.example.test", "/page", { headers: { cookie: guest } })).status).toBe(200);
     expect((await request("makers.example.test", "/page", { headers: { cookie: creator } })).status).toBe(200);
-    expect((await request("makers.example.test", "/page", { headers: { cookie: member, accept: "text/html" } })).status).toBe(403);
+    const refused = await request("makers.example.test", "/page", { headers: { cookie: member, accept: "text/html" } });
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("content-type")).toContain("text/html");
+    const refusedHtml = await refused.text();
+    expect(refusedHtml).toContain("member@company.test");
+    expect(refusedHtml).toContain(`action="/_bedrock/sign-out"`);
     expect((await request("team.example.test", "/page", { headers: { cookie: member } })).status).toBe(200);
     expect((await request("team.example.test", "/page", { headers: { cookie: guest } })).status).toBe(200);
     expect((await request("team.example.test", "/page", { headers: { cookie: creator } })).status).toBe(403);
@@ -62,6 +67,12 @@ routes: { "GET /page": () => new Response("permitted"), "GET /detached": detache
     ] as const) {
       expect((await request(`${name}.example.test`, "/detached", { headers: { cookie } })).status).toBe(status);
     }
+    const switched = await request("makers.example.test", "/_bedrock/sign-out", { method: "POST", headers: { cookie: member } });
+    expect(switched.status).toBe(303);
+    expect(switched.headers.get("location")).toBe("/");
+    expect(switched.headers.get("set-cookie")).toContain("bedrock_session=;");
+    expect((await request("makers.example.test", "/page", { headers: { cookie: member } })).status).toBe(401);
+    expect((await request("makers.example.test", "/_bedrock/sign-out", { method: "POST", headers: { cookie: guest, origin: "https://evil.test" } })).status).toBe(403);
     const identity = await (await request("makers.example.test", "/_bedrock/q/who", { method: "POST", body: "null", headers: { cookie: `${creator}; theme=dark`, "x-bedrock-user": "spoof" } })).json();
     expect(identity.value.user.email).toBe("creator@example.test");
     expect(identity.value.cookie).toBe("theme=dark");
