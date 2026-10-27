@@ -9,8 +9,43 @@ import type { Cloudflare } from "./client";
 import { run, type RunOptions } from "../cli/terminal";
 
 export interface LocalOptions { binary?: () => string; run?: (args: string[], options?: RunOptions) => Promise<string>; host?: string; interactive?: boolean; api?: Cloudflare }
-export function localConfig(domain: string, port: number, id: string, credentials: string) {
-  return `tunnel: ${JSON.stringify(id)}\ncredentials-file: ${JSON.stringify(credentials)}\ningress:\n  - hostname: ${JSON.stringify(`*.${domain}`)}\n    service: http://127.0.0.1:${port}\n  - service: http_status:404\n`;
+export interface IngressRule { hostname?: string; service: string }
+// Extra hostname rules come first: cloudflared uses the first match, so they must precede the wildcard.
+export function localConfig(domain: string, port: number, id: string, credentials: string, extra: IngressRule[] = []) {
+  // Quoted so a preserved service keeps characters YAML would otherwise read as a comment.
+  const rules = extra.map(rule => `  - hostname: ${JSON.stringify(rule.hostname)}\n    service: ${JSON.stringify(rule.service)}\n`).join("");
+  return `tunnel: ${JSON.stringify(id)}\ncredentials-file: ${JSON.stringify(credentials)}\ningress:\n${rules}  - hostname: ${JSON.stringify(`*.${domain}`)}\n    service: http://127.0.0.1:${port}\n  - service: http_status:404\n`;
+}
+// Reads only the shape localConfig writes; anything else is reported as unrecognized rather than guessed at.
+export function parseLocalConfig(yaml: string) {
+  const parsed: { tunnel?: string; credentialsFile?: string; rules: IngressRule[]; unrecognized: string[] } = { rules: [], unrecognized: [] };
+  // Only JSON-quoted or plain scalars round-trip; other YAML quoting is left for a human.
+  const scalar = (raw: string) => {
+    if (!raw.startsWith('"')) return /^[^\s'"#]+$/.test(raw) ? raw : undefined;
+    try { const decoded = JSON.parse(raw); return typeof decoded === "string" ? decoded : undefined; } catch { return undefined; }
+  };
+  const value = (raw: string) => scalar(raw)!;
+  for (const line of yaml.split("\n")) {
+    let match: RegExpExecArray | null;
+    if (!line.trim() || line.trim().startsWith("#") || line === "ingress:") continue;
+    const raw = /: (.+)$/.exec(line)?.[1];
+    if (raw !== undefined && scalar(raw) === undefined) { parsed.unrecognized.push(line); continue; }
+    if ((match = /^tunnel: (.+)$/.exec(line))) parsed.tunnel = value(match[1]!);
+    else if ((match = /^credentials-file: (.+)$/.exec(line))) parsed.credentialsFile = value(match[1]!);
+    else if ((match = /^  - hostname: (.+)$/.exec(line))) parsed.rules.push({ hostname: value(match[1]!), service: "" });
+    else if ((match = /^    service: (.+)$/.exec(line)) && parsed.rules.at(-1)?.service === "") parsed.rules.at(-1)!.service = value(match[1]!);
+    else if ((match = /^  - service: (.+)$/.exec(line))) parsed.rules.push({ service: value(match[1]!) });
+    else parsed.unrecognized.push(line);
+  }
+  return parsed;
+}
+// Setup may rewrite the wildcard's port, but anything beyond extra hostname rules, one wildcard and the final 404 catch-all is a hand edit it must not drop.
+export function unmanagedEdits(parsed: ReturnType<typeof parseLocalConfig>, domain: string) {
+  const problems = [...parsed.unrecognized];
+  if (parsed.rules.filter(rule => rule.hostname === `*.${domain}`).length > 1) problems.push(`more than one *.${domain} rule`);
+  const catchAlls = parsed.rules.filter(rule => !rule.hostname);
+  if (parsed.rules.length && (catchAlls.length !== 1 || parsed.rules.at(-1) !== catchAlls[0] || catchAlls[0]!.service !== "http_status:404")) problems.push("a catch-all other than one final http_status:404");
+  return problems;
 }
 // config.json keeps these relative to home so it can move; cloudflared needs absolute paths.
 export const localTunnelFiles = (home: string, tunnel: Pick<LocalTunnel, "credentialsFile" | "configFile">) =>
@@ -49,7 +84,12 @@ export async function localTunnelSetup(home: string, options: LocalOptions = {})
   const id = matches[0]?.id ?? credentials?.TunnelID;
   if (!id || credentials?.TunnelID !== id) throw new BedrockError("TUNNEL_CREDENTIALS_MISSING", "Local tunnel credentials are missing or do not match.", "Restore cloudflared/credentials.json from this server, or delete the unused tunnel and repeat setup.");
   await privateFile(credentialsFile);
-  await atomicWrite(configFile, localConfig(config.domain, config.port, id, credentialsFile));
+  // Hand-added hostname rules (e.g. a pebble's own game port) survive a rerun; other edits cannot be kept safely.
+  const existing = parseLocalConfig(await Bun.file(configFile).text().catch(() => ""));
+  const edits = unmanagedEdits(existing, config.domain);
+  if (edits.length) throw new BedrockError("TUNNEL_CONFIG_CUSTOM", `${configFile} has settings Bedrock cannot preserve: ${edits.join(" | ")}`, "Move config.yml aside, rerun bedrock setup cloudflare, then re-add your settings by hand.");
+  const extra = existing.rules.filter(rule => rule.hostname && rule.hostname !== `*.${config.domain}`);
+  await atomicWrite(configFile, localConfig(config.domain, config.port, id, credentialsFile, extra));
   config.cloudflare = { mode: "local", tunnelId: id, name, ...stored };
   await atomicWrite(join(home, "config.json"), JSON.stringify(config, null, 2) + "\n");
   try {

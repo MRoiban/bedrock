@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { openDatabase } from "../db";
@@ -45,14 +45,15 @@ test("live VACUUM snapshot, gzip, content dedup, metadata and verified restore r
   } finally { f.database.close(); f.temp.cleanup(); }
 });
 
-test("retention keeps hourly and daily representatives then collects unreferenced blobs", async () => {
+test("retention keeps the newest n snapshots then collects unreferenced blobs", async () => {
   const f = await fixture();
   try {
     await snapshot(f.target, "notes", join(f.data, "db.sqlite"), join(f.data, "files"), new Date("2026-10-01T01:00:00Z"));
     f.database.sqlite.exec("DELETE FROM _bedrock_files");
     for (const timestamp of ["2026-10-02T01:00:00Z", "2026-10-02T01:30:00Z", "2026-10-03T01:00:00Z", "2026-10-03T02:00:00Z"]) await snapshot(f.target, "notes", join(f.data, "db.sqlite"), join(f.data, "files"), new Date(timestamp));
-    await prune(f.target, "notes", 1, 2);
-    expect((await manifests(f.target, "notes")).map(entry => entry.manifest.timestamp)).toEqual(["2026-10-02T01:30:00.000Z", "2026-10-03T02:00:00.000Z"]);
+    expect((await readdir(f.data)).filter(name => name.startsWith(".bedrock-backup-"))).toEqual([]);
+    await prune(f.target, "notes", 2);
+    expect((await manifests(f.target, "notes")).map(entry => entry.manifest.timestamp).sort()).toEqual(["2026-10-03T01:00:00.000Z", "2026-10-03T02:00:00.000Z"]);
     expect(await f.target.list("pebbles/notes/files/")).toEqual([]);
     expect(await f.target.list("pebbles/notes/db/")).toHaveLength(2);
   } finally { f.database.close(); f.temp.cleanup(); }
@@ -77,6 +78,8 @@ test("backup setup keeps credentials in a separate private file and validates re
     await backupSetup(temp.dir, { type: "r2", account: "a".repeat(32), bucket: "backup-bucket" }, { accessKeyId: "id", secretAccessKey: "secret" });
     if (process.platform !== "win32") expect((await stat(join(temp.dir, "backup-credentials"))).mode & 0o777).toBe(0o600);
     expect(await Bun.file(join(temp.dir, "config.json")).text()).not.toContain("secret");
-    await expect(backupSetup(temp.dir, { type: "fs", directory: temp.dir, hourly: 0, daily: 0 })).rejects.toMatchObject({ code: "INVALID_BACKUP_CONFIG" });
+    await expect(backupSetup(temp.dir, { type: "fs", directory: temp.dir, keep: 0 })).rejects.toMatchObject({ code: "INVALID_BACKUP_CONFIG" });
+    await expect(backupSetup(temp.dir, { type: "fs", directory: temp.dir, keep: 1.5 })).rejects.toMatchObject({ code: "INVALID_BACKUP_CONFIG" });
+    expect((await backupSetup(temp.dir, { type: "fs", directory: temp.dir, keep: 3 })).target).toMatchObject({ keep: 3 });
   } finally { temp.cleanup(); }
 });

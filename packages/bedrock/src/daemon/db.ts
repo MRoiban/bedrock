@@ -40,7 +40,8 @@ export async function openDaemonDatabase(home: string, migrations = join(import.
   await mkdir(home, { recursive: true, mode: 0o700 });
   const db = new Database(join(home, "bedrock.sqlite"), { create: true, strict: true });
   try {
-    db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+    // NORMAL skips the per-commit fsync: WAL still survives process crashes, and power loss can drop only the latest commits.
+    db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     await applyMigrations(db, migrations);
     relativizeReleases(db);
     return {

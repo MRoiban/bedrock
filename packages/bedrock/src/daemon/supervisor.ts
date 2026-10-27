@@ -147,7 +147,11 @@ export class Supervisor {
       if (!Array.isArray(publicRoutes) || publicRoutes.some((key: unknown) => typeof key !== "string")) throw new BedrockError("HEALTH_FAILED", "Invalid public route list.", "Return registered public route keys in the health check.");
       publicRoutes.forEach(validatePublicRouteKey);
       child.publicRoutes = publicRoutes;
-      if (!devSource) await Bun.write(join(release, ".bedrock-public-routes.json"), JSON.stringify(publicRoutes));
+      if (!devSource) {
+        await Bun.write(join(release, ".bedrock-public-routes.json"), JSON.stringify(publicRoutes));
+        // Backups read this instead of importing pebble code into the daemon.
+        await Bun.write(join(release, ".bedrock-backup.json"), JSON.stringify(info.backup ?? null));
+      }
       child.access = access;
       return child;
     } catch (error) {

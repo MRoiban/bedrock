@@ -24,7 +24,8 @@ export function openDatabase(dataDir: string, schema: Record<string, unknown> = 
   try {
     mkdirSync(resolve(dataDir), { recursive: true });
     sqlite = new Database(join(dataDir, "db.sqlite"), { create: true, strict: true });
-    sqlite.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+    // NORMAL skips the per-commit fsync: WAL still survives process crashes, and power loss can drop only the latest commits.
+    sqlite.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     sqlite.exec(storageMigration);
     sqlite.exec(idempotencyMigration);
     if (tokens) migrateTokens(sqlite);

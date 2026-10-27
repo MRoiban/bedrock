@@ -36,7 +36,10 @@ test("pebble data, logs and backups follow dataDir; data move relocates them bet
   try {
     const archive = join(temp.dir, "release.tar.gz");
     await createArchive(dir, archive);
-    expect((await (await api("/api/deploy?name=sample", { method: "POST", body: Bun.file(archive) })).json()).ok).toBe(true);
+    const deployed = await (await api("/api/deploy?name=sample", { method: "POST", body: Bun.file(archive) })).json();
+    expect(deployed.ok).toBe(true);
+    // Backups read the directories the child reported, without importing pebble code into the daemon.
+    expect(await Bun.file(join(deployed.value.release, ".bedrock-backup.json")).json()).toEqual({ directories: ["workspaces"] });
     expect(await (await pebble("/data")).text()).toBe(join(disk, "pebbles", "sample", "data"));
     expect((await pebble("/note", { method: "POST", body: "kept" })).status).toBe(200);
     expect(await Bun.file(join(disk, "pebbles", "sample", "data", "db.sqlite")).exists()).toBe(true);

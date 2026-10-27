@@ -20,6 +20,21 @@ test("secret updates validate before writing, redact metadata, and never expose 
   } finally { temp.cleanup(); }
 });
 
+test("log lines are timestamped whole lines and short secrets are not redacted", async () => {
+  const temp = tempDirectory();
+  try {
+    const logs = new PebbleLogs(temp.dir, "sample"); logs.protect(["300", "long-secret-value"]);
+    const chunks = ["one\ntw", "o long-secret-value\npartial", " 300 end"];
+    await logs.pump(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } }));
+    const lines = (await Bun.file(logs.path).text()).split("\n");
+    expect(lines.map(line => line.replace(/^\S+Z /, ""))).toEqual(["one", "two [REDACTED]", "partial 300 end"]);
+    expect(lines.every(line => /^\d{4}-\d\d-\d\dT[\d:.]+Z /.test(line))).toBe(true);
+    const raw = new PebbleLogs(temp.dir, "", 1024, join(temp.dir, "raw"), "raw.log", false);
+    raw.write(new TextEncoder().encode("as is\n"));
+    expect(await Bun.file(raw.path).text()).toBe("as is\n");
+  } finally { temp.cleanup(); }
+});
+
 test("secret redaction spans UTF-8 and pipe boundaries, including JSON escaping", async () => {
   const temp = tempDirectory();
   try {
@@ -27,7 +42,7 @@ test("secret redaction spans UTF-8 and pipe boundaries, including JSON escaping"
     const encoded = new TextEncoder().encode(`before ${secret} after ${JSON.stringify(secret)}\n`);
     await logs.pump(new ReadableStream({ start(controller) { for (const byte of encoded) controller.enqueue(new Uint8Array([byte])); controller.close(); } }));
     const stored = await Bun.file(logs.path).text();
-    expect(stored).toBe('before [REDACTED] after "[REDACTED]"\n');
+    expect(stored).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z before \[REDACTED\] after "\[REDACTED\]"\n$/);
     expect(await (await logs.response(false, new AbortController().signal)).text()).toBe(stored);
   } finally { temp.cleanup(); }
 });

@@ -16,7 +16,7 @@ export class TunnelSupervisor {
   private readers = new Set<Promise<unknown>>();
   private logs: PebbleLogs;
   constructor(home: string, private token: string, private binary: () => string | string[] = cloudflaredBinary, private configFile?: string) {
-    this.logs = new PebbleLogs(home, "", 10 * 1024 * 1024, join(home, "logs"), "cloudflared.log");
+    this.logs = new PebbleLogs(home, "", 10 * 1024 * 1024, join(home, "logs"), "cloudflared.log", false);
   }
   status() { return { running: this.child?.exitCode === null, pid: this.child?.exitCode === null ? this.child.pid : null }; }
   start() {

@@ -1,11 +1,15 @@
 import { appendFileSync, mkdirSync, renameSync, statSync, existsSync, rmSync, openSync, readSync, closeSync, fstatSync } from "node:fs";
 import { join } from "node:path";
 
+const MIN_SECRET_LENGTH = 8;
+const MAX_PENDING_LINE = 64 * 1024;
+
 export class PebbleLogs {
   readonly path: string;
   private secrets = new Set<string>();
+  // Short values such as "300" or "true" would mangle ordinary log text, so they are not redacted.
   protect(values: string[]) {
-    for (const value of values) if (value) { this.secrets.add(value); this.secrets.add(JSON.stringify(value).slice(1, -1)); }
+    for (const value of values) if (value.length >= MIN_SECRET_LENGTH) { this.secrets.add(value); this.secrets.add(JSON.stringify(value).slice(1, -1)); }
   }
   redact(value: string) {
     for (const secret of [...this.secrets].sort((a, b) => b.length - a.length)) value = value.replaceAll(secret, "[REDACTED]");
@@ -13,13 +17,28 @@ export class PebbleLogs {
   }
   private listeners = new Set<(chunk: Uint8Array) => void>();
   private followers = new Set<() => void>();
-  constructor(home: string, name: string, private limit = 10 * 1024 * 1024, directory?: string, filename = "pebble.log") {
+  private lineStart = true;
+  // cloudflared stamps its own lines and is pumped in arbitrary chunks, so it opts out.
+  constructor(home: string, name: string, private limit = 10 * 1024 * 1024, directory?: string, filename = "pebble.log", private timestamps = true) {
     const dir = directory ?? join(home, "pebbles", name, "logs");
     mkdirSync(dir, { recursive: true });
     this.path = join(dir, filename);
   }
+  private stamp(text: string) {
+    const time = `${new Date().toISOString()} `;
+    let stamped = "";
+    for (const line of text.split(/(?<=\n)/)) {
+      if (!line) continue;
+      stamped += (this.lineStart ? time : "") + line;
+      this.lineStart = line.endsWith("\n");
+    }
+    return stamped;
+  }
   write(chunk: Uint8Array) {
-    if (this.secrets.size) chunk = new TextEncoder().encode(this.redact(new TextDecoder().decode(chunk)));
+    if (this.secrets.size || this.timestamps) {
+      const text = this.redact(new TextDecoder().decode(chunk));
+      chunk = new TextEncoder().encode(this.timestamps ? this.stamp(text) : text);
+    }
     // Split oversized chunks so a noisy child cannot bypass rotation.
     for (let offset = 0; offset < chunk.length; offset += this.limit) {
       const part = chunk.subarray(offset, offset + this.limit);
@@ -38,10 +57,10 @@ export class PebbleLogs {
     const decoder = new TextDecoder();
     let pending = "";
     for await (const chunk of stream) {
-      if (!this.secrets.size) { this.write(chunk); continue; }
       pending += decoder.decode(chunk, { stream: true });
       pending = this.redact(pending);
-      let boundary = pending.length;
+      // Whole lines keep timestamps at line starts and stop stdout and stderr interleaving mid-line.
+      let boundary = pending.length > MAX_PENDING_LINE ? pending.length : pending.lastIndexOf("\n") + 1;
       // Only retain a suffix that could become a secret in the next pipe chunk.
       for (const secret of this.secrets) {
         for (let length = Math.min(secret.length - 1, pending.length); length > 0; length--) {

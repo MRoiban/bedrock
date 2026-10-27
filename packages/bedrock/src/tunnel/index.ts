@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { rm } from "node:fs/promises";
 import { atomicWrite, readConfig } from "../daemon/config";
 import { BedrockError } from "../error";
-import { localConfig, localTunnelFiles } from "./local";
+import { localTunnelFiles, parseLocalConfig, unmanagedEdits } from "./local";
 import { Cloudflare, ingress, type Tunnel } from "./client";
 
 export const tunnelTokenPath = (home: string) => join(home, "tunnel-token");
@@ -33,13 +33,19 @@ export async function tunnelStatus(home: string, api?: Cloudflare) {
   if (cf.mode === "local") {
     const files = localTunnelFiles(home, cf);
     const credentials = await Bun.file(files.credentialsFile).json().catch(() => null);
-    let matches = await Bun.file(files.configFile).text().catch(() => "") === localConfig(config.domain, config.port, cf.tunnelId, files.credentialsFile);
+    const parsed = parseLocalConfig(await Bun.file(files.configFile).text().catch(() => ""));
+    const wildcard = `*.${config.domain}`;
+    const wildcards = parsed.rules.filter(rule => rule.hostname === wildcard);
+    // cloudflared uses the first matching rule, so a second wildcard or an early catch-all would shadow Bedrock's.
+    let matches = parsed.tunnel === cf.tunnelId && parsed.credentialsFile === files.credentialsFile && wildcards.length === 1 && wildcards[0]!.service === `http://127.0.0.1:${config.port}`
+      && !unmanagedEdits({ ...parsed, unrecognized: [] }, config.domain).length;
+    const extraIngress = parsed.rules.filter(rule => rule.hostname && rule.hostname !== wildcard);
     if (api) {
       const { zoneId } = await api.discover(config.domain);
       const records = await api.dns(zoneId, `*.${config.domain}`);
       matches &&= records.length === 1 && records[0]?.type === "CNAME" && records[0]?.proxied === true && records[0]?.content === `${cf.tunnelId}.cfargotunnel.com`;
     }
-    return { configured: true, ...cf, tokenStored: credentials?.TunnelID === cf.tunnelId, matches, remote: "local" };
+    return { configured: true, ...cf, tokenStored: credentials?.TunnelID === cf.tunnelId, matches, extraIngress, unrecognized: parsed.unrecognized, remote: "local" };
   }
   const tokenStored = !!(await Bun.file(tunnelTokenPath(home)).text().catch(() => "")).trim();
   if (!api) return { configured: true, ...cf, tokenStored, remote: "skipped", hint: "Set CLOUDFLARE_API_TOKEN to inspect Cloudflare." };

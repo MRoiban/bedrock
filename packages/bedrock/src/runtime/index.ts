@@ -69,7 +69,7 @@ export async function startPebble(options: StartPebbleOptions) {
     }
     if (web.html && !Object.hasOwn(routes, "/*")) routes["/*"] = web.html;
     routes["/_bedrock/files/*"] = files.handle;
-    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes) }) };
+    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes), backup: pebble.backup ?? null }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };
     routes["/_bedrock/*"] = () => Response.json({ ok: false, error: new BedrockError("NOT_FOUND", "Unknown Bedrock endpoint.", "Use POST /_bedrock/q/<name> or /_bedrock/m/<name>.").toJSON() }, { status: 404 });

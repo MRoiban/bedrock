@@ -1,4 +1,5 @@
 import { backupSetup } from "../backup";
+import { DEFAULT_KEEP } from "../backup/snapshot";
 import { bedrockHome } from "../daemon/config";
 import { BedrockError } from "../error";
 import { call } from "./daemon";
@@ -8,7 +9,7 @@ export async function backupCommand(args: string[]) {
   const flags: Record<string, string> = {};
   const positions: string[] = [];
   const invalid = () => { throw new BedrockError("INVALID_ARGS", "Invalid backup arguments.", "Use backup setup --dir <path> or --r2-account <id> --r2-bucket <bucket> --r2-access-key-id <key> [--r2-secret-access-key <secret>]; backup run [pebble], ls <pebble>, restore <pebble> [--at <ts>] --yes."); };
-  const accepted = ["--yes", "--at", "--dir", "--r2-account", "--r2-bucket", "--r2-access-key-id", "--r2-secret-access-key", "--interval-minutes", "--keep-hourly", "--keep-daily", "--url", "--token"];
+  const accepted = ["--yes", "--at", "--dir", "--r2-account", "--r2-bucket", "--r2-access-key-id", "--r2-secret-access-key", "--interval-minutes", "--keep", "--url", "--token"];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (!arg.startsWith("--")) positions.push(arg);
@@ -23,7 +24,7 @@ export async function backupCommand(args: string[]) {
   if (action === "setup") {
     if (positions.length !== 1 || keys.some(key => ["--at", "--yes", "--url", "--token"].includes(key))) invalid();
     if (flags["--dir"] && keys.some(key => key.startsWith("--r2"))) invalid();
-    const retention = { intervalMinutes: Number(flags["--interval-minutes"] ?? 60), hourly: Number(flags["--keep-hourly"] ?? 24), daily: Number(flags["--keep-daily"] ?? 30) };
+    const retention = { intervalMinutes: Number(flags["--interval-minutes"] ?? 60), keep: Number(flags["--keep"] ?? DEFAULT_KEEP) };
     if (flags["--dir"]) return { command: "backup setup", ...await backupSetup(bedrockHome(), { type: "fs", directory: flags["--dir"], ...retention }) };
     if (!flags["--r2-account"] || !flags["--r2-bucket"] || !flags["--r2-access-key-id"]) invalid();
     return { command: "backup setup", ...await backupSetup(bedrockHome(), { type: "r2", account: flags["--r2-account"]!, bucket: flags["--r2-bucket"]!, ...retention }, { accessKeyId: flags["--r2-access-key-id"]!, secretAccessKey: flags["--r2-secret-access-key"] ?? await promptSecret("R2 secret access key") }) };

@@ -215,9 +215,8 @@ bedrock rollback hello
 
 Backups run in the daemon (default every 60 minutes). They use consistent SQLite
 `VACUUM INTO`, gzip, SHA-256 file deduplication, and manifests. Retention keeps the
-newest snapshot in each of 24 hours and 30 UTC days; unreferenced file blobs are
-collected. Adjust with setup flags `--interval-minutes`, `--keep-hourly`,
-`--keep-daily`, or the `backup` section of `$BEDROCK_HOME/config.json`.
+newest 24 snapshots and prunes older ones; unreferenced file blobs are collected. Adjust with setup flags `--interval-minutes` and `--keep` (how many
+snapshots to keep), or the `backup` section of `$BEDROCK_HOME/config.json`.
 
 Restore stops the pebble, verifies the database and every file, swaps its data
 directory, keeps `data.before-restore-<timestamp>-<suffix>`, then starts the current

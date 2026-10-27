@@ -1,21 +1,22 @@
 import { loadPebble } from "../runtime/load";
+import type { DirectoryBackup } from "../config/hosting";
 import { join, resolve } from "node:path";
 import { atomicWrite, pebbleDataDir, readConfig } from "../daemon/config";
 import type { DaemonDatabase } from "../daemon/db";
 import type { Releases } from "../daemon/releases";
 import { BedrockError, asBedrockError } from "../error";
 import { fsTarget, r2Target, type BackupTarget } from "./target";
-import { manifests, prune, restoreData, snapshot } from "./snapshot";
+import { DEFAULT_KEEP, manifests, prune, restoreData, snapshot } from "./snapshot";
 export { fsTarget, r2Target } from "./target";
 export { snapshot, manifests, prune, restoreData } from "./snapshot";
 export type { BackupTarget } from "./target";
 
-export type BackupConfig = ({ type: "fs"; directory: string } | { type: "r2"; account: string; bucket: string }) & { intervalMinutes?: number; hourly?: number; daily?: number };
+export type BackupConfig = ({ type: "fs"; directory: string } | { type: "r2"; account: string; bucket: string }) & { intervalMinutes?: number; keep?: number };
 export function validateBackup(config: BackupConfig) {
-  const invalid = () => { throw new BedrockError("INVALID_BACKUP_CONFIG", "Invalid backup target or retention settings.", "Use backup setup --dir <path> or complete R2 flags; interval must be positive and retention counts nonnegative with at least one snapshot retained."); };
+  const invalid = () => { throw new BedrockError("INVALID_BACKUP_CONFIG", "Invalid backup target or retention settings.", "Use backup setup --dir <path> or complete R2 flags; --interval-minutes must be positive and --keep a whole number of at least 1."); };
   if (!config || !["fs", "r2"].includes(config.type)) invalid();
   if (config.type === "fs" && (typeof config.directory !== "string" || !config.directory) || config.type === "r2" && (!/^[a-f0-9]{32}$/.test(config.account) || !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(config.bucket))) invalid();
-  if (!Number.isFinite(config.intervalMinutes ?? 60) || (config.intervalMinutes ?? 60) <= 0 || !Number.isInteger(config.hourly ?? 24) || !Number.isInteger(config.daily ?? 30) || (config.hourly ?? 24) < 0 || (config.daily ?? 30) < 0 || (config.hourly ?? 24) + (config.daily ?? 30) === 0) invalid();
+  if (!Number.isFinite(config.intervalMinutes ?? 60) || (config.intervalMinutes ?? 60) <= 0 || !Number.isInteger(config.keep ?? DEFAULT_KEEP) || (config.keep ?? DEFAULT_KEEP) < 1) invalid();
   return config;
 }
 export async function backupSetup(home: string, backup: BackupConfig, credentials?: { accessKeyId: string; secretAccessKey: string }) {
@@ -39,6 +40,13 @@ async function configuredTarget(home: string) {
   return { config, target: r2Target({ ...config, ...credentials }) };
 }
 
+// The child reports its backup directories at health check; a release never started by this daemon version falls back to loading it.
+async function directoryBackup(release: string): Promise<DirectoryBackup | undefined> {
+  const file = Bun.file(join(release, ".bedrock-backup.json"));
+  if (await file.exists()) return await file.json() ?? undefined;
+  return (await loadPebble(release)).backup;
+}
+
 export function createBackups(home: string, db: DaemonDatabase, releases: Releases, targetOverride?: BackupTarget) {
   let active: Promise<unknown> | undefined;
   let stopping = false;
@@ -51,7 +59,7 @@ export function createBackups(home: string, db: DaemonDatabase, releases: Releas
     try { return await work; } catch (error) { throw asBedrockError(error, "BACKUP_FAILED", "Check the backup target, credentials, disk space, and daemon logs."); }
     finally { active = undefined; }
   }
-  const target = async () => targetOverride ? { config: { hourly: 24, daily: 30 }, target: targetOverride } : configuredTarget(home);
+  const target = async () => targetOverride ? { config: {} as Pick<BackupConfig, "keep">, target: targetOverride } : configuredTarget(home);
   async function run(name?: string) {
     return exclusive(async () => {
       const { config, target: destination } = await target();
@@ -61,14 +69,13 @@ export function createBackups(home: string, db: DaemonDatabase, releases: Releas
         const record = releases.record(pebble);
         result.push(await releases.exclusive(pebble, async () => {
           const data = pebbleDataDir(releases.supervisor.dataRoot, pebble);
-          const definition = await loadPebble(record.release);
-          const value = await snapshot(destination, pebble, join(data, "db.sqlite"), join(data, "files"), new Date(), definition.backup);
-          await prune(destination, pebble, config.hourly, config.daily);
+          const value = await snapshot(destination, pebble, join(data, "db.sqlite"), join(data, "files"), new Date(), await directoryBackup(record.release));
+          await prune(destination, pebble, config.keep);
           return value;
         }));
       }
       result.push(await snapshot(destination, "_daemon", join(home, "bedrock.sqlite")));
-      await prune(destination, "_daemon", config.hourly, config.daily);
+      await prune(destination, "_daemon", config.keep);
       const statePath = join(home, "backup-state.json");
       const state = await Bun.file(statePath).json().catch(() => ({ pebbles: {} }));
       state.pebbles ??= {};

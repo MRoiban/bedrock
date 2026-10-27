@@ -96,7 +96,9 @@ test("daemon routes, strips headers, authorizes, swaps, retains releases, rolls 
     follow.abort();
     await reader.cancel().catch(() => {});
     expect((await h.api("/api/pebbles/sample/stop", { method: "POST" })).status).toBe(200);
-    expect((await h.request("sample.localhost", "/version")).status).toBe(404);
+    const stopped = await h.request("sample.localhost", "/version");
+    expect(stopped.status).toBe(503);
+    expect(await stopped.text()).toContain("bedrock start sample");
     expect((await h.api("/api/pebbles/sample/start", { method: "POST" })).status).toBe(200);
     for (const version of ["v3", "v4", "v5"]) {
       await Bun.write(join(dir, "pebble.ts"), source(version));
@@ -184,7 +186,7 @@ test("repeated fast failures become crashed and stop cancels automatic restarts"
   try {
     expect((await h.deploy("sample", dir)).status).toBe(200);
     await until(async () => (await h.list())[0]!.status === "crashed", 15000);
-    expect((await h.request("sample.localhost")).status).toBe(404);
+    expect((await h.request("sample.localhost")).status).toBe(503);
     await h.api("/api/pebbles/sample/start", { method: "POST" });
     await until(async () => (await h.list())[0]!.status === "restarting");
     await h.api("/api/pebbles/sample/stop", { method: "POST" });

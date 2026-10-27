@@ -177,7 +177,7 @@ throw new BedrockError("TIME_CONFLICT", "This local time is ambiguous.",
 
 ## 4. Database
 
-- File: `<data root>/pebbles/<name>/data/db.sqlite` (the data root is `dataDir`, default `$BEDROCK_HOME`; see §8), opened with `PRAGMA journal_mode=WAL; foreign_keys=ON; busy_timeout=5000`.
+- File: `<data root>/pebbles/<name>/data/db.sqlite` (the data root is `dataDir`, default `$BEDROCK_HOME`; see §8), opened with `PRAGMA journal_mode=WAL; synchronous=NORMAL; foreign_keys=ON; busy_timeout=5000`. `synchronous=NORMAL` skips the disk sync on each commit: in WAL mode a process crash loses nothing, and a power loss can drop only the most recent commits, never corrupt the file. The daemon's `bedrock.sqlite` uses the same pragmas.
 - Migrations live in `<pebble>/migrations/*.sql`. The files are the baseline: there is no `meta/` journal or snapshot (an old `migrations/meta/` is ignored and can be deleted). The runner applies every unapplied `*.sql` in name order, tracked by name and SHA-256 in `_bedrock_migrations`, including a file that sorts before one already applied.
 - `bedrock db generate [name] [--allow-data-loss]` replays every migration into an in-memory SQLite database with the runner's own code (foreign keys on, same validation), then diffs it with the Drizzle tables in `pebble.schema` using `pushSQLiteSchema` from `drizzle-kit/api` (the drizzle-kit installed beside `bedrock` when there is one, else the pebble's; `DRIZZLE_KIT_MISSING` otherwise). drizzle-kit's spinner and prompts are suppressed. No difference: nothing is written. Otherwise it writes `migrations/<UTC YYYYMMDDHHMMSS>_<slug>.sql` (slug from `name`, reduced to `[a-z0-9_]`, default `schema`), stamped one second after the newest timestamped file if the clock is not later. Legacy `0000_*` names sort first. Before writing, the new SQL must pass migration validation, replay after the existing files, and leave an empty diff (`GENERATE_FAILED` otherwise).
 - Generate refuses with `MIGRATION_DATA_LOSS` when the SQL drops columns, unless `--allow-data-loss`; a NOT NULL column added to an existing table without a SQL default fails with `MIGRATION_NOT_NULL` (SQLite rejects it once the table has rows, and push would wipe the table). A table that both loses and gains columns fails with `MIGRATION_AMBIGUOUS`, because a rename and a drop plus add look alike. Tables and views the migrations create but `pebble.schema` does not declare are reported as `unmanagedTables` and never diffed, so generate never drops a table; drop it by hand.
@@ -706,6 +706,8 @@ $BEDROCK_HOME (default ~/.bedrock)
   bearer is ignored. Incoming identity headers are still stripped.
 - Each pebble runs as **its own Bun subprocess** (`startPebble`) on a private localhost port. The daemon routes by `Host` header, proxies HTTP and WebSockets, restarts crashed pebbles with backoff, and does zero-downtime swaps on deploy (start new, health-check, switch, stop old).
 - Reserved subdomains: `auth`, `bedrock` (daemon API/dashboard), `www`.
+- A deployed pebble that is not running (stopped, crashed, restarting) answers 503
+  with `Retry-After: 5` and a `bedrock start <name>` hint; 404 means no such pebble.
 - **Deploy**: `bedrock deploy` in a pebble directory. Local: copies to a new release. Remote: tars the directory and uploads to `https://bedrock.<domain>/api/deploy` with a creator deploy token (`bedrock login` stores it). Daemon then installs deps (`bun install --production`), migrates, swaps.
 - `bedrock service install|uninstall|status` manages a macOS **LaunchAgent**
   (`~/Library/LaunchAgents/dev.bedrock.daemon.plist`, RunAtLoad/KeepAlive) or Linux
@@ -740,7 +742,7 @@ $BEDROCK_HOME (default ~/.bedrock)
 - `bedrock doctor` checks Bun, local daemon/configuration, domain/creators, OAuth,
   cloudflared installation/process, tunnel ingress/DNS via the API when a transient
   API token is available, wildcard resolution via Cloudflare DoH, available disk,
-  each pebble's live health, and backup age (warn when > 2× interval). From a
+  each pebble's live health (a pebble stopped on purpose passes), and backup age (warn when > 2× interval). From a
   source checkout it warns when `bedrock` or `@bedrock/ui` is not `bun link`ed
   to that checkout (`link:<name>`); run in a pebble directory, it warns when the
   pebble still uses `file:` dependencies (`pebble-deps`, hint: the `bun add
@@ -807,7 +809,10 @@ restart, rollback, daemon restoration and crash recovery. Children also receive
 `BEDROCK_API_URL=http://127.0.0.1:<actual-daemon-port>`; loopback `/api/` requests
 reach the authenticated daemon API without a Host override. This URL conveys no
 credentials; a pebble must explicitly supply its own deploy bearer.
-Daemon-managed pebble logs redact configured values and JSON-escaped variants,
+Daemon-managed pebble logs prefix every line with an ISO timestamp and write
+whole lines only, so stdout and stderr never interleave mid-line (a line with no
+newline is held until 64 KiB). `logs/cloudflared.log` keeps cloudflared's own
+timestamps. They redact configured values of at least 8 characters, and their JSON-escaped variants,
 including values split across UTF-8 pipe chunks; rotated values remain protected
 for the logger's lifetime. Creators remain trusted and must not deliberately
 encode secrets into application responses or other files.
@@ -896,7 +901,12 @@ conflicts are reported. If CLI DNS routing fails, repeating the step with
 
 Local metadata is `{mode: "local", tunnelId, name, credentialsFile, configFile}`.
 The mode-0600 YAML has tunnel ID, credentials path, ingress `*.<domain>` to
-`http://127.0.0.1:<port>` and `http_status:404` catch-all. The daemon supervises
+`http://127.0.0.1:<port>` and `http_status:404` catch-all. Hostname rules added
+by hand (`- hostname:` plus `service:`, with plain or double-quoted values) are
+kept, ahead of the wildcard, when setup runs again, and setup may rewrite the
+wildcard's port. Any other hand edit (other keys or quoting, a second wildcard
+rule, a catch-all other than one final `http_status:404`) makes setup refuse with
+`TUNNEL_CONFIG_CUSTOM` and leave the file untouched. The daemon supervises
 `cloudflared tunnel --no-autoupdate --config <file> run` with no run token.
 
 For unattended setup, `--api-token` or `CLOUDFLARE_API_TOKEN` selects the existing
@@ -917,7 +927,11 @@ zone/account IDs; the token needs Zone: Read, Cloudflare Tunnel: Edit and DNS: E
 
 cloudflared is the only external host dependency. Missing binary/startup/connection
 failures do not stop local serving; restart backoff caps at 30 seconds.
-`tunnel status`/doctor check local credentials and YAML for local mode, plus DNS
+`tunnel status`/doctor check local credentials and YAML for local mode (the tunnel
+ID, credentials path, wildcard rule and final catch-all must be present; extra
+hostname rules and unrecognized lines are returned as `extraIngress` and
+`unrecognized`, and doctor warns about them because they bypass the daemon's
+access checks), plus DNS
 when a transient API token is available; remote mode checks ingress/DNS via API.
 Both also use doctor's independent wildcard DoH check.
 `tunnel teardown --yes --api-token <token>` safely deletes only matching DNS and
@@ -980,7 +994,10 @@ A slot longer than `BEDROCK_SLOW_SLOT_MS` (milliseconds, default 200, read when
 the runtime starts) logs one `console.warn` line naming its kind (`query`,
 `mutation`, `route`, `job`, `storage read`/`storage write`, `detached read`/`detached write`), its
 name (function name, `METHOD /path` route key, job name, or request path) and
-its duration. In `bedrock dev`, in tests that call `startPebble` directly, and
+its duration. When at least half of the time was the `COMMIT` itself, the line
+adds `(commit N ms)` and says the disk is the bottleneck. After one warning,
+further slow slots with the same kind and name are counted for 60 seconds and
+reported as one summary line (`was slow N more time(s) in the last 60 s (max M ms)`). In `bedrock dev`, in tests that call `startPebble` directly, and
 in production when the daemon runs with `BEDROCK_STRICT_SLOTS=1`, calling
 `fetch()` inside a slot throws `NETWORK_IN_SLOT` (HTTP 500), so a mutation that
 fetches rolls back. Fetches outside slots, including detached handlers and
@@ -1131,9 +1148,16 @@ Filename timestamps replace ISO time colons with hyphens on every platform;
 manifest timestamps and `--at` retain ISO format. Existing backup keys remain
 readable and restore/pruning use the manifest's stored database key.
 
-Retain newest representatives of 24 hourly and 30 daily UTC buckets, prune old
-DBs/manifests, and GC file blobs unreferenced by remaining manifests. Configurable
-`backup.intervalMinutes`, `hourly`, and `daily` are stored with target metadata.
+Retain the newest `keep` snapshots per pebble and for identity (default 24, so one
+day at the default 60-minute interval), delete older DBs/manifests, and GC file
+blobs unreferenced by remaining manifests. `backup.intervalMinutes` and `keep`
+(`backup setup --interval-minutes <n> --keep <n>`) are stored with target
+metadata; the older `hourly`/`daily` keys are ignored. The `VACUUM INTO` copy is
+staged in a `.bedrock-backup-*` directory beside the database, never in the OS
+temp directory. Directory-backup settings come from `.bedrock-backup.json`, which
+the daemon writes into a release from the child's health check, so backups do
+not import pebble code into the daemon (a release not started since falls back
+to loading `pebble.ts`).
 `backup run [pebble]` also snapshots identity; `backup ls <pebble>` lists snapshots.
 `backup restore <pebble> [--at <exact-ts>] --yes` stops the pebble, verifies SQLite
 integrity and DB/file SHA-256, stages and swaps data directories, preserves

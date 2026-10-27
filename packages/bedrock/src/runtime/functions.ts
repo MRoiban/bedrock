@@ -5,7 +5,7 @@ import type { DetachedContext, FunctionContext, PebbleConfig, User } from "../co
 import type { openDatabase } from "../db";
 import { BedrockError, asBedrockError } from "../error";
 import { checkAccess } from "./access";
-import { runSlot, slotInfo, slotOptions, type SlotOptions } from "./slots";
+import { recordCommit, runSlot, slotInfo, slotOptions, type SlotOptions } from "./slots";
 import { createTokens, requirePermission, storagePermission, type RequestIdentity } from "./tokens";
 import { chooseIdempotencyKey, createIdempotency, idempotencyScope } from "./idempotency";
 
@@ -75,7 +75,9 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         // Detect unserializable results before committing any writes.
         JSON.stringify({ ok: true, value: result.value ?? null });
         opened?.record(result.value);
+        const commitStarted = performance.now();
         sqlite.exec("COMMIT");
+        recordCommit(performance.now() - commitStarted);
         committed = true;
         flushed();
         for (const cleanup of effects.commit) await cleanup().catch(error => console.error("Storage cleanup failed", error));

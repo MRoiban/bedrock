@@ -2,8 +2,7 @@ import { snapshotDirectories, restoreDirectories, type DirectoryManifest } from 
 import type { DirectoryBackup } from "../config/hosting";
 import { Database } from "bun:sqlite";
 import { mkdtemp, mkdir, rm, rename } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { BedrockError } from "../error";
 import type { BackupTarget } from "./target";
 import { version } from "../../package.json";
@@ -21,7 +20,8 @@ const prefix = (name: string) => name === "_daemon" ? "daemon/" : `pebbles/${nam
 const hasTable = (db: Database, name: string) => !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
 
 export async function snapshot(target: BackupTarget, name: string, databasePath: string, filesDir?: string, now = new Date(), directories?: DirectoryBackup): Promise<Manifest> {
-  const temp = await mkdtemp(join(tmpdir(), "bedrock-backup-"));
+  // Beside the database, not in the OS temp dir, which may be RAM-backed and too small for a copy.
+  const temp = await mkdtemp(join(dirname(databasePath), ".bedrock-backup-"));
   let source: Database | undefined;
   let copy: Database | undefined;
   try {
@@ -58,21 +58,11 @@ export async function manifests(target: BackupTarget, name: string) {
   return Promise.all((await target.list(`${prefix(name)}manifests/`)).filter(key => key.endsWith(".json")).map(async key => ({ key, manifest: JSON.parse(new TextDecoder().decode(await target.get(key))) as Manifest })));
 }
 
-export async function prune(target: BackupTarget, name: string, hourly = 24, daily = 30) {
+export const DEFAULT_KEEP = 24;
+export async function prune(target: BackupTarget, name: string, keep = DEFAULT_KEEP) {
   const entries = (await manifests(target, name)).sort((a, b) => b.manifest.timestamp.localeCompare(a.manifest.timestamp));
-  const hours = new Set<string>();
-  const days = new Set<string>();
-  const retained: typeof entries = [];
-  for (const entry of entries) {
-    const hour = entry.manifest.timestamp.slice(0, 13);
-    const day = entry.manifest.timestamp.slice(0, 10);
-    const keepHour = !hours.has(hour) && hours.size < hourly;
-    const keepDay = !days.has(day) && days.size < daily;
-    if (keepHour) hours.add(hour);
-    if (keepDay) days.add(day);
-    if (keepHour || keepDay) retained.push(entry);
-    else { await target.delete(entry.key); await target.delete(entry.manifest.db); }
-  }
+  const retained = entries.slice(0, keep);
+  for (const entry of entries.slice(keep)) { await target.delete(entry.key); await target.delete(entry.manifest.db); }
   const blobs = new Set(retained.flatMap(entry => [...Object.values(entry.manifest.files), ...Object.values(entry.manifest.directories ?? {}).flat().map(file => file.sha256)]));
   for (const key of await target.list(`${prefix(name)}files/`)) if (!blobs.has(key.split("/").at(-1)!)) await target.delete(key);
   // Failed uploads can leave database objects without manifests.

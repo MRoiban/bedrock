@@ -146,3 +146,28 @@ export default definePebble({ name: "slots-prod", access: "public",
     else expect(body).toEqual({ ok: true, value: "pong" });
   } finally { child.kill(); await child.exited; remote.stop(true); temp.cleanup(); }
 }, 15000);
+
+test("repeated slow slots of one name log once, then a summary per window; commit time is named", async () => {
+  const { runSlot, recordCommit } = await import("../src/runtime/slots");
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const options = { pebble: "slots-window", slowMs: 5, strict: false, windowMs: 100 };
+  const slow = (commit = false) => runSlot(options, { kind: "mutation", name: "save" }, async () => {
+    await Bun.sleep(15);
+    if (commit) recordCommit(14);
+  });
+  try {
+    await slow(true);
+    await slow();
+    await slow();
+    const lines = () => warn.mock.calls.map(args => String(args[0]));
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0]).toMatch(/Slow slot: mutation "save" held the write queue for \d+ ms \(commit 14 ms\)/);
+    expect(lines()[0]).toContain("commit waiting on the disk");
+    await Bun.sleep(150);
+    expect(lines()).toHaveLength(2);
+    expect(lines()[1]).toMatch(/Slow slot: mutation "save" was slow 2 more time\(s\) in the last 0 s \(max \d+ ms\)/);
+    await slow();
+    expect(lines()).toHaveLength(3);
+    expect(lines()[2]).toContain("job(..., { transaction: false })");
+  } finally { warn.mockRestore(); }
+});

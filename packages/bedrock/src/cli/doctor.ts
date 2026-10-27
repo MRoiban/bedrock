@@ -53,7 +53,12 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
   if (config && (config.cloudflare?.mode === "local" || apiToken || options.cloudflare)) {
     try {
       const tunnel = await tunnelStatus(home, options.cloudflare ?? (apiToken ? new Cloudflare(apiToken) : undefined));
-      add("tunnel", "matches" in tunnel && tunnel.matches && tunnel.tokenStored ? "pass" : "fail", "matches" in tunnel && tunnel.matches ? "Remote tunnel configuration matches." : "Remote tunnel configuration is missing or differs.", "Repeat bedrock tunnel setup with the correct account and zone IDs.");
+      if ("extraIngress" in tunnel) {
+        const extras = [...tunnel.extraIngress.map(rule => `${rule.hostname} → ${rule.service}`), ...tunnel.unrecognized];
+        const ok = tunnel.matches && tunnel.tokenStored;
+        add("tunnel", !ok ? "fail" : extras.length ? "warn" : "pass", !ok ? "Local tunnel config.yml or credentials are missing or differ." : extras.length ? `Local tunnel configuration matches, plus rules Bedrock does not manage: ${extras.join("; ")}.` : "Local tunnel configuration matches.",
+          !ok ? "Run bedrock setup cloudflare to regenerate cloudflared/config.yml; extra hostname rules are kept." : "Extra rules bypass the daemon's access checks; make sure each target does its own authentication.");
+      } else add("tunnel", "matches" in tunnel && tunnel.matches && tunnel.tokenStored ? "pass" : "fail", "matches" in tunnel && tunnel.matches ? "Remote tunnel configuration matches." : "Remote tunnel configuration is missing or differs.", "Repeat bedrock tunnel setup with the correct account and zone IDs.");
     } catch (error) { add("tunnel", error instanceof BedrockError && error.code === "CLOUDFLARE_OFFLINE" ? "warn" : "fail", "Could not verify remote tunnel configuration.", error instanceof BedrockError ? error.hint : "Check your API token and internet connection."); }
   } else add("tunnel", "warn", "Skipped: no Cloudflare API token or valid configuration.", "Set CLOUDFLARE_API_TOKEN to verify remote configuration.", true);
   if (config && config.domain !== "localhost") {
@@ -80,7 +85,8 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
       add("data-dir", bytes < 5 * 1024 ** 3 ? "warn" : "pass", `Pebble data in ${root}: ${(bytes / 1024 ** 3).toFixed(1)} GiB free.`, "Keep at least 5 GiB free on the data disk.");
     } catch (error) { add("data-dir", "fail", `Pebble data directory ${config.dataDir} is unavailable.`, error instanceof BedrockError ? error.hint : "Mount the data disk."); }
   }
-  if (status) for (const pebble of status.pebbles) add(`pebble:${pebble.name}`, pebble.healthy ? "pass" : "fail", `${pebble.name}: ${pebble.status}${pebble.healthy ? ", healthy" : ", unhealthy"}`, `Inspect bedrock logs ${pebble.name}; restart or redeploy it.`);
+  // A pebble someone stopped on purpose is not a fault.
+  if (status) for (const pebble of status.pebbles) add(`pebble:${pebble.name}`, pebble.healthy || pebble.status === "stopped" ? "pass" : "fail", `${pebble.name}: ${pebble.status}${pebble.status === "stopped" ? "" : pebble.healthy ? ", healthy" : ", unhealthy"}`, pebble.status === "stopped" ? `Start it with bedrock start ${pebble.name}.` : `Inspect bedrock logs ${pebble.name}; restart or redeploy it.`);
   else add("pebbles", "warn", "Skipped: daemon unavailable.", "Start the daemon and retry doctor.", true);
   return checks;
 }

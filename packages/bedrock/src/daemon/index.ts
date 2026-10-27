@@ -80,7 +80,8 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
           if (!target || ["auth", "www"].includes(target)) return notFound();
           const child = supervisor.child(target);
-          if (!child) return notFound();
+          // A deployed but stopped pebble is a temporary condition, not a missing site.
+          if (!child) return db.get(target) ? new Response(`${target} is deployed but not running. Start it with bedrock start ${target}.`, { status: 503, headers: { "retry-after": "5" } }) : notFound();
           if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
           const websocket = request.headers.get("upgrade")?.toLowerCase() === "websocket";
           if (!websocket && matchesPublicRoute(child.publicRoutes, request.method, url.pathname)) {

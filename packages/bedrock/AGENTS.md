@@ -115,7 +115,8 @@ and storage effects; errors become `BedrockError(code, message, hint)`. Middlewa
 executes inside the same transaction. Each call is one slot of the pebble's
 serialized queue, so slow work inside it delays every other database request.
 A slot longer than `BEDROCK_SLOW_SLOT_MS` (default 200 ms) logs one warning with
-its kind, name and duration. In `bedrock dev`, in tests, and in production with
+its kind, name and duration (plus `commit N ms` when the disk commit dominated);
+repeats of the same name are summarized once a minute. In `bedrock dev`, in tests, and in production with
 `BEDROCK_STRICT_SLOTS=1`, `fetch()` inside a slot throws `NETWORK_IN_SLOT` and
 the slot rolls back. Move the fetch to a detached route, a detached job or a
 service, then use `ctx.write` for the database part (see Detached routes and
@@ -894,11 +895,11 @@ run it on the home server. R2 setup prompts for the secret when omitted, or acce
 mode 0600, separate from non-secret `config.json`. No R2 request is made by setup.
 
 Backups run on daemon startup when due, then check each minute. Defaults:
-intervalMinutes=60, hourly=24, daily=30. Configure setup with
-`--interval-minutes 60 --keep-hourly 24 --keep-daily 30`, or edit `config.backup`:
+intervalMinutes=60, keep=24 (the newest 24 snapshots are kept; older ones are
+pruned). Configure setup with `--interval-minutes 60 --keep 24`, or edit `config.backup`:
 
 ```json
-{ "type": "fs", "directory": "/mnt/external/bedrock", "intervalMinutes": 60, "hourly": 24, "daily": 30 }
+{ "type": "fs", "directory": "/mnt/external/bedrock", "intervalMinutes": 60, "keep": 24 }
 ```
 
 R2 config uses `type: "r2", account, bucket` plus the same scheduling/retention
@@ -923,7 +924,7 @@ and backup restore --at remain ISO. Existing manifests retain their stored keys.
 SQLite is snapshotted consistently with VACUUM INTO while live, then gzipped.
 Files use metadata SHA-256 and upload only if absent. Manifest contains timestamp,
 db key/checksum, file id→SHA-256, package version and migration name/hash list.
-Manifests publish last. Retention keeps the newest snapshot per hour/day (UTC)
+Manifests publish last. Retention keeps the newest `keep` snapshots (default 24)
 and collects blobs unreferenced by retained manifests. Failed uploads may leave
 orphans until the next successful pruning pass. A concurrent file deletion may
 fail a live snapshot; the daemon logs it and retries at the next interval.
