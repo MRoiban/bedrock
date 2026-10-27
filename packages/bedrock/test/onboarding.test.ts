@@ -2,7 +2,7 @@ import { linkDependencies } from "./helpers";
 import { expect, test } from "bun:test";
 import { BedrockError } from "../src/error";
 import { join, resolve } from "node:path";
-import { stat } from "node:fs/promises";
+import { mkdir, stat, symlink } from "node:fs/promises";
 import { readdirSync } from "node:fs";
 import { tempDirectory } from "./helpers";
 import { wizardHarness, fakeCloudflare } from "./onboarding-harness";
@@ -20,10 +20,12 @@ const flags = ["--yes", "--domain", "example.com", "--creator", "creator@example
 test("scripted full wizard uses fake cloudflared, private local config and real resumable state", async () => {
   const temp = tempDirectory();
   try {
-    const fixture = await wizardHarness(temp.dir, ["example.com", "", "", client, "google-secret", "disk", "/mnt/backup/bedrock"]);
+    const fixture = await wizardHarness(temp.dir, ["example.com", "", "", "", client, "google-secret", "disk", "/mnt/backup/bedrock"]);
     await setupWizard([], false, fixture.options);
     const config = await readConfig(fixture.home);
     expect(config.cloudflare?.mode).toBe("local");
+    // Relative paths keep config.json valid when BEDROCK_HOME moves; cloudflared gets absolute ones.
+    expect(config.cloudflare).toMatchObject({ credentialsFile: join("cloudflared", "credentials.json"), configFile: join("cloudflared", "config.yml") });
     const yaml = await Bun.file(join(fixture.home, "cloudflared/config.yml")).text();
     expect(yaml).toContain('hostname: "*.example.com"');
     expect(yaml).toContain("service: http://127.0.0.1:3000");
@@ -47,7 +49,7 @@ test("scripted full wizard uses fake cloudflared, private local config and real 
 test("wizard resumes after cloudflare failure and redo rewrites one step, invalidating service verification", async () => {
   const temp = tempDirectory();
   try {
-    const fixture = await wizardHarness(temp.dir, ["example.com", "creator@example.com", "", "skip", "skip"]);
+    const fixture = await wizardHarness(temp.dir, ["example.com", "creator@example.com", "", "", "skip", "skip"]);
     const execute = fixture.options.terminal!.run!;
     fixture.options.terminal!.run = async (args, opts) => { if (args.includes("route") && !args.includes("--help")) throw new Error("simulated DNS failure"); return execute(args, opts); };
     await expect(setupWizard([], false, fixture.options)).rejects.toMatchObject({ code: "LOCAL_DNS_FAILED" });
@@ -62,6 +64,28 @@ test("wizard resumes after cloudflare failure and redo rewrites one step, invali
     status = await setupWizard(["--status"], true, fixture.options);
     expect(status.steps.find(s => s.step === "service")?.done).toBe(false);
     expect(fixture.calls).toHaveLength(0);
+  } finally { temp.cleanup(); }
+});
+
+test("setup identity stores --data-dir and refuses to switch it under existing pebble data", async () => {
+  const temp = tempDirectory();
+  try {
+    const fixture = await wizardHarness(temp.dir);
+    const disk = join(temp.dir, "disk");
+    const identity = (dir: string) => setupWizard(["identity", "--yes", "--domain", "example.com", "--creator", "creator@example.com", "--data-dir", dir], true, { ...fixture.options, tty: false });
+    await expect(identity(join(fixture.home, "pebbles", "notes"))).rejects.toMatchObject({ code: "INVALID_DATA_DIR" });
+    if (process.platform !== "win32") {
+      await mkdir(fixture.home, { recursive: true });
+      await symlink(fixture.home, join(temp.dir, "alias"));
+      await expect(identity(join(temp.dir, "alias", "pebbles", "notes"))).rejects.toMatchObject({ code: "INVALID_DATA_DIR" });
+    }
+    await identity(disk);
+    expect((await readConfig(fixture.home)).dataDir).toBe(disk);
+    expect((await stat(join(disk, "pebbles"))).isDirectory()).toBe(true);
+    await mkdir(join(disk, "pebbles", "notes", "data"), { recursive: true });
+    await expect(identity(join(temp.dir, "elsewhere"))).rejects.toMatchObject({ code: "DATA_DIR_IN_USE" });
+    await identity(disk);
+    expect((await readConfig(fixture.home)).dataDir).toBe(disk);
   } finally { temp.cleanup(); }
 });
 
@@ -100,7 +124,7 @@ test("noninteractive complete flags discover zone/account and use remote tunnel 
 test("R2 setup discovers account and saves secret separately; local teardown uses discovered zone", async () => {
   const temp = tempDirectory();
   try {
-    const fixture = await wizardHarness(temp.dir, ["example.com", "creator@example.com", "", "skip", "skip"]);
+    const fixture = await wizardHarness(temp.dir, ["example.com", "creator@example.com", "", "", "skip", "skip"]);
     await setupWizard([], false, fixture.options);
     const cf = fakeCloudflare();
     await setupWizard(["backups", "--yes", "--r2-bucket", "bedrock-backups", "--r2-access-key-id", "key", "--r2-secret-access-key", "secret"], true, { ...fixture.options, api: cf.api });
@@ -166,7 +190,7 @@ test("new React scaffold installs, migrates, commits, builds and deploy prints U
 test("local wildcard routing falls back to discovered DNS API without changing tunnel mode", async () => {
   const temp = tempDirectory();
   try {
-    const fixture = await wizardHarness(temp.dir, ["example.com", "creator@example.com", "", "skip", "skip"]);
+    const fixture = await wizardHarness(temp.dir, ["example.com", "creator@example.com", "", "", "skip", "skip"]);
     const execute = fixture.options.terminal!.run!;
     fixture.options.terminal!.run = async (args, opts) => { if (args.includes("route") && !args.includes("--help")) throw new Error("unsupported wildcard"); return execute(args, opts); };
     await expect(setupWizard([], false, fixture.options)).rejects.toMatchObject({ code: "LOCAL_DNS_FAILED" });

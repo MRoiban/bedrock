@@ -9,6 +9,7 @@ import { BedrockError, asBedrockError } from "../error";
 import type { Access } from "../config";
 import type { DaemonDatabase, PebbleRecord } from "./db";
 import { PebbleLogs } from "./logs";
+import { pebbleDataDir } from "./config";
 import { bunConfigArgs } from "../runtime/bundler";
 
 export interface Child {
@@ -47,10 +48,10 @@ export class Supervisor {
   private loggers = new Map<string, PebbleLogs>();
   private stopping = false;
   private launches = new Set<Promise<unknown>>();
-  constructor(readonly home: string, readonly db: DaemonDatabase, private readonly master: string, readonly creators: string[] = [], readonly dev = false) {}
+  constructor(readonly home: string, readonly db: DaemonDatabase, private readonly master: string, readonly creators: string[] = [], readonly dev = false, readonly dataRoot = home) {}
   logs(name: string) {
     let logs = this.loggers.get(name);
-    if (!logs) { logs = new PebbleLogs(this.home, name); this.loggers.set(name, logs); }
+    if (!logs) { logs = new PebbleLogs(this.dataRoot, name); this.loggers.set(name, logs); }
     return logs;
   }
   jobs(name: string, job?: string) {
@@ -101,7 +102,7 @@ export class Supervisor {
       env: childEnvironment(process.env, secretEnv, devSource, { BEDROCK_API_URL: this.apiUrl, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
         BEDROCK_RELEASE_ID: releaseId, BEDROCK_PREVIOUS_RELEASE: previous ? resolve(previous) : "",
         BEDROCK_DEV: devSource ? "1" : "0",
-        BEDROCK_DATA: devSource ? join(release, ".bedrock") : join(this.home, "pebbles", name, "data"), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) }),
+        BEDROCK_DATA: devSource ? join(release, ".bedrock") : pebbleDataDir(this.dataRoot, name), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) }),
       ipc(message: unknown) {
         const value = message as { requestId?: string; value?: unknown; op?: string; name: string; port: number; stopTimeout?: number; error?: { code: string; message: string; hint: string } };
         if (value.op === "reply" && value.requestId) {

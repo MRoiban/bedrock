@@ -1,6 +1,6 @@
 import { loadPebble } from "../runtime/load";
 import { join, resolve } from "node:path";
-import { atomicWrite, readConfig } from "../daemon/config";
+import { atomicWrite, pebbleDataDir, readConfig } from "../daemon/config";
 import type { DaemonDatabase } from "../daemon/db";
 import type { Releases } from "../daemon/releases";
 import { BedrockError, asBedrockError } from "../error";
@@ -60,7 +60,7 @@ export function createBackups(home: string, db: DaemonDatabase, releases: Releas
       for (const pebble of names) {
         const record = releases.record(pebble);
         result.push(await releases.exclusive(pebble, async () => {
-          const data = join(home, "pebbles", pebble, "data");
+          const data = pebbleDataDir(releases.supervisor.dataRoot, pebble);
           const definition = await loadPebble(record.release);
           const value = await snapshot(destination, pebble, join(data, "db.sqlite"), join(data, "files"), new Date(), definition.backup);
           await prune(destination, pebble, config.hourly, config.daily);
@@ -89,7 +89,7 @@ export function createBackups(home: string, db: DaemonDatabase, releases: Releas
         const destination = (await target()).target;
         await releases.supervisor.stop(name);
         let result;
-        try { result = await restoreData(destination, name, join(home, "pebbles", name, "data"), at); }
+        try { result = await restoreData(destination, name, pebbleDataDir(releases.supervisor.dataRoot, name), at); }
         finally { await releases.supervisor.start(record); }
         return result;
       }));

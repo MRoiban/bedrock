@@ -12,6 +12,8 @@ import { daemonCommand, daemonCommands } from "./daemon";
 import { init } from "./init";
 import { dbCommand } from "./db";
 import { dev, devWorker } from "./dev";
+import { bedrockHome } from "../daemon/config";
+import { moveData } from "../daemon/move-data";
 
 const commandHelp: Record<string, [usage: string, description: string]> = {
   new: ["<name> [--template react|minimal]", "Create a pebble directory, install dependencies, and initialize Git and migrations."],
@@ -27,6 +29,7 @@ const commandHelp: Record<string, [usage: string, description: string]> = {
   token: ["create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id> [--url <url>] [--token <token>]", "Create, list, or revoke deploy tokens."],
   backup: ["setup --dir <path> | setup --r2-account <id> --r2-bucket <bucket> --r2-access-key-id <key> [--r2-secret-access-key <secret>] | run [pebble] | ls <pebble> | restore <pebble> [--at <ts>] --yes", "Configure backups, create or list snapshots, or restore pebble data."],
   jobs: ["ls <pebble> | run <pebble> <job> [--url <url>] [--token <token>]", "List or run pebble jobs."],
+  data: ["move <dir>", "With the daemon stopped, copy pebble data and logs to <dir>, verify the copy, and switch dataDir; the old copy is kept."],
 };
 
 async function main() {
@@ -61,6 +64,7 @@ async function main() {
   else if (command === "secrets") result = await secretsCommand(args);
   else if (command === "backup") result = await backupCommand(args);
   else if (command === "jobs") result = await jobsCommand(args);
+  else if (command === "data" && args[0] === "move" && args.length === 2 && !args[1]!.startsWith("-")) result = { command: "data move", ...await moveData(bedrockHome(), args[1]!, json ? {} : { progress: line => console.error(line) }) };
   else if (command && opsCommands.includes(command)) {
     result = await opsCommand(command, args, json);
     if (result === undefined) return;
@@ -70,11 +74,11 @@ async function main() {
   }
   else if (command === "init" && !args[0]?.startsWith("-") && (args.length === 1 || args.length === 3 && args[1] === "--template")) result = { command: "init", ...await init(args[0]!, process.cwd(), args[2], true, await sourceCheckout()) };
   else if (dbOptions) result = await dbCommand(args[0]!, process.cwd(), dbOptions);
-  else if (command && ["new", "init", "db", "self-update"].includes(command)) {
-    const usage = command === "new" || command === "init" ? " <name> [--template react|minimal]" : command === "db" ? ` ${commandHelp.db![0]}` : " [--remote]";
+  else if (command && ["new", "init", "db", "data", "self-update"].includes(command)) {
+    const usage = command === "new" || command === "init" ? " <name> [--template react|minimal]" : command === "db" || command === "data" ? ` ${commandHelp[command]![0]}` : " [--remote]";
     throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, `Use bedrock ${command}${usage} [--json].`);
   }
-  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], db generate|new|check|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, secrets ls|set|unset, tunnel setup|status|teardown, service install|uninstall|status, doctor, login <domain>, logout, new <name>, self-update, whoami, status, backup setup|run|ls|restore, jobs ls|run, or --version; add --json for machine-readable output.");
+  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], db generate|new|check|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, secrets ls|set|unset, tunnel setup|status|teardown, service install|uninstall|status, doctor, login <domain>, logout, new <name>, self-update, whoami, status, backup setup|run|ls|restore, jobs ls|run, data move <dir>, or --version; add --json for machine-readable output.");
   console.log(json ? JSON.stringify({ ok: true, ...(result as object) }) : JSON.stringify(result, null, 2));
 }
 

@@ -177,7 +177,7 @@ throw new BedrockError("TIME_CONFLICT", "This local time is ambiguous.",
 
 ## 4. Database
 
-- File: `$BEDROCK_HOME/pebbles/<name>/data/db.sqlite`, opened with `PRAGMA journal_mode=WAL; foreign_keys=ON; busy_timeout=5000`.
+- File: `<data root>/pebbles/<name>/data/db.sqlite` (the data root is `dataDir`, default `$BEDROCK_HOME`; see §8), opened with `PRAGMA journal_mode=WAL; foreign_keys=ON; busy_timeout=5000`.
 - Migrations live in `<pebble>/migrations/*.sql`. The files are the baseline: there is no `meta/` journal or snapshot (an old `migrations/meta/` is ignored and can be deleted). The runner applies every unapplied `*.sql` in name order, tracked by name and SHA-256 in `_bedrock_migrations`, including a file that sorts before one already applied.
 - `bedrock db generate [name] [--allow-data-loss]` replays every migration into an in-memory SQLite database with the runner's own code (foreign keys on, same validation), then diffs it with the Drizzle tables in `pebble.schema` using `pushSQLiteSchema` from `drizzle-kit/api` (the drizzle-kit installed beside `bedrock` when there is one, else the pebble's; `DRIZZLE_KIT_MISSING` otherwise). drizzle-kit's spinner and prompts are suppressed. No difference: nothing is written. Otherwise it writes `migrations/<UTC YYYYMMDDHHMMSS>_<slug>.sql` (slug from `name`, reduced to `[a-z0-9_]`, default `schema`), stamped one second after the newest timestamped file if the clock is not later. Legacy `0000_*` names sort first. Before writing, the new SQL must pass migration validation, replay after the existing files, and leave an empty diff (`GENERATE_FAILED` otherwise).
 - Generate refuses with `MIGRATION_DATA_LOSS` when the SQL drops columns, unless `--allow-data-loss`; a NOT NULL column added to an existing table without a SQL default fails with `MIGRATION_NOT_NULL` (SQLite rejects it once the table has rows, and push would wipe the table). A table that both loses and gains columns fails with `MIGRATION_AMBIGUOUS`, because a rename and a drop plus add look alike. Tables and views the migrations create but `pebble.schema` does not declare are reported as `unmanagedTables` and never diffed, so generate never drops a table; drop it by hand.
@@ -525,7 +525,7 @@ Future (do not build yet): row-level diffs, optimistic updates, caches shared ac
 
 ## 7. Storage
 
-- Files live in `$BEDROCK_HOME/pebbles/<name>/data/files/<bucket>/<id>`; metadata in the pebble DB table `_bedrock_files(id, bucket, owner_id, name, mime, size, sha256, created_at)`.
+- Files live in `<data root>/pebbles/<name>/data/files/<bucket>/<id>`; metadata in the pebble DB table `_bedrock_files(id, bucket, owner_id, name, mime, size, sha256, created_at)`.
 - `bucket(name, { maxSize, access, accept?, admit?, onStored? })`; register with `storage: [attachments]`, `access`: `"public" | "users" | "owner" | (ctx, file) => boolean`.
 - Endpoints: `POST /_bedrock/files/<bucket>` (upload), `GET /_bedrock/files/<bucket>/<id>` (download with Range support), `HEAD` and `DELETE` same path.
 - **Chunked uploads** are mandatory for files > 90 MiB (Cloudflare's free plan rejects request bodies > 100 MB): `POST .../uploads` → `PUT .../uploads/<uid>/<n>` → `POST .../uploads/<uid>/complete`. The client SDK chunks transparently.
@@ -614,21 +614,54 @@ passes all these options through and keeps its existing return shape.
 
 ```
 $BEDROCK_HOME (default ~/.bedrock)
-  config.json        { domain, creators: [emails], port, cloudflare: local or remote tunnel metadata, google: {...} }
+  config.json        { domain, creators: [emails], port, dataDir?, cloudflare: local or remote tunnel metadata, google: {...} }
   setup.json         versioned checklist with completion timestamps and deferred steps
   cloudflared/       local mode: cert.pem, credentials.json (0600), config.yml
   backup-credentials R2 access key/secret (0600); config.json stores only target metadata
   backup-state.json  last successful full/per-pebble backup times
   tunnel-token       Cloudflare tunnel run token (0600); API token is never persisted
   logs/cloudflared.log  rotated cloudflared output (run token redacted)
-  bedrock.sqlite     users, sessions, pebbles registry, deploy tokens
+  bedrock.sqlite     users, sessions, pebbles registry (release paths relative to home), deploy tokens
   pebbles/<name>/
     releases/<ts>/   deployed code (kept: last 3)
-    current -> releases/<ts>  (directory junction on Windows)
+    current -> releases/<ts>  (relative link; absolute directory junction on Windows)
     secrets.json    private environment secrets, outside releases and data (0600 / owner ACL)
-    data/db.sqlite, data/files/
+
+<data root> = config.dataDir, or $BEDROCK_HOME when unset
+  pebbles/<name>/
+    data/db.sqlite, data/files/   BEDROCK_DATA / ctx.dataDir
     logs/            stdout/stderr, rotated
 ```
+
+- **Data directory.** `dataDir` (absolute) moves every pebble's `data/` and `logs/`
+  to another disk; code, secrets, the daemon database, configuration and
+  `cloudflared/` stay in `$BEDROCK_HOME`. Unset, the layout is unchanged. When
+  `dataDir` is set the daemon refuses to start (`DATA_DIR_MISSING`) unless
+  `<dataDir>/pebbles` exists, so an unmounted disk never gets fresh, empty
+  pebble data. Set it on a fresh install with `bedrock setup identity --data-dir
+  <path>` (setup refuses with `DATA_DIR_IN_USE` once pebble data exists). Doctor
+  reports the data directory and its free space (`data-dir` check).
+- `bedrock data move <dir>` relocates existing data while the daemon is stopped
+  (`DAEMON_RUNNING` otherwise). For each `pebbles/<name>/{data,logs}` in the
+  current data root it copies into `<dir>/pebbles/<name>/<category>.partial`
+  (files, modes, mtimes, symlinks verbatim; sockets and FIFOs skipped), compares
+  SHA-256 of every file, symlink target and directory against the source
+  (`DATA_COPY_MISMATCH`), then renames it into place. Only after every copy
+  verifies does it write `dataDir` (`<dir>` equal to home removes the key). The
+  old copy is never deleted: remove it after checking the pebbles, or revert by
+  restoring the previous `dataDir`. It refuses overlapping directories
+  (`INVALID_DATA_DIR`), too little free space (`DATA_DIR_FULL`) and an existing
+  target that differs from the source (`DATA_DIR_NOT_EMPTY`); an identical
+  target from an interrupted run is accepted, so the command can simply be rerun.
+- Paths Bedrock persists are relative to their root so `$BEDROCK_HOME` can
+  move: registry releases (older absolute rows ending in
+  `pebbles/<name>/releases/<id>` are rewritten when the daemon opens its
+  database), `current`, and the local tunnel's `credentialsFile`/`configFile` in
+  `config.json`. `cloudflared/config.yml` holds an absolute `credentials-file`
+  because cloudflared requires it; rerun `bedrock setup cloudflare` after moving
+  home. Release `node_modules` links to first-party packages point at the
+  daemon's checkout (`$BEDROCK_HOME/src` for installer setups): keep the checkout
+  at the same path, or redeploy, when moving home.
 
 - `bedrock setup` is a guided, resumable CLI wizard: prereqs, identity, cloudflare,
   google, backups, service, verify. It marks a step complete only after success in

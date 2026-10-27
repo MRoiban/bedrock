@@ -1,8 +1,8 @@
 import { copyFile, mkdir, rm } from "node:fs/promises";
 import { privateFile } from "../private-file";
 import { hostname } from "node:os";
-import { join } from "node:path";
-import { atomicWrite, readConfig } from "../daemon/config";
+import { join, resolve } from "node:path";
+import { atomicWrite, readConfig, type LocalTunnel } from "../daemon/config";
 import { BedrockError } from "../error";
 import { cloudflaredBinary } from "./supervisor";
 import type { Cloudflare } from "./client";
@@ -12,6 +12,9 @@ export interface LocalOptions { binary?: () => string; run?: (args: string[], op
 export function localConfig(domain: string, port: number, id: string, credentials: string) {
   return `tunnel: ${JSON.stringify(id)}\ncredentials-file: ${JSON.stringify(credentials)}\ningress:\n  - hostname: ${JSON.stringify(`*.${domain}`)}\n    service: http://127.0.0.1:${port}\n  - service: http_status:404\n`;
 }
+// config.json keeps these relative to home so it can move; cloudflared needs absolute paths.
+export const localTunnelFiles = (home: string, tunnel: Pick<LocalTunnel, "credentialsFile" | "configFile">) =>
+  ({ credentialsFile: resolve(home, tunnel.credentialsFile), configFile: resolve(home, tunnel.configFile) });
 export async function localTunnelSetup(home: string, options: LocalOptions = {}) {
   const config = await readConfig(home);
   if (config.cloudflare && config.cloudflare.mode !== "local") throw new BedrockError("TUNNEL_CONFLICT", "This server already uses an API-managed tunnel.", "Use --api-token to update it, or tear it down before changing modes.");
@@ -39,15 +42,15 @@ export async function localTunnelSetup(home: string, options: LocalOptions = {})
   if (!Array.isArray(tunnels) || tunnels.some(t => !t || typeof t.id !== "string" || typeof t.name !== "string")) throw new BedrockError("CLOUDFLARED_OUTPUT_INVALID", "cloudflared tunnel list returned an invalid tunnel list.", "Check cloudflared's version and retry bedrock setup cloudflare.");
   const matches = tunnels.filter(t => t.name === name);
   if (matches.length > 1) throw new BedrockError("TUNNEL_CONFLICT", "Multiple tunnels match this hostname.", "Remove duplicate tunnels in Cloudflare and retry.");
-  const credentialsFile = config.cloudflare?.credentialsFile ?? join(directory, "credentials.json");
+  const stored = { credentialsFile: config.cloudflare?.credentialsFile ?? join("cloudflared", "credentials.json"), configFile: join("cloudflared", "config.yml") };
+  const { credentialsFile, configFile } = localTunnelFiles(home, stored);
   if (!matches.length) await execute([...prefix, "create", "--credentials-file", credentialsFile, name]);
   const credentials = await Bun.file(credentialsFile).json().catch(() => null);
   const id = matches[0]?.id ?? credentials?.TunnelID;
   if (!id || credentials?.TunnelID !== id) throw new BedrockError("TUNNEL_CREDENTIALS_MISSING", "Local tunnel credentials are missing or do not match.", "Restore cloudflared/credentials.json from this server, or delete the unused tunnel and repeat setup.");
   await privateFile(credentialsFile);
-  const configFile = join(directory, "config.yml");
   await atomicWrite(configFile, localConfig(config.domain, config.port, id, credentialsFile));
-  config.cloudflare = { mode: "local", tunnelId: id, name, credentialsFile, configFile };
+  config.cloudflare = { mode: "local", tunnelId: id, name, ...stored };
   await atomicWrite(join(home, "config.json"), JSON.stringify(config, null, 2) + "\n");
   try {
     await execute([...prefix, "route", "dns", "--help"]);

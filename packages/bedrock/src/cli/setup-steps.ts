@@ -1,6 +1,7 @@
-import { statfs } from "node:fs/promises";
-import { join } from "node:path";
-import { atomicWrite, readConfig, validateConfig } from "../daemon/config";
+import { mkdir, readdir, statfs } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { atomicWrite, openDataRoot, readConfig, validateConfig, type DaemonConfig } from "../daemon/config";
+import { inside, physical } from "../daemon/move-data";
 import { backupSetup } from "../backup";
 import type { Cloudflare } from "../tunnel/client";
 import { tunnelSetup } from "../tunnel";
@@ -59,11 +60,23 @@ async function identity(context: StepContext) {
   const domain = (await ask("--domain", "Cloudflare domain", config?.domain ?? "")).toLowerCase();
   const creator = (await ask("--creator", "Your creator email", config?.creators[0] ?? gitEmail)).toLowerCase();
   const port = Number(await ask("--port", "Daemon port", String(config?.port ?? 3000)));
+  const currentData = config?.dataDir ? await openDataRoot(home, config) : home;
+  const answer = await ask("--data-dir", "Pebble data directory (blank: BEDROCK_HOME)", config?.dataDir ?? "");
+  const dataDir = answer ? resolve(answer) : home;
   if (domain.length > 253 || !domain.includes(".") || domain.split(".").some(label => label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(creator) || !Number.isInteger(port) || port < 1 || port > 65535) throw new BedrockError("INVALID_IDENTITY", "Use a public domain, creator email and fixed port.", "Pass --domain example.com --creator you@example.com --port 3000.");
   if (!(await (options.portFree ?? portFree)(port)) && (!config || config.port !== port || !await (options.status ?? localStatus)(home).catch(() => null))) throw new BedrockError("PORT_IN_USE", `Port ${port} is already in use.`, "Choose another --port or stop the other server.");
-  config = validateConfig({ ...config, domain, port, creators: [...new Set([creator, ...(config?.creators ?? [])])] });
+  if (dataDir !== currentData) {
+    if (dataDir !== home && inside(await physical(join(home, "pebbles")), await physical(dataDir))) throw new BedrockError("INVALID_DATA_DIR", "The data directory cannot be inside BEDROCK_HOME/pebbles.", "Choose a directory such as /data/bedrock.");
+    // Changing dataDir with existing pebble data would hide that data; moving it is a separate, verified step.
+    const existing = await readdir(join(currentData, "pebbles")).catch(error => { if (error.code === "ENOENT") return []; throw error; });
+    if (existing.length) throw new BedrockError("DATA_DIR_IN_USE", `Pebble data already exists in ${currentData}.`, `Stop the daemon and run bedrock data move ${dataDir}.`);
+    await mkdir(join(dataDir, "pebbles"), { recursive: true, mode: 0o700 });
+  }
+  const next: DaemonConfig = { ...config, domain, port, creators: [...new Set([creator, ...(config?.creators ?? [])])] };
+  if (dataDir === home) delete next.dataDir; else next.dataDir = dataDir;
+  config = validateConfig(next);
   await atomicWrite(join(home, "config.json"), JSON.stringify(config, null, 2) + "\n");
-  action(`Identity: ${domain} · ${creator} · port ${port}`);
+  action(`Identity: ${domain} · ${creator} · port ${port}${dataDir !== home ? ` · data in ${dataDir}` : ""}`);
   return false;
 }
 

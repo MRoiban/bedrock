@@ -226,7 +226,9 @@ applied migrations; `--force` overrides that guard. To recover an older schema,
 stop the pebble, select compatible code with a forced rollback, then restore its
 matching snapshot. Do not treat code rollback as database rollback.
 
-`$BEDROCK_HOME` defaults to `~/.bedrock`. Protect that directory and back up your
+`$BEDROCK_HOME` defaults to `~/.bedrock`. To put pebble data and logs on another
+disk, stop the daemon and run `bedrock data move /data/bedrock` (it verifies the
+copy, sets `dataDir` and keeps the old copy). Protect that directory and back up your
 source code/configuration separately: data snapshots include pebble DBs/files and
 the daemon DB, but exclude releases, OAuth settings, and credential files. Daemon
 DB recovery is an offline operation; the pebble restore command does not replace

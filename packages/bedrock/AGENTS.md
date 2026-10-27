@@ -849,6 +849,7 @@ bedrock self-update --remote # logged-in daemon: update, restart, poll new boot/
 bedrock backup run
 bedrock backup ls notes --json
 bedrock backup restore notes --at 2026-10-06T03:00:00.000Z --yes
+bedrock data move /data/bedrock  # daemon stopped: copy+verify pebble data/logs, set dataDir
 bedrock doctor --json
 bedrock token ls --json
 bedrock logout
@@ -856,6 +857,14 @@ bedrock logout
 
 The daemon runs all pebbles on private localhost ports, proxies hostnames, enforces
 access/Origin and supervises crashes. `$BEDROCK_HOME` defaults to `~/.bedrock`.
+To keep code on a fast disk and pebble data on a large one, set `dataDir` in
+config.json (`bedrock setup identity --data-dir /data/bedrock` on a fresh
+install): each pebble's `data/` (BEDROCK_DATA, ctx.dataDir) and `logs/` then live
+under `<dataDir>/pebbles/<name>/`. Move existing data with the daemon stopped:
+`bedrock data move <dir>` copies, verifies every file by SHA-256, switches
+`dataDir`, and keeps the old copy for you to delete. The daemon refuses to start
+when `<dataDir>/pebbles` is missing (an unmounted disk). Pebbles that need large
+caches or browser profiles should keep them under ctx.dataDir so they follow it.
 Only Bun and `cloudflared` need installing (OS service managers are built in).
 Setup defaults to Cloudflare browser authorization and a locally managed tunnel:
 origin certificate, credentials and ingress YAML live under cloudflared/ in

@@ -4,7 +4,7 @@ import { BedrockError } from "../error";
 import { Database } from "bun:sqlite";
 import { mkdir } from "node:fs/promises";
 import { privateFile } from "../private-file";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { applyMigrations } from "../db";
 import { asBedrockError } from "../error";
 import { atomicWrite } from "./config";
@@ -12,19 +12,44 @@ import { atomicWrite } from "./config";
 export interface PebbleRecord { name: string; release: string; previous_release: string | null; status: string }
 export const tokenHash = (token: string) => new Bun.CryptoHasher("sha256").update(token).digest("hex");
 
+// Releases are stored relative to home so a moved install keeps its registry.
+function storedRelease(home: string, path: string | null) {
+  if (path === null) return null;
+  const inside = relative(home, path);
+  return inside && inside !== ".." && !inside.startsWith(".." + sep) && !isAbsolute(inside) ? inside : path;
+}
+const loadedRecord = (home: string, record: PebbleRecord | null) => record && {
+  ...record, release: resolve(home, record.release), previous_release: record.previous_release && resolve(home, record.previous_release),
+};
+// Registries written before relative paths name the old home; the tail is Bedrock's own layout.
+function relativizeReleases(db: Database) {
+  const rows = db.query("SELECT name, release, previous_release FROM pebbles").all() as PebbleRecord[];
+  for (const row of rows) {
+    const tail = (path: string | null) => {
+      if (path === null || !isAbsolute(path)) return path;
+      const parts = path.split(/[\\/]/);
+      const [pebbles, name, releases, id] = parts.slice(-4);
+      return pebbles === "pebbles" && name === row.name && releases === "releases" && id ? ["pebbles", name, "releases", id].join(sep) : path;
+    };
+    const release = tail(row.release), previous = tail(row.previous_release);
+    if (release !== row.release || previous !== row.previous_release) db.query("UPDATE pebbles SET release=?, previous_release=? WHERE name=?").run(release, previous, row.name);
+  }
+}
+
 export async function openDaemonDatabase(home: string, migrations = join(import.meta.dir, "migrations")) {
   await mkdir(home, { recursive: true, mode: 0o700 });
   const db = new Database(join(home, "bedrock.sqlite"), { create: true, strict: true });
   try {
     db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     await applyMigrations(db, migrations);
+    relativizeReleases(db);
     return {
       db, home,
-      list: () => db.query("SELECT * FROM pebbles ORDER BY name").all() as PebbleRecord[],
-      get: (name: string) => db.query("SELECT * FROM pebbles WHERE name=?").get(name) as PebbleRecord | null,
+      list: () => (db.query("SELECT * FROM pebbles ORDER BY name").all() as PebbleRecord[]).map(record => loadedRecord(home, record)!),
+      get: (name: string) => loadedRecord(home, db.query("SELECT * FROM pebbles WHERE name=?").get(name) as PebbleRecord | null),
       save(record: PebbleRecord) {
         db.query("INSERT INTO pebbles VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET release=excluded.release, previous_release=excluded.previous_release, status=excluded.status")
-          .run(record.name, record.release, record.previous_release, record.status);
+          .run(record.name, storedRelease(home, record.release), storedRelease(home, record.previous_release), record.status);
       },
       status: (name: string, status: string) => db.query("UPDATE pebbles SET status=? WHERE name=?").run(status, name),
       remove: (name: string) => db.query("DELETE FROM pebbles WHERE name=?").run(name),

@@ -1,6 +1,6 @@
 import { statfs } from "node:fs/promises";
 import { join } from "node:path";
-import { readConfig } from "../daemon/config";
+import { openDataRoot, readConfig } from "../daemon/config";
 import { Cloudflare } from "../tunnel/client";
 import { tunnelStatus } from "../tunnel";
 import { cloudflaredBinary } from "../tunnel/supervisor";
@@ -72,6 +72,14 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
     const bytes = Number(space.bavail) * Number(space.bsize);
     add("disk", bytes < 5 * 1024 ** 3 ? "warn" : "pass", `${(bytes / 1024 ** 3).toFixed(1)} GiB free.`, "Keep at least 5 GiB free for deployments and databases.");
   } catch { add("disk", "warn", "Could not inspect free disk space.", "Check BEDROCK_HOME exists and is readable."); }
+  if (config?.dataDir) {
+    try {
+      const root = await openDataRoot(home, config);
+      const space = await (options.disk ?? statfs)(root);
+      const bytes = Number(space.bavail) * Number(space.bsize);
+      add("data-dir", bytes < 5 * 1024 ** 3 ? "warn" : "pass", `Pebble data in ${root}: ${(bytes / 1024 ** 3).toFixed(1)} GiB free.`, "Keep at least 5 GiB free on the data disk.");
+    } catch (error) { add("data-dir", "fail", `Pebble data directory ${config.dataDir} is unavailable.`, error instanceof BedrockError ? error.hint : "Mount the data disk."); }
+  }
   if (status) for (const pebble of status.pebbles) add(`pebble:${pebble.name}`, pebble.healthy ? "pass" : "fail", `${pebble.name}: ${pebble.status}${pebble.healthy ? ", healthy" : ", unhealthy"}`, `Inspect bedrock logs ${pebble.name}; restart or redeploy it.`);
   else add("pebbles", "warn", "Skipped: daemon unavailable.", "Start the daemon and retry doctor.", true);
   return checks;

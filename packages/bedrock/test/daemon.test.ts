@@ -1,7 +1,7 @@
 import { request as httpRequest } from "node:http";
 import { expect, test } from "bun:test";
 import { cp, mkdir, readlink, readdir, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { startDaemon } from "../src/daemon";
 import { setup } from "../src/daemon/config";
 import { createArchive } from "../src/daemon/archive";
@@ -54,7 +54,10 @@ test("daemon routes, strips headers, authorizes, swaps, retains releases, rolls 
     for (const host of ["unknown.localhost", "auth.localhost", "www.example.test", "sample.evil.test", "nested.sample.localhost"]) expect((await h.request(host)).status).toBe(404);
     const deployed = await (await h.deploy("sample", dir)).json();
     expect(deployed.ok).toBe(true);
-    expect(await readlink(join(h.home, "pebbles/sample/current"))).toBe(deployed.value.release);
+    const current = async () => resolve(h.home, "pebbles/sample", await readlink(join(h.home, "pebbles/sample/current")));
+    expect(await current()).toBe(deployed.value.release);
+    // POSIX links are relative so a moved BEDROCK_HOME keeps them; Windows junctions are absolute.
+    if (process.platform !== "win32") expect(await readlink(join(h.home, "pebbles/sample/current"))).toBe(join("releases", basename(deployed.value.release)));
     expect(await readlink(join(deployed.value.release, "node_modules/bedrock"))).toBe(resolve(import.meta.dir, ".."));
     for (const host of ["sample.localhost", "sample.example.test", "sample.localhost:1234"]) expect(await (await h.request(host, "/version")).text()).toBe("v1");
     const echo = await h.request("sample.localhost", "/echo", { method: "POST", body: "streamed body" });
@@ -75,7 +78,7 @@ test("daemon routes, strips headers, authorizes, swaps, retains releases, rolls 
     await Bun.write(join(dir, "pebble.ts"), "throw new Error('broken release');");
     expect((await h.deploy("sample", dir)).status).toBe(500);
     expect(await (await h.request("sample.localhost", "/version")).text()).toBe("v2");
-    expect(await readlink(join(h.home, "pebbles/sample/current"))).toBe(v2);
+    expect(await current()).toBe(v2);
     expect((await h.api("/api/pebbles/sample/rollback", { method: "POST" })).status).toBe(200);
     expect(await (await h.request("sample.localhost", "/version")).text()).toBe("v1");
     const oldPid = (await h.list())[0]!.pid;

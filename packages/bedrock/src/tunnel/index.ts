@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { rm } from "node:fs/promises";
 import { atomicWrite, readConfig } from "../daemon/config";
 import { BedrockError } from "../error";
-import { localConfig } from "./local";
+import { localConfig, localTunnelFiles } from "./local";
 import { Cloudflare, ingress, type Tunnel } from "./client";
 
 export const tunnelTokenPath = (home: string) => join(home, "tunnel-token");
@@ -31,8 +31,9 @@ export async function tunnelStatus(home: string, api?: Cloudflare) {
   const cf = config.cloudflare;
   if (!cf) return { configured: false };
   if (cf.mode === "local") {
-    const credentials = await Bun.file(cf.credentialsFile).json().catch(() => null);
-    let matches = await Bun.file(cf.configFile).text().catch(() => "") === localConfig(config.domain, config.port, cf.tunnelId, cf.credentialsFile);
+    const files = localTunnelFiles(home, cf);
+    const credentials = await Bun.file(files.credentialsFile).json().catch(() => null);
+    let matches = await Bun.file(files.configFile).text().catch(() => "") === localConfig(config.domain, config.port, cf.tunnelId, files.credentialsFile);
     if (api) {
       const { zoneId } = await api.discover(config.domain);
       const records = await api.dns(zoneId, `*.${config.domain}`);
@@ -65,7 +66,7 @@ export async function tunnelTeardown(home: string, api: Cloudflare | undefined, 
     await api.call(`/zones/${encodeURIComponent(cf.zoneId)}/dns_records/${record.id}`, "DELETE");
   }
   if ((await api.tunnels(cf.accountId)).some(tunnel => tunnel.id === cf.tunnelId)) await api.call(`/accounts/${encodeURIComponent(cf.accountId)}/cfd_tunnel/${cf.tunnelId}`, "DELETE");
-  if (local) { await rm(local.configFile, { force: true }); await rm(local.credentialsFile, { force: true }); }
+  if (local) { const files = localTunnelFiles(home, local); await rm(files.configFile, { force: true }); await rm(files.credentialsFile, { force: true }); }
   delete config.cloudflare;
   await atomicWrite(join(home, "config.json"), JSON.stringify(config, null, 2) + "\n");
   await rm(tunnelTokenPath(home), { force: true });

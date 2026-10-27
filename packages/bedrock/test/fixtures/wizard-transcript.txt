@@ -14,6 +14,7 @@
 Cloudflare domain: example.com
 Your creator email [creator@example.com]: creator@example.com
 Daemon port [3000]: 3000
+Pebble data directory (blank: BEDROCK_HOME): 
 ✓ Identity: example.com · creator@example.com · port 3000
 
 [3/7] Cloudflare

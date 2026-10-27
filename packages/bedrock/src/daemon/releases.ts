@@ -1,9 +1,10 @@
 import { assertRollbackSafe } from "./rollback";
 import { mkdir, readdir, rename, rm, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 import { extract, installRelease } from "./archive";
 import type { DaemonDatabase, PebbleRecord } from "./db";
+import { pebbleDataDir } from "./config";
 import { Supervisor, stopChild, retireChild, type Child } from "./supervisor";
 
 export class Releases {
@@ -26,19 +27,24 @@ export class Releases {
     const root = join(this.home, "pebbles", name);
     const temporary = join(root, `current.${crypto.randomUUID()}`);
     const old = this.supervisor.child(name);
-    await symlink(child.release, temporary, process.platform === "win32" ? "junction" : "dir");
+    await this.link(child.release, temporary);
     try {
       if (child.process.exitCode !== null) throw new BedrockError("HEALTH_FAILED", "Candidate exited before activation.", `Check bedrock logs ${name} and retry.`);
       await this.replaceCurrent(temporary, root);
       try { this.db.save({ name, release: child.release, previous_release: previous?.release ?? null, status: "running" }); }
       catch (error) {
-        if (previous) { await symlink(previous.release, temporary, process.platform === "win32" ? "junction" : "dir"); await this.replaceCurrent(temporary, root); }
+        if (previous) { await this.link(previous.release, temporary); await this.replaceCurrent(temporary, root); }
         else await rm(join(root, "current"), { force: true });
         throw error;
       }
       this.supervisor.activate(name, child);
     } finally { await rm(temporary, { force: true }); }
     if (old) await retireChild(old).catch(error => this.warn(name, error));
+  }
+  // A relative link survives moving BEDROCK_HOME; Windows junctions must be absolute.
+  private async link(release: string, path: string) {
+    if (process.platform === "win32") await symlink(release, path, "junction");
+    else await symlink(relative(join(path, ".."), release), path, "dir");
   }
   private async replaceCurrent(temporary: string, root: string) {
     const current = join(root, "current");
@@ -83,7 +89,7 @@ export class Releases {
     return this.exclusive(name, async () => {
       const record = this.record(name);
       if (!record.previous_release) throw new BedrockError("NO_PREVIOUS_RELEASE", "There is no previous release to roll back to.", "Deploy another release first.");
-      if (!force) await assertRollbackSafe(join(this.home, "pebbles", name, "data", "db.sqlite"), record.previous_release);
+      if (!force) await assertRollbackSafe(join(pebbleDataDir(this.supervisor.dataRoot, name), "db.sqlite"), record.previous_release);
       const child = await this.supervisor.launch(name, record.previous_release);
       try { await this.switch(name, child, record); }
       catch (error) { await stopChild(child); throw error; }
@@ -114,6 +120,7 @@ export class Releases {
       this.record(name);
       await this.supervisor.stop(name);
       await rm(join(this.home, "pebbles", name), { recursive: true, force: true });
+      await rm(join(this.supervisor.dataRoot, "pebbles", name), { recursive: true, force: true });
       this.db.remove(name);
       this.supervisor.forget(name);
       return { name, deleted: true };
