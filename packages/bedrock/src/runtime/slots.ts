@@ -23,7 +23,7 @@ const shared = ((globalThis as any)[key] ??= { slots: new AsyncLocalStorage<Slot
 
 const DEFAULT_SLOW_MS = 200;
 const SLOW_HINT = "Move slow work to a service, a detached route, or job(..., { transaction: false }), and keep only the database part in ctx.read/ctx.write.";
-const COMMIT_HINT = "Most of it was the commit waiting on the disk; batch writes into fewer slots or keep pebble data on a faster disk.";
+const COMMIT_HINT = "Most of it was the commit waiting on storage or SQLite locks; batch writes into fewer slots and check held readers, competing database connections, and background-checkpoint fallback warnings. A faster disk alone may not fix this.";
 const WINDOW_MS = 60000;
 // One noisy handler must not bury every other log line, so repeats are counted per window.
 const repeats = new Map<string, { count: number; max: number }>();

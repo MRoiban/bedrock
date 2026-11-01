@@ -124,6 +124,7 @@ export async function startPebble(options: StartPebbleOptions) {
       server, pebble, stopTimeout: services.stopTimeout, db: database.db, execute, jobs,
       stop() {
         return stopping ??= (async () => {
+          const checkpointDeadline = Date.now() + services.stopTimeout + 500;
           clearInterval(storageCleanup);
           clearInterval(tokenCleanup);
           const draining = server.stop(false);
@@ -134,14 +135,14 @@ export async function startPebble(options: StartPebbleOptions) {
           await draining;
           await jobs.stop();
           await execute.close();
-          database.close();
+          await database.closeAsync(checkpointDeadline);
         })();
       },
     };
   } catch (error) {
     await services.stop();
     await executor?.close();
-    database.close();
+    await database.closeAsync();
     throw asBedrockError(error, "START_FAILED", "Check the pebble configuration, web entry, migrations, and port.");
   }
 }

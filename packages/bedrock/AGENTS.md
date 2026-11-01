@@ -115,7 +115,7 @@ and storage effects; errors become `BedrockError(code, message, hint)`. Middlewa
 executes inside the same transaction. Each call is one slot of the pebble's
 serialized queue, so slow work inside it delays every other database request.
 A slot longer than `BEDROCK_SLOW_SLOT_MS` (default 200 ms) logs one warning with
-its kind, name and duration (plus `commit N ms` when the disk commit dominated);
+its kind, name and duration (plus `commit N ms` when the commit dominated);
 repeats of the same name are summarized once a minute. In `bedrock dev`, in tests, and in production with
 `BEDROCK_STRICT_SLOTS=1`, `fetch()` inside a slot throws `NETWORK_IN_SLOT` and
 the slot rolls back. Move the fetch to a detached route, a detached job or a
@@ -123,6 +123,21 @@ service, then use `ctx.write` for the database part (see Detached routes and
 jobs). Do not open nested transactions or schedule
 detached writes after your handler returns. External network side effects cannot
 be rolled back with SQLite.
+
+Pebble commits normally leave WAL checkpointing to a short-lived Bun Worker at
+about 1,000 pages. There is no checkpoint option. Readers and `VACUUM INTO`
+backups can postpone progress: at 64 MiB of sampled WAL, new queued writes fail
+with `DATABASE_WAL_BUSY`; finish held readers and retry. The limit allows one
+polling interval and one transaction of overshoot. Raw `db.$client` SQL inside
+queue slots shares this protection; standalone scripts must yield between short
+batches and avoid held readers. Manual `PRAGMA wal_checkpoint(TRUNCATE)` still
+works. A `DATABASE_CHECKPOINT_FAILED` warning means SQLite auto-checkpoint was
+restored, so commits may pause again; fix the reported cause and restart. For
+commit-dominated slow slots, check SQLite locks, WAL reuse, storage contention and
+these fallback warnings; a faster disk alone may not help. Shutdown attempts a
+bounded final checkpoint; after a crash or cancelled checkpoint, keep the
+`db.sqlite` and `db.sqlite-wal` files together for recovery. `bedrock dev` uses the
+same checkpoint and shutdown behavior.
 
 HTTP: `POST /_bedrock/q/<name>` or `POST /_bedrock/m/<name>`, with JSON arguments
 (`null` without args), gives `{ ok: true, value }` or

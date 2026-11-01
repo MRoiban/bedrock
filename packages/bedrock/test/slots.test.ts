@@ -162,7 +162,7 @@ test("repeated slow slots of one name log once, then a summary per window; commi
     const lines = () => warn.mock.calls.map(args => String(args[0]));
     expect(lines()).toHaveLength(1);
     expect(lines()[0]).toMatch(/Slow slot: mutation "save" held the write queue for \d+ ms \(commit 14 ms\)/);
-    expect(lines()[0]).toContain("commit waiting on the disk");
+    expect(lines()[0]).toContain("commit waiting on storage or SQLite locks");
     await Bun.sleep(150);
     expect(lines()).toHaveLength(2);
     expect(lines()[1]).toMatch(/Slow slot: mutation "save" was slow 2 more time\(s\) in the last 0 s \(max \d+ ms\)/);

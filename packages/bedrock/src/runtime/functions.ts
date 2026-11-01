@@ -25,6 +25,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
   function execute(kind: "query" | "mutation", name: string, args: unknown, request: Request, identity?: { user: User | null; token?: RequestIdentity["token"]; validated?: boolean }, handler?: (ctx: FunctionContext) => unknown, permission?: string, options?: ExecuteOptions) {
     if (closed) return Promise.reject(new BedrockError("PEBBLE_STOPPED", "The pebble has stopped.", "Start a new pebble runtime before executing functions."));
     const run = tail.then(() => runSlot(slots, slotInfo(kind, name, !!handler, options?.label), async () => {
+      if (kind === "mutation") database.checkpoints.beforeWrite();
       const definitions = kind === "query" ? pebble.queries : pebble.mutations;
       if (!handler && (!definitions || !Object.hasOwn(definitions, name))) {
         throw new BedrockError("FUNCTION_NOT_FOUND", `Unknown ${kind}: ${name}`, "Check the function name in pebble.ts.");
