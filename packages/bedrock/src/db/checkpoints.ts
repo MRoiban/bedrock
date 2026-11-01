@@ -5,6 +5,7 @@ import { BedrockError } from "../error";
 const PAGES = 1000;
 const MAX_WAL = 64 * 1024 * 1024;
 const POLL_MS = 250;
+const BACKSTOP_WAIT_MS = 5000;
 
 export function createCheckpoints(sqlite: Database, path: string) {
   const page = (sqlite.query("PRAGMA page_size").get() as { page_size: number }).page_size;
@@ -16,6 +17,7 @@ export function createCheckpoints(sqlite: Database, path: string) {
   let lastAttempt = 0;
   let lastModified = -1;
   let lastSize = -1;
+  let blockedUntil = 0;
   let active: ReturnType<typeof start> | undefined;
 
   function fallback(error: unknown) {
@@ -84,8 +86,20 @@ export function createCheckpoints(sqlite: Database, path: string) {
   return {
     check: () => inspect(true),
     // The sampled limit deliberately allows one transaction and one polling interval of overshoot.
-    beforeWrite() {
-      if (size >= MAX_WAL) throw new BedrockError("DATABASE_WAL_BUSY", `The WAL for ${path} has reached ${Math.round(size / 1024 / 1024)} MiB; writes are paused.`,
+    async beforeWrite() {
+      if (size < MAX_WAL || failed) return;
+      // Every write passes through this one queue, so holding the slot gives TRUNCATE a quiet WAL.
+      // A short pause matches today's stall; failing the caller would be a new way for saves to break.
+      const deadline = Date.now() + BACKSTOP_WAIT_MS;
+      while (size >= MAX_WAL && !failed && !stopped && Date.now() >= blockedUntil && Date.now() < deadline) {
+        await active?.done;
+        await inspect(true);
+        if (size >= MAX_WAL) await Bun.sleep(50);
+      }
+      if (size < MAX_WAL || failed) return;
+      // A pinned reader can outlast any wait, so later writes fail fast instead of queueing behind this one.
+      if (Date.now() >= blockedUntil) blockedUntil = Date.now() + BACKSTOP_WAIT_MS;
+      throw new BedrockError("DATABASE_WAL_BUSY", `The WAL for ${path} has reached ${Math.round(size / 1024 / 1024)} MiB; writes are paused.`,
         "Finish long-lived read transactions (including backups), allow the background checkpoint to run, then retry. Keep writes in short queue slots.");
     },
     stop() {

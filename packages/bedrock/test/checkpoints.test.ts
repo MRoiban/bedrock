@@ -49,6 +49,25 @@ for (const crash of process.platform === "win32" ? [false] : [false, true]) {
   });
 }
 
+test("a queued write waits at the WAL backstop for a checkpoint instead of failing", async () => {
+  const temp = tempDirectory();
+  const database = openDatabase(temp.dir);
+  const execute = createExecutor(definePebble({ name: "wal-wait" }), database);
+  const reader = new Database(join(temp.dir, "db.sqlite"));
+  try {
+    database.sqlite.exec("CREATE TABLE sample (body BLOB); INSERT INTO sample VALUES (randomblob(100))");
+    database.sqlite.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    reader.exec("BEGIN"); reader.query("SELECT * FROM sample").get();
+    database.sqlite.exec("UPDATE sample SET body=randomblob(68000000)");
+    await database.checkpoints.check();
+    const write = execute.job(() => database.sqlite.exec("DELETE FROM sample"));
+    await Bun.sleep(100);
+    reader.exec("ROLLBACK");
+    await write;
+    expect(database.sqlite.query("SELECT count(*) AS n FROM sample").get()).toEqual({ n: 0 });
+  } finally { reader.close(); await execute.close(); await database.closeAsync(); temp.cleanup(); }
+}, 15000);
+
 test("queued writes respect the WAL backstop while queries can release a pinned reader", async () => {
   const temp = tempDirectory();
   const database = openDatabase(temp.dir);
@@ -71,7 +90,7 @@ test("queued writes respect the WAL backstop while queries can release a pinned 
     await execute.job(() => database.sqlite.exec("DELETE FROM sample"));
     expect(database.sqlite.query("SELECT count(*) AS n FROM sample").get()).toEqual({ n: 0 });
   } finally { reader.close(); await execute.close(); await database.closeAsync(); temp.cleanup(); }
-});
+}, 15000);
 
 test("VACUUM INTO backup and restore coexist with checkpoints and a retained old WAL", async () => {
   const temp = tempDirectory();

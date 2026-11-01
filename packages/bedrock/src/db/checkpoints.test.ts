@@ -57,7 +57,7 @@ test("a pinned reader pauses queued writes at the backstop; reads and manual che
     database.sqlite.exec("UPDATE sample SET body=randomblob(65536)");
     await database.checkpoints.check();
     expect(walSize(temp.dir)).toBeGreaterThan(64 * 1024 * 1024);
-    expect(() => database.checkpoints.beforeWrite()).toThrow(expect.objectContaining({ code: "DATABASE_WAL_BUSY" }));
+    await expect(database.checkpoints.beforeWrite()).rejects.toMatchObject({ code: "DATABASE_WAL_BUSY" });
     expect(reader.query("SELECT count(*) AS n FROM sample").get()).toEqual({ n: 1024 });
     reader.exec("ROLLBACK"); reader.close(); reader = undefined;
     await database.checkpoints.check();
@@ -65,7 +65,7 @@ test("a pinned reader pauses queued writes at the backstop; reads and manual che
     expect(() => database.checkpoints.beforeWrite()).not.toThrow();
     expect(walSize(temp.dir)).toBe(0);
   } finally { reader?.close(); await database.closeAsync(); temp.cleanup(); }
-});
+}, 15000);
 
 test("shutdown checkpoints below the threshold, closes handles and preserves data after a move", async () => {
   const temp = tempDirectory();

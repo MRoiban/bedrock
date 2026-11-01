@@ -126,8 +126,9 @@ be rolled back with SQLite.
 
 Pebble commits normally leave WAL checkpointing to a short-lived Bun Worker at
 about 1,000 pages. There is no checkpoint option. Readers and `VACUUM INTO`
-backups can postpone progress: at 64 MiB of sampled WAL, new queued writes fail
-with `DATABASE_WAL_BUSY`; finish held readers and retry. The limit allows one
+backups can postpone progress: at 64 MiB of sampled WAL, the next write waits up
+to 5 seconds for a checkpoint, then fails with `DATABASE_WAL_BUSY` if a held
+reader still blocks it; finish held readers and retry. The limit allows one
 polling interval and one transaction of overshoot. Raw `db.$client` SQL inside
 queue slots shares this protection; standalone scripts must yield between short
 batches and avoid held readers. Manual `PRAGMA wal_checkpoint(TRUNCATE)` still
