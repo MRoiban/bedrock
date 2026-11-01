@@ -9,6 +9,7 @@ import { BedrockError } from "../error";
 import { startDaemon } from "../daemon";
 import { bedrockHome, readConfig } from "../daemon/config";
 import { createArchive } from "../daemon/archive";
+import { encodeProvenance } from "../daemon/provenance";
 import { loadPebble } from "../runtime/load";
 
 function parse(args: string[], hint: string) {
@@ -111,7 +112,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
       await createArchive(dir, archive);
       const warnings = await deployWarnings(dir, archive, provenance);
       const first = !status.pebbles.some((record: { name: string }) => record.name === pebble.name);
-      const result = await (await call(flags, `/api/deploy?name=${pebble.name}`, { method: "POST", body: Bun.file(archive), headers: { "content-type": "application/gzip", "x-bedrock-provenance": JSON.stringify(provenance) } })).json();
+      const result = await (await call(flags, `/api/deploy?name=${pebble.name}`, { method: "POST", body: Bun.file(archive), headers: { "content-type": "application/gzip", "x-bedrock-provenance": encodeProvenance(provenance) } })).json();
       warnExclusive(pebble.name, result);
       const domain = status.domain ?? new URL((await connection(flags)).url).hostname.replace(/^bedrock\./, "");
       const url = domain === "localhost" ? `http://${pebble.name}.localhost:${new URL((await connection(flags)).url).port}` : `https://${pebble.name}.${domain}`;

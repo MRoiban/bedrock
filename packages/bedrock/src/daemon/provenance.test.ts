@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { tempDirectory } from "../../test/helpers";
 import { openDaemonDatabase } from "./db";
-import { parseProvenance, provenanceFile } from "./provenance";
+import { parseProvenance, provenanceFile, decodeProvenance, encodeProvenance } from "./provenance";
 
 test("old registry rows report unknown provenance and follow release metadata after reopening", async () => {
   const temp = tempDirectory();
@@ -19,4 +19,13 @@ test("old registry rows report unknown provenance and follow release metadata af
     expect(parseProvenance("invalid JSON")).toEqual({ commit: null, branch: null, dirty: null });
     expect(parseProvenance('{"commit":1}')).toEqual({ commit: null, branch: null, dirty: null });
   } finally { db?.close(); temp.cleanup(); }
+});
+
+test("provenance survives branch names HTTP headers cannot carry", () => {
+  const info = { commit: "abc123", branch: "feat/日本語", dirty: true };
+  const header = encodeProvenance(info);
+  expect(new Headers({ "x-bedrock-provenance": header }).get("x-bedrock-provenance")).toBe(header);
+  expect(decodeProvenance(header)).toEqual(info);
+  expect(decodeProvenance("%E0%A4%A")).toEqual({ commit: null, branch: null, dirty: null });
+  expect(decodeProvenance(null)).toEqual({ commit: null, branch: null, dirty: null });
 });
