@@ -112,6 +112,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
       const warnings = await deployWarnings(dir, archive, provenance);
       const first = !status.pebbles.some((record: { name: string }) => record.name === pebble.name);
       const result = await (await call(flags, `/api/deploy?name=${pebble.name}`, { method: "POST", body: Bun.file(archive), headers: { "content-type": "application/gzip", "x-bedrock-provenance": JSON.stringify(provenance) } })).json();
+      warnExclusive(pebble.name, result);
       const domain = status.domain ?? new URL((await connection(flags)).url).hostname.replace(/^bedrock\./, "");
       const url = domain === "localhost" ? `http://${pebble.name}.localhost:${new URL((await connection(flags)).url).port}` : `https://${pebble.name}.${domain}`;
       if (!json) {
@@ -177,5 +178,11 @@ export async function daemonCommand(command: string, args: string[], json: boole
     if (!flags["--yes"]) throw new BedrockError("CONFIRM_REQUIRED", "Deleting a pebble removes all code, data, and logs.", "Run bedrock rm <name> --yes to confirm.");
     return { command, ...(await (await call(flags, `${path}?confirm=true`, { method: "DELETE" })).json()) };
   }
-  return { command, ...(await (await call(flags, `${path}/${command}${flags["--force"] ? "?force=true" : ""}`, { method: "POST" })).json()) };
+  const result = await (await call(flags, `${path}/${command}${flags["--force"] ? "?force=true" : ""}`, { method: "POST" })).json();
+  warnExclusive(name!, result);
+  return { command, ...result };
+}
+
+export function warnExclusive(name: string, result: { value?: { exclusive_services?: string } }) {
+  if (result.value?.exclusive_services === "failed") console.warn(`Warning: exclusive services failed for ${name}; the replacement release is selected. Check bedrock logs ${name}.`);
 }

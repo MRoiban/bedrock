@@ -35,3 +35,12 @@ test("hosting rejects invalid socket byte limits and service stop budgets", () =
   }
   expect(() => definePebble({ name: "limits", sockets: { "/host": socket({ maxMessageSize: "16mb", backpressureLimit: "32mb", message() {} }) } })).not.toThrow();
 });
+
+test("exclusive is a boolean service option and preserves inferred values", () => {
+  for (const exclusive of [null, 0, "true", {}]) {
+    expect(() => definePebble({ name: "host", services: { host: service({ exclusive: exclusive as any, start() {} }) } })).toThrow(expect.objectContaining({ code: "INVALID_SERVICE" }));
+  }
+  for (const exclusive of [undefined, false, true]) {
+    expect(() => definePebble({ name: "host", services: { host: service({ ...(exclusive === undefined ? {} : { exclusive }), start: () => 42 }) } })).not.toThrow();
+  }
+});

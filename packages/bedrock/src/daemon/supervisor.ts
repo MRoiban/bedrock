@@ -12,6 +12,8 @@ import { PebbleLogs } from "./logs";
 import { pebbleDataDir } from "./config";
 import { bunConfigArgs } from "../runtime/bundler";
 
+export type ExclusiveServices = "none" | "running" | "failed";
+
 export interface Child {
   process: Bun.Subprocess<"ignore", "pipe", "pipe">;
   port: number;
@@ -24,8 +26,9 @@ export interface Child {
   devSource?: boolean;
   access: Access;
   publicRoutes: string[];
+  exclusiveServices: string[];
 }
-interface State { child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number }
+interface State { child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number; retired: Promise<void> }
 
 export async function stopChild(child: Child) {
   if (child.process.exitCode === null) {
@@ -63,8 +66,8 @@ export class Supervisor {
       timeout: { ms: 15000, error: () => new BedrockError("SERVICE_TOKEN_TIMEOUT", "Service token operation timed out.", "Check pebble logs and retry; a timed-out creation may have committed.") },
     });
   }
-  private async request(name: string, op: string, payload: Record<string, unknown>, options: { stoppedHint: string; timeout?: { ms: number; error: () => BedrockError } }) {
-    const child = this.child(name);
+  private async request(name: string, op: string, payload: Record<string, unknown>, options: { stoppedHint: string; child?: Child; timeout?: { ms: number; error: () => BedrockError } }) {
+    const child = options.child ?? this.child(name);
     if (!child || child.process.exitCode !== null) throw new BedrockError("PEBBLE_STOPPED", `${name} is not running.`, options.stoppedHint);
     const requestId = crypto.randomUUID();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -82,7 +85,7 @@ export class Supervisor {
   child(name: string) { return this.states.get(name)?.child; }
   private state(name: string) {
     let state = this.states.get(name);
-    if (!state) { state = { failures: 0, generation: 0 }; this.states.set(name, state); }
+    if (!state) { state = { failures: 0, generation: 0, retired: Promise.resolve() }; this.states.set(name, state); }
     return state;
   }
   async launch(name: string, release: string, devSource = false): Promise<Child> {
@@ -121,7 +124,7 @@ export class Supervisor {
     const reading = Promise.all([logs.pump(processChild.stdout), logs.pump(processChild.stderr)]);
     // Observe pipe failures immediately; the child is also reaped on every failure path.
     void reading.catch(() => {});
-    const child: Child = { process: processChild, port: 0, release, releaseId, devSource, started, reading, requests: 0, access: "users", publicRoutes: [] };
+    const child: Child = { process: processChild, port: 0, release, releaseId, devSource, started, reading, requests: 0, access: "users", publicRoutes: [], exclusiveServices: [] };
     void processChild.exited.then(() => {
       for (const [requestId, pending] of requests) {
         if (pending.child !== child) continue;
@@ -146,6 +149,9 @@ export class Supervisor {
       const publicRoutes = info.public_routes ?? [];
       if (!Array.isArray(publicRoutes) || publicRoutes.some((key: unknown) => typeof key !== "string")) throw new BedrockError("HEALTH_FAILED", "Invalid public route list.", "Return registered public route keys in the health check.");
       publicRoutes.forEach(validatePublicRouteKey);
+      const exclusiveServices = info.exclusive_services;
+      if (!Array.isArray(exclusiveServices) || exclusiveServices.some((name: unknown) => typeof name !== "string")) throw new BedrockError("HEALTH_FAILED", "Invalid exclusive service list.", "Return exclusive service names in the health check.");
+      child.exclusiveServices = exclusiveServices;
       child.publicRoutes = publicRoutes;
       if (!devSource) {
         await Bun.write(join(release, ".bedrock-public-routes.json"), JSON.stringify(publicRoutes));
@@ -159,6 +165,26 @@ export class Supervisor {
       throw asBedrockError(error, "PEBBLE_START_FAILED", `Check bedrock logs ${name} and retry.`);
     } finally { clearTimeout(timer); }
   }
+  async startExclusive(name: string, child: Child): Promise<ExclusiveServices> {
+    if (!child.exclusiveServices.length) return "none";
+    try {
+      await this.state(name).retired;
+      if (this.stopping || this.child(name) !== child) return "failed";
+      await this.request(name, "services.exclusive.start", {}, {
+        child, stoppedHint: `Restart ${name} and check bedrock logs ${name}.`,
+        timeout: { ms: 60000, error: () => new BedrockError("EXCLUSIVE_START_TIMEOUT", `Exclusive services for ${name} did not start within 60 seconds.`, `Check bedrock logs ${name}; fix blocking service startup and restart the pebble.`) },
+      });
+      return "running";
+    } catch (error) {
+      try { this.logs(name).write(new TextEncoder().encode(JSON.stringify(asBedrockError(error).toJSON()) + "\n")); }
+      catch { console.error("Could not write exclusive service failure to pebble logs."); }
+      // A timed-out start must not leave a selected child silently missing a service.
+      if (child.process.exitCode === null && (!(error instanceof BedrockError) || error.code !== "SERVICE_START_FAILED")) {
+        try { child.process.kill("SIGKILL"); } catch {}
+      }
+      return "failed";
+    }
+  }
   activate(name: string, child: Child, resetFailures = true) {
     if (this.stopping) throw new BedrockError("DAEMON_STOPPING", "The daemon is stopping.", "Restart the daemon and retry.");
     const state = this.state(name);
@@ -166,6 +192,8 @@ export class Supervisor {
     delete state.timer;
     state.generation++;
     if (resetFailures) state.failures = 0;
+    // Preserve retiring children across replacement crashes, until they actually exit.
+    if (state.child) state.retired = Promise.all([state.retired, state.child.process.exited]).then(() => {});
     state.child = child;
     void child.process.exited.then(() => this.crashed(name, child));
   }
@@ -179,10 +207,11 @@ export class Supervisor {
     const generation = state.generation;
     state.timer = setTimeout(() => {
       delete state.timer;
-      const work = this.launch(name, child.release, child.devSource).then(next => {
+      const work = this.launch(name, child.release, child.devSource).then(async next => {
         if (this.stopping || state.generation !== generation || (!child.devSource && this.db.get(name)?.status !== "restarting")) return stopChild(next);
         this.activate(name, next, false);
         this.db.status(name, "running");
+        await this.startExclusive(name, next);
       }).catch(error => {
         if (this.stopping || state.generation !== generation) return;
         this.logs(name).write(new TextEncoder().encode(JSON.stringify(asBedrockError(error).toJSON()) + "\n"));
@@ -202,6 +231,7 @@ export class Supervisor {
     this.state(record.name).failures = 0;
     this.activate(record.name, child);
     this.db.status(record.name, "running");
+    await this.startExclusive(record.name, child);
   }
   async stop(name: string, persist = true) {
     const state = this.state(name);

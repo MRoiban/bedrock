@@ -14,6 +14,8 @@ export interface ServiceContext {
 export interface ServiceDefinition<T = any> {
   start: (ctx: ServiceContext) => T | Promise<T>;
   stopTimeout?: number;
+  /** Wait for the previous release to exit before starting this service. */
+  exclusive?: boolean;
   stop?(value: T): void | Promise<void>;
 }
 export function service<T>(definition: ServiceDefinition<T>): ServiceDefinition<T> { return definition; }

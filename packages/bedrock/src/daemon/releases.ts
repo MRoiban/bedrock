@@ -41,6 +41,7 @@ export class Releases {
       this.supervisor.activate(name, child);
     } finally { await rm(temporary, { force: true }); }
     if (old) await retireChild(old).catch(error => this.warn(name, error));
+    return this.supervisor.startExclusive(name, child);
   }
   // A relative link survives moving BEDROCK_HOME; Windows junctions must be absolute.
   private async link(release: string, path: string) {
@@ -74,10 +75,10 @@ export class Releases {
         await Bun.write(join(release, provenanceFile), JSON.stringify(parseProvenance(request.headers.get("x-bedrock-provenance"))));
         await installRelease(release);
         child = await this.supervisor.launch(name, release);
-        await this.switch(name, child, this.db.get(name));
+        const exclusive_services = await this.switch(name, child, this.db.get(name));
         activated = true;
         await this.prune(name).catch(error => this.warn(name, error));
-        return { ...this.db.get(name)!, public_routes: child.publicRoutes };
+        return { ...this.db.get(name)!, public_routes: child.publicRoutes, exclusive_services };
       } catch (error) {
         if (!activated) {
           if (child) await stopChild(child);
@@ -93,9 +94,10 @@ export class Releases {
       if (!record.previous_release) throw new BedrockError("NO_PREVIOUS_RELEASE", "There is no previous release to roll back to.", "Deploy another release first.");
       if (!force) await assertRollbackSafe(join(pebbleDataDir(this.supervisor.dataRoot, name), "db.sqlite"), record.previous_release);
       const child = await this.supervisor.launch(name, record.previous_release);
-      try { await this.switch(name, child, record); }
+      let exclusive_services;
+      try { exclusive_services = await this.switch(name, child, record); }
       catch (error) { await stopChild(child); throw error; }
-      return this.record(name);
+      return { ...this.record(name), exclusive_services };
     });
   }
   // Same code, new environment: retain routing to the old child until health succeeds.
@@ -106,7 +108,8 @@ export class Releases {
     try { this.supervisor.activate(name, child); this.db.status(name, "running"); }
     catch (error) { await stopChild(child); throw error; }
     if (old) await retireChild(old).catch(error => this.warn(name, error));
-    return this.record(name);
+    const exclusive_services = await this.supervisor.startExclusive(name, child);
+    return { ...this.record(name), exclusive_services };
   }
   async control(name: string, action: string) {
     return this.exclusive(name, async () => {

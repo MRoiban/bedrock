@@ -21,6 +21,8 @@ export type StartPebbleOptions = ({ dir: string; pebble?: never } | { pebble: Pe
   dataDir?: string;
   port?: number;
   dev?: boolean;
+  /** The daemon starts exclusive services after the previous child exits. */
+  deferExclusive?: boolean;
   /** Reject fetch inside queue slots. On unless the caller opts out; production child processes decide from their environment. */
   strictSlots?: boolean;
 };
@@ -36,7 +38,10 @@ export async function startPebble(options: StartPebbleOptions) {
     database.refreshTracking();
     const execute = executor = createExecutor(pebble, database, services.values, slotOptions(pebble.name, options.strictSlots ?? true));
     const serviceContext = await execute.detached(new Request("http://localhost"), ctx => ctx, { user: null }, undefined, "services");
-    await services.start({ pebble, dataDir: database.dataDir, read: serviceContext.read, write: serviceContext.write, log: (...values) => console.log(`[${pebble.name}]`, ...values) });
+    const ctx = { pebble, dataDir: database.dataDir, read: serviceContext.read, write: serviceContext.write, log: (...values: unknown[]) => console.log(`[${pebble.name}]`, ...values) };
+    await services.start(ctx);
+    const startExclusive = () => services.startExclusive(ctx);
+    if (!options.deferExclusive) await startExclusive();
     const jobs = createJobs(pebble.jobs ?? {}, (name, _handler, definition) => definition.transaction === false
       ? execute.detached(new Request("http://localhost/_bedrock/jobs"), definition.run, { user: null }, undefined, `job ${name}`)
       : execute.job(definition.run, name));
@@ -69,7 +74,7 @@ export async function startPebble(options: StartPebbleOptions) {
     }
     if (web.html && !Object.hasOwn(routes, "/*")) routes["/*"] = web.html;
     routes["/_bedrock/files/*"] = files.handle;
-    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes), backup: pebble.backup ?? null }) };
+    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, exclusive_services: services.exclusiveNames, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes), backup: pebble.backup ?? null }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };
     routes["/_bedrock/*"] = () => Response.json({ ok: false, error: new BedrockError("NOT_FOUND", "Unknown Bedrock endpoint.", "Use POST /_bedrock/q/<name> or /_bedrock/m/<name>.").toJSON() }, { status: 404 });
@@ -121,7 +126,7 @@ export async function startPebble(options: StartPebbleOptions) {
     jobs.start();
     let stopping: Promise<void> | undefined;
     return {
-      server, pebble, stopTimeout: services.stopTimeout, db: database.db, execute, jobs,
+      server, pebble, startExclusive, stopTimeout: services.stopTimeout, db: database.db, execute, jobs,
       stop() {
         return stopping ??= (async () => {
           const checkpointDeadline = Date.now() + services.stopTimeout + 500;

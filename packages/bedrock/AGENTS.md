@@ -85,7 +85,7 @@ HTML; `init <name> [--template react]` scaffolds in the current empty directory.
 | `web` | Bun HTML entry path, or static directory, relative to pebble directory |
 | `routes` | Bun handlers keyed by `"METHOD /path"`; `/_bedrock/` reserved |
 | `sockets` | Application `socket({ open?, message, close?, drain? })` handlers by absolute path |
-| `services` | Long-lived `service({ start, stop?, stopTimeout? })` definitions by unique name |
+| `services` | Long-lived `service({ start, stop?, stopTimeout?, exclusive? })` definitions by unique name |
 | `backup` | `{ directories: ["workspaces"], exclude?: ["**/node_modules/**"] }` |
 | `jobs` | Map of `job(cron, handler)` definitions |
 
@@ -694,26 +694,64 @@ before exceeding the bound. Whole 10 MiB text and binary messages are supported;
 frame larger transfers or use HTTP. The bound covers queued payload bytes, not
 WebSocket framing overhead or the currently decoded input frame.
 
-`service({ start(ctx), stop?(value), stopTimeout?: milliseconds })` returns the awaited start value to all
-function, route, socket and job contexts through `ctx.services`. ServiceContext
-is `{ pebble, dataDir, read, write, log, signal }`; raw SQL invalidation belongs
-inside `write` through its FunctionContext. It has no lifetime transaction.
-Services start in map declaration order, after migrations and before HTTP/health
-and child readiness. A failed start throws hinted `SERVICE_START_FAILED`, aborts the signal and unwinds earlier
-services. Later startup failures also unwind services.
+`service({ start(ctx), stop?(value), stopTimeout?: milliseconds, exclusive?: boolean })`
+returns the awaited start value through `ctx.services` in function, route,
+socket and job contexts. ServiceContext is `{ pebble, dataDir, read, write, log,
+signal }`, with no lifetime transaction. Use `write` for raw SQL invalidation.
+
+Use `exclusive: true` for a service that owns a port, browser profile, lock or
+upstream sync:
+
+```ts
+services: {
+  browser: service({
+    exclusive: true,
+    start(ctx) { return openBrowserProfile(ctx.dataDir); },
+    stop(browser) { return browser.close(); },
+  }),
+}
+```
+
+Non-exclusive services start first, in map declaration order, before HTTP and
+health readiness. Exclusive services then start in their declaration order,
+after the previous child exits. Non-exclusive services must not depend on
+exclusive values; exclusive services can use earlier values through
+`ctx.read`/`ctx.write` contexts. Standalone `startPebble` (including test suites)
+starts both groups immediately before returning.
+
+Within one daemon, exclusive services never run in two releases of one pebble
+at once, across deploy, rollback, restart, crash restart and daemon stop/start.
+There is a gap from old stop through new startup; HTTP, sockets and ordinary
+services retain the zero-downtime swap. Handlers touching an exclusive service
+during the gap get `SERVICE_NOT_STARTED` with a retry/logs hint. See the
+[reference measurement](../../docs/reference.md#11-application-sockets-and-long-lived-services)
+for the trivial handoff cost; your service startup adds to that gap.
+
+Deploy, rollback and restart results report
+`exclusive_services: "none" | "running" | "failed"`. A thrown start reports
+`SERVICE_START_FAILED`. Failed exclusive startup
+unwinds the exclusive services already started, then the child gracefully stops
+and exits non-zero; normal crash backoff retries it, marking it `crashed` after
+five rapid failures. The replacement is already selected. CLI warnings point
+to `bedrock logs <name>` (stderr, including with `--json`). Failed startup before
+activation still leaves the previous release serving. Secrets `--restart`
+also returns the exclusive-service result.
 
 Stopping closes the listener, sends 1012 "Service restart" to sockets, aborts
-the service signal, invokes stops in reverse order within a shared deadline,
-then stops jobs/executor/database. The deadline is the maximum declared
+the service signal, and stops services in reverse actual-start order, across
+both groups. An in-progress exclusive start is awaited for cleanup; the
+supervisor can still force-kill it. The shared deadline is the maximum declared
 `stopTimeout`, at least 2000 ms and capped at 30000 ms (positive integer
-milliseconds). It is one budget for all services, not a fresh timeout per stop.
-The child reports this budget before service startup and again at readiness;
-the supervisor allows the budget plus 1000 ms before SIGKILL for stop and swap
-cleanup. The default remains three seconds. Retired releases first get up to
-three seconds to drain HTTP requests. SIGTERM and IPC stop both run
-this cleanup. Crashes/forced kills cannot guarantee cleanup. New release services
-may overlap old ones during a health-gated swap: coordinate shared resources.
-In-memory state such as terminal sessions does not survive deploys/restarts.
+milliseconds), followed by 1000 ms before SIGKILL. Retired releases first get
+up to three seconds to drain HTTP. Startup failures before readiness unwind
+started services too. SIGTERM and IPC stop run cleanup; crashes/forced kills
+cannot guarantee it. In-memory state does not survive deploys/restarts.
+
+Two daemons sharing `BEDROCK_HOME` (unsupported) and a separate `bedrock dev`
+with its own data directory are not covered. Subprocesses and remote work that
+outlive the child need an application lease for stronger shared-resource
+guarantees.
+
 `ServicesOf<typeof pebble>` derives service values; annotate
 `FunctionContext<ServicesOf<typeof pebble>>` or `DetachedContext<...>` (using a
 separate services definition to avoid circular inference) for checked handler

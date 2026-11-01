@@ -182,8 +182,11 @@ services: { host: service({ start(ctx) { return { ready: true }; }, stop(value) 
 sockets: { "/api/host": socket({ message(ws, data, ctx) { ws.send(data); } }) },
 ```
 
-Services start before health/readiness and stop in reverse order within a bounded
-drain window. Handlers access `ctx.services`; detached `ctx.read`/`ctx.write`
+Non-exclusive services start before health/readiness; services stop in reverse
+actual-start order within a bounded drain window. Use `exclusive: true` for a
+port, browser profile or upstream sync: it starts after the previous child exits,
+with a short gap while HTTP and sockets keep the zero-downtime swap. Handlers
+access `ctx.services`; detached `ctx.read`/`ctx.write`
 keep long-lived work outside database transactions. Application sockets use the
 pebble access policy and optional `socket:/api/host` token grants.
 

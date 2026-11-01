@@ -41,7 +41,7 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
         if (body?.restart === true) releases.record(name);
         const result = await secrets.update(name, body);
         supervisor.logs(name).protect(Object.values(await secrets.env(name)));
-        if (body.restart) await releases.restart(name);
+        if (body.restart) return { ...result, exclusive_services: (await releases.restart(name)).exclusive_services };
         return result;
       });
       return Response.json({ ok: true, value }, { headers: { "cache-control": "no-store" } });
