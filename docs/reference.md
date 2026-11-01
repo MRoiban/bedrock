@@ -693,7 +693,7 @@ $BEDROCK_HOME (default ~/.bedrock)
   daemon's copies of first-party peers (`react`, `react-dom`, `drizzle-kit`) are
   linked in only when the release does not install them.
 - `new`, `init`, `db`, `deploy`, `rm`, `start`, `stop`, `restart`, `rollback`,
-  `secrets`, `token`, `backup`, and `jobs` accept `--help` or `-h`: print command
+  `secrets`, `token`, `pebble-token`, `session`, `backup`, and `jobs` accept `--help` or `-h`: print command
   usage and a description, exit 0, and perform no actions. With `--json`, help
   is `{ ok: true, command, usage, description }`. Unknown flags to `new`/`init`
   fail with `INVALID_ARGS` and a usage hint. Invalid pebble names fail with
@@ -761,7 +761,10 @@ $BEDROCK_HOME (default ~/.bedrock)
   session, single-use, expires after five minutes, and requires the exact Origin.
   The callback state is random and checked before accepting the token. Repeating
   login verifies and reuses valid credentials; logout is required before switching
-  servers.
+  servers. On the server, login reports that it uses the local admin token and
+  gives `pebble-token create --as` / `session create --as` commands for an existing
+  creator. It also explains that browser login must run on the computer with the
+  browser, because the callback is loopback-only.
 - CLI credentials are `{url, token}` in `~/.config/bedrock/credentials.json`
   (or `$XDG_CONFIG_HOME/bedrock/credentials.json`), mode 0600. Explicit URL/token
   flags override environment variables; the reachable local daemon takes priority
@@ -882,6 +885,9 @@ bedrock secrets unset upty DISCORD_TOKEN OTHER_SECRET --restart
 bedrock token create --name manager --pebbles "upty,bot-*" \
   --actions deploy,lifecycle,logs,secrets,status,service-tokens --json
 bedrock token ls --json
+bedrock pebble-token create upty --name agent --permissions query:status --as you@example.com --json
+bedrock pebble-token revoke upty <id> --as you@example.com --yes --json
+bedrock session create upty --ttl 15m --as you@example.com --json
 ```
 
 Secret set accepts exactly one name, reads the value from stdin or a hidden
@@ -923,13 +929,61 @@ ownership and transaction rules to ordinary pebble tokens. No daemon SQLite
 connection writes to the pebble DB. Invalid registered permissions return 400
 `INVALID_TOKEN_PERMISSION`; wrong ownership returns 403 `FORBIDDEN`.
 
-Ownerless legacy/manual/local admin tokens cannot mint or revoke service tokens:
-403 `TOKEN_OWNER_REQUIRED` instructs the caller to use a creator login token
-and create the scoped token from it. This avoids inventing a creator identity.
+`bedrock pebble-token create <pebble> --name <name> --permissions <a,b>` calls
+this API and prints the raw token once; `pebble-token revoke <pebble> <id> --yes`
+revokes it. Both accept `--as <email>`, `--url`, `--token`, and `--json` (one JSON
+value on stdout). There is no service-token list API, so no CLI `ls` command.
+
+The local admin token may select an **already existing, configured creator** with
+`--as <email>` (API query `?as=<email>`). Its identity is the exact token loaded
+from `$BEDROCK_HOME/admin-token`, never the request's source address: tunneled
+requests can arrive from loopback too. Unknown users get 403 `CREATOR_NOT_FOUND`;
+non-creators get 403 `FORBIDDEN`, with repair hints. This never creates a user,
+adds a creator, or persists an owner on the admin token. Under ARCHITECTURE.md §8,
+the host user already runs the daemon and its trusted code, so selecting an
+existing creator adds no real power. A creator login token acts as itself;
+`--as` may repeat its own email but cannot switch identity. Ownerless legacy or
+manual tokens still cannot mint/revoke service tokens, even with `--as`.
+403 `TOKEN_OWNER_REQUIRED` points to the working server commands above, or to
+running `bedrock login <domain>` on the computer with the browser.
 IPC failure on child exit returns `PEBBLE_STOPPED`; 15-second timeouts return
 `SERVICE_TOKEN_TIMEOUT`. A timed-out creation may have committed, so callers
 must not assume that no token was created. Ordinary pebble tokens remain in
 `data/db.sqlite` and are included in database backups.
+
+
+### One-time creator session links
+
+`bedrock session create <pebble> [--ttl 15m] [--as <email>] [--json]` returns
+`{ ok: true, command: "session create", value: { url, expiresAt } }`. Like other
+remote commands it accepts `--url` / `--token`. It calls
+`POST /api/pebbles/:name/sessions[?as=<email>]` with `{ ttl?: "15m" }`. The pebble
+must be deployed; no token opt-in is needed. Only unscoped deploy tokens can
+create sessions, with the same existing-creator selection rules as above.
+Durations use integer `s`, `m`, or `h`, default to 15 minutes, and must be positive
+and at most one hour (`INVALID_ARGS` otherwise). Expiry is measured from issuance,
+not redemption, and is returned as Unix milliseconds.
+
+The URL opens `https://<pebble>.<domain>/_bedrock/session#<secret>`. A GET renders
+an explicit confirmation form; it never consumes the link. A CSP-hashed script
+moves the fragment into a hidden POST field and removes it from browser history.
+JavaScript and a button press are required: GET link scanners cannot burn links.
+Fragments never enter HTTP request URLs or access logs, and Bedrock never logs
+the secret or forwards it to the pebble. The confirmation page and redemption
+response use `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
+
+The daemon stores only a SHA-256 hash in `session_links`, bound to the user,
+pebble, and expiry. Redemption requires the exact pebble Origin, rechecks creator
+membership, and consumes the link and creates a session atomically. Concurrent
+redemptions yield at most one session. Invalid, unknown, expired, or reused secrets
+submitted to the form get the existing styled error page (`INVALID_SESSION_LINK`).
+A successful POST sets the ordinary HttpOnly/Secure/SameSite session cookie and
+redirects 303 to the clean pebble root. Its fixed expiry is the link's original
+expiry; neither HTTP nor WebSockets slide it to the normal 30-day lifetime.
+The entry URL is pebble-bound, but the resulting identity is an ordinary global
+creator session, valid across the domain until that expiry. Treat an unused link
+as a creator credential; its first redeemer gets that identity. These are daemon
+operations and require no new pebble author API.
 
 ## 9. Cloudflare Tunnel
 

@@ -894,7 +894,7 @@ directory is on PATH. `bedrock --version` prints local package/checkout identity
 All commands support `--json` (one object; doctor returns a checks array).
 Errors carry `code`, `message`, `hint`; failures set exit code 1.
 `new`, `init`, `db`, `deploy`, `rm`, `start`, `stop`, `restart`, `rollback`,
-`secrets`, `token`, `backup`, and `jobs` accept `--help`/`-h` to print usage and a
+`secrets`, `token`, `pebble-token`, `session`, `backup`, and `jobs` accept `--help`/`-h` to print usage and a
 description without performing actions (exit 0). With `--json`, help returns
 `{ ok: true, command, usage, description }`. Unknown flags to `new`/`init` fail
 with `INVALID_ARGS` and usage hints; invalid pebble names fail with `INVALID_PEBBLE_NAME`.
@@ -923,6 +923,9 @@ bedrock backup restore notes --at 2026-10-06T03:00:00.000Z --yes
 bedrock data move /data/bedrock  # daemon stopped: copy+verify pebble data/logs, set dataDir
 bedrock doctor --json
 bedrock token ls --json
+bedrock pebble-token create notes --name agent --permissions query:list --as you@example.com --json
+bedrock pebble-token revoke notes <id> --as you@example.com --yes --json
+bedrock session create notes --ttl 15m --as you@example.com --json
 bedrock logout
 ```
 
@@ -959,6 +962,9 @@ be used as pebble or bucket names on Windows.
 Remote CLI credentials live in XDG_CONFIG_HOME/bedrock/credentials.json or
 ~/.config/bedrock/credentials.json, mode 0600. Precedence: explicit flags, env
 BEDROCK_URL/BEDROCK_TOKEN, reachable local daemon, saved remote credentials.
+`bedrock login <domain>` on the server explains how to use the local admin token
+with `pebble-token create --as` or `session create --as`. For browser login tokens,
+run login on the computer with the browser: its callback listens on 127.0.0.1.
 Remote operational commands accept `--url`/`--token`. Backup setup is server-local;
 run it on the home server. R2 setup prompts for the secret when omitted, or accepts
 `--r2-secret-access-key`. Credentials are in `$BEDROCK_HOME/backup-credentials`,
@@ -1102,13 +1108,49 @@ returns `{ ok: true, value: { revoked: true } }`. Target must be running
 with `tokens: true`. Tokens are
 ordinary pebble `brk_` tokens owned by the calling deploy token's creator, minted
 through child IPC in an executor mutation slot with `ctx.tokens.create` permission
-validation. Ownerless local/legacy tokens get 403 `TOKEN_OWNER_REQUIRED`: use a
-creator login token to create the scoped deploy token. `TOKENS_DISABLED` and
+validation. `bedrock pebble-token create <pebble> --name <name> --permissions <a,b>`
+prints the token once; `pebble-token revoke <pebble> <id> --yes` revokes it.
+There is no service-token list API or CLI `ls`.
+
+Both commands accept `--as <email>` (API `?as=<email>`). Only the exact local admin
+token from `$BEDROCK_HOME/admin-token` may select another existing configured
+creator, including through the tunnel; source address is never an authorization
+boundary. Unknown email returns `CREATOR_NOT_FOUND`; a non-creator or unauthorized
+identity switch returns `FORBIDDEN` (403 with repair hints). No user or creator is
+created. This adds no real power to the host user who already runs trusted daemon
+code (ARCHITECTURE.md §8). Creator login tokens retain their own identity; `--as`
+may repeat that email but cannot select someone else. Ownerless legacy/manual
+tokens remain refused, even with `--as`. `TOKEN_OWNER_REQUIRED` points to these
+server commands or browser-computer login. `TOKENS_DISABLED` and
 `PEBBLE_STOPPED` return 409; `INVALID_TOKEN_PERMISSION` returns 400.
 All daemon API successes use
 `{ ok: true, value }`; errors use `{ ok: false, error: { code, message, hint } }`.
 Secrets/service-token responses retain `Cache-Control: no-store`; CLI JSON output
 is unchanged.
+
+
+### One-time creator sign-in for deployed pages
+
+`bedrock session create <pebble> [--ttl 15m] [--as <email>] [--json]` returns
+`{ ok: true, command: "session create", value: { url, expiresAt } }`. It accepts
+`--url`/`--token` and calls POST `/api/pebbles/:name/sessions[?as=<email>]` with
+`{ ttl?: "15m" }`. The pebble must be deployed. Only unscoped tokens can mint
+links; existing-creator selection follows the same rules as service tokens.
+TTL uses integer `s`, `m`, or `h`, defaults to 15 minutes, and is positive and at
+most 1 hour. The link and session expire at issuance plus TTL; expiry never slides.
+
+Open the returned URL in the browser and press **Sign in**. The secret is in a
+fragment, removed from history by a CSP-hashed script, then sent only in the
+confirmation POST body. JavaScript is required. GET scanners cannot consume it,
+and the secret is absent from HTTP URLs, referrers and Bedrock logs. The daemon
+stores only its hash. Redemption requires the exact pebble Origin and atomically
+consumes the link and creates the ordinary session. Unknown, expired or reused
+secrets submitted to the form get a styled error page. Success redirects to a
+clean pebble root with `Referrer-Policy: no-referrer`; responses are not cached.
+The link is bound to one pebble, but its resulting cookie carries the ordinary
+**global creator identity** until the fixed expiry. A leaked unused link grants
+that identity to its first redeemer. No pebble changes are needed; use temporary
+homes and fake users for tests, never real creator cookies.
 
 ## Common mistakes
 

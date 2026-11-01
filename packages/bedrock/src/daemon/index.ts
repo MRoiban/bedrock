@@ -1,3 +1,4 @@
+import { createSessionLinks } from "../auth/session-links";
 import { matchesPublicRoute } from "./public-routes";
 import { buildInfo } from "../version";
 import { updateCheckout } from "../self-update";
@@ -40,6 +41,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const sessions = createSessions(db.db);
   const sockets = sessionSockets(sessions);
   const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);
+  const links = createSessionLinks(db, sessions, config, dev);
   const cliLogin = createCliLogin(config, sessions, db, dev);
   const tunnelToken = dev ? "" : (await Bun.file(tunnelTokenPath(home)).text().catch(() => "")).trim();
   const tunnel = config.cloudflare && (config.cloudflare.mode === "local" || tunnelToken) ? new TunnelSupervisor(home, tunnelToken, options.tunnelBinary, config.cloudflare.mode === "local" ? localTunnelFiles(home, config.cloudflare).configFile : undefined) : undefined;
@@ -47,7 +49,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const backups = createBackups(home, db, releases);
   let server: Bun.Server<Relay> | undefined;
   try {
-    await localToken(home, db);
+    const adminToken = await localToken(home, db);
     let updating = false;
     const maintenance = options.maintenance ?? { info: await buildInfo(), async update() {
       if (updating) throw new BedrockError("UPDATE_BUSY", "A self-update is already in progress or awaiting restart.", "Wait for the daemon to restart before retrying.");
@@ -59,7 +61,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
         return result;
       } catch (error) { updating = false; throw error; }
     } };
-    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups, config, maintenance);
+    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups, config, maintenance, { adminToken, links, port: () => server!.port! });
     const notice = (request: Request, status: number, heading: string, hint: string) => wantsPage(request)
       ? noticePage(status, heading, hint)
       : new Response(`${heading}. ${hint.replace(/<\/?code>/g, "")}`, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
@@ -82,6 +84,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           }
           if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
           if (!target || ["auth", "www"].includes(target)) return notFound(request);
+          if (url.pathname === "/_bedrock/session" && db.get(target)) return await links.handle(request, origin, target);
           const child = supervisor.child(target);
           // A deployed but stopped pebble is a temporary condition, not a missing site.
           if (!child) {

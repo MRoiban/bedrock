@@ -47,8 +47,9 @@ export async function opsCommand(command: string, args: string[], json: boolean)
     const local = await connection({}, { credentials: async () => null }).catch(() => null);
     const config = local ? await readConfig(home).catch(() => null) : null;
     if (local && config && url === `https://bedrock.${config.domain}`) {
-      if (!json) { console.log("✓ You're on the server; no login is needed."); return; }
-      return { command: "login", url: local.url, authenticated: true, hint: "You're on the server; no login is needed." };
+      const hint = "The local admin token has no user identity. To act as an existing creator, use bedrock pebble-token create <pebble> --name <name> --permissions <grants> --as <creator-email>, or bedrock session create <pebble> --as <creator-email>. The creator must already have signed in with Google. For a creator login token, run bedrock login <domain> on the computer with your browser; its callback uses that computer’s 127.0.0.1.";
+      if (!json) { console.log(`✓ Using the server’s local admin token.\n${hint}`); return; }
+      return { command: "login", url: local.url, authenticated: true, hint };
     }
     const result = await login(url);
     if (!json) { console.log(`✓ Signed in to ${url}`); return; }

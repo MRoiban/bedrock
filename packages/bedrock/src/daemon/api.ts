@@ -1,3 +1,5 @@
+import { tokenCreator } from "./creator";
+import type { SessionLinks } from "../auth/session-links";
 import { join } from "node:path";
 import { authorizeScope, matchesPebble } from "./token-scope";
 import { createSecrets } from "./secrets";
@@ -14,7 +16,7 @@ import type { Supervisor } from "./supervisor";
 export function daemonError(error: unknown, request?: Request) {
   const typed = asBedrockError(error, "DAEMON_FAILED", "Check the daemon and pebble logs, then retry.");
   const status = ["UNAUTHORIZED", "UNAUTHENTICATED"].includes(typed.code) ? 401
-    : ["FORBIDDEN", "INVALID_IDENTITY", "TOKEN_OWNER_REQUIRED"].includes(typed.code) ? 403
+    : ["FORBIDDEN", "INVALID_IDENTITY", "TOKEN_OWNER_REQUIRED", "CREATOR_NOT_FOUND"].includes(typed.code) ? 403
     : ["PEBBLE_NOT_FOUND", "NOT_FOUND"].includes(typed.code) ? 404
     : ["PEBBLE_BUSY", "PEBBLE_STOPPED", "TOKENS_DISABLED"].includes(typed.code) ? 409
     : ["INVALID_ARGS", "INVALID_TOKEN_PERMISSION", "INVALID_RETURN_URL", "INVALID_OAUTH_STATE", "OAUTH_FAILED", "INVALID_PEBBLE_NAME", "CONFIRM_REQUIRED", "INVALID_ARCHIVE", "UNSAFE_ARCHIVE"].includes(typed.code) ? 400
@@ -22,7 +24,7 @@ export function daemonError(error: unknown, request?: Request) {
   if (request && wantsPage(request)) return noticePage(status, typed.message, escapeHtml(typed.hint), typed.code);
   return Response.json({ ok: false, error: typed.toJSON() }, { status });
 }
-export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Supervisor, tunnelStatus = () => ({ running: false, pid: null as number | null }), backups?: ReturnType<typeof import("../backup").createBackups>, config?: import("./config").DaemonConfig, maintenance?: { info: BuildInfo; update: () => Promise<unknown> }) {
+export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Supervisor, tunnelStatus = () => ({ running: false, pid: null as number | null }), backups?: ReturnType<typeof import("../backup").createBackups>, config?: import("./config").DaemonConfig, maintenance?: { info: BuildInfo; update: () => Promise<unknown> }, identity?: { adminToken: string; links: SessionLinks; port: () => number }) {
   const secrets = createSecrets(db.home);
   const instanceId = crypto.randomUUID();
   return async (request: Request) => {
@@ -46,10 +48,18 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
       });
       return Response.json({ ok: true, value }, { headers: { "cache-control": "no-store" } });
     }
+    const sessionMatch = /^\/api\/pebbles\/([^/]+)\/sessions$/.exec(url.pathname);
+    if (sessionMatch && request.method === "POST" && identity && config) {
+      const name = sessionMatch[1]!; validateName(name); releases.record(name);
+      const user = tokenCreator(db, token, identity.adminToken, config.creators, url.searchParams.get("as"));
+      const body = await request.json().catch(() => { throw new BedrockError("INVALID_ARGS", "Invalid JSON body.", "Send { ttl?: \"15m\" }."); });
+      const origin = config.domain === "localhost" ? `http://${name}.localhost:${identity.port()}` : `https://${name}.${config.domain}`;
+      const value = identity.links.create(user, name, body?.ttl, origin);
+      return Response.json({ ok: true, value }, { headers: { "cache-control": "no-store" } });
+    }
     if (serviceMatch && (request.method === "POST" && !serviceMatch[2] || request.method === "DELETE" && serviceMatch[2])) {
       const name = serviceMatch[1]!; validateName(name); releases.record(name);
-      const user = db.tokenOwner(token);
-      if (!user) throw new BedrockError("TOKEN_OWNER_REQUIRED", "This deploy token has no owning creator user.", "Run bedrock login as a creator, then create a deploy token from that login token.");
+      const user = tokenCreator(db, token, identity?.adminToken ?? "", config?.creators ?? [], url.searchParams.get("as"));
       const body = request.method === "POST" ? await request.json().catch(() => { throw new BedrockError("INVALID_ARGS", "Invalid JSON body.", "Send { name, permissions: string[] }."); }) : undefined;
       const value = await releases.exclusive(name, () => supervisor.serviceTokens(name, user, body, serviceMatch[2]));
       return Response.json({ ok: true, value }, { headers: { "cache-control": "no-store" } });
