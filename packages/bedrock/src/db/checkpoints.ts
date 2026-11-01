@@ -79,7 +79,9 @@ export function createCheckpoints(sqlite: Database, path: string) {
   }
 
   const timer = setInterval(() => {
-    if (!checking) checking = inspect().finally(() => { checking = undefined; });
+    // Keep sampling during a checkpoint, or the backstop goes blind while the WAL grows fastest.
+    if (checking) void stat(`${path}-wal`).then(info => { size = info.size; }, () => {});
+    else checking = inspect().finally(() => { checking = undefined; });
   }, POLL_MS);
   timer.unref();
 
@@ -92,7 +94,7 @@ export function createCheckpoints(sqlite: Database, path: string) {
       // A short pause matches today's stall; failing the caller would be a new way for saves to break.
       const deadline = Date.now() + BACKSTOP_WAIT_MS;
       while (size >= MAX_WAL && !failed && !stopped && Date.now() >= blockedUntil && Date.now() < deadline) {
-        await active?.done;
+        await Promise.race([active?.done, Bun.sleep(Math.max(0, deadline - Date.now()))]);
         await inspect(true);
         if (size >= MAX_WAL) await Bun.sleep(50);
       }

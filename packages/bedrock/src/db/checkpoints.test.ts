@@ -140,3 +140,20 @@ test("an expired shutdown deadline cancels a Worker without waiting for a messag
     reopened.close();
   } finally { worker.mockRestore(); warn.mockRestore(); temp.cleanup(); }
 });
+
+test("the backstop still sees WAL growth while a slow checkpoint is running", async () => {
+  const temp = tempDirectory();
+  const database = openDatabase(temp.dir);
+  const fixture = join(temp.dir, "stuck.ts");
+  await Bun.write(fixture, "self.onmessage = () => {}");
+  const OriginalWorker = globalThis.Worker;
+  const worker = spyOn(globalThis as unknown as { Worker: (...args: any[]) => any }, "Worker").mockImplementation(() => new OriginalWorker(fixture, { ref: false }));
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    fill(database.sqlite, 4000, 1100);
+    while (!worker.mock.calls.length) await Bun.sleep(25);
+    database.sqlite.exec("UPDATE sample SET body=randomblob(65536)");
+    await Bun.sleep(400);
+    await expect(database.checkpoints.beforeWrite()).rejects.toMatchObject({ code: "DATABASE_WAL_BUSY" });
+  } finally { await database.closeAsync(Date.now()); worker.mockRestore(); warn.mockRestore(); temp.cleanup(); }
+}, 15000);
