@@ -908,7 +908,8 @@ pruned). Configure setup with `--interval-minutes 60 --keep 24`, or edit `config
 R2 config uses `type: "r2", account, bucket` plus the same scheduling/retention
 fields. The endpoint is `https://<account>.r2.cloudflarestorage.com`.
 Native S3 listing is used when available; Bun 1.2 uses a dependency-free
-SigV4 ListObjectsV2 fallback. Built-in targets implement async `{ put, get, exists, list, delete }` using
+SigV4 ListObjectsV2 fallback. Built-in targets implement async
+`{ put, get, exists, list, delete }` (put accepts bytes or a Bun file) using
 Bun.S3Client or filesystem; no Litestream/restic. The target directory should be
 outside BEDROCK_HOME, on another disk for disk-failure protection.
 
@@ -925,6 +926,12 @@ daemon/manifests/<filename timestamp>.json
 Filename timestamps replace ISO time colons with hyphens; manifest timestamps
 and backup restore --at remain ISO. Existing manifests retain their stored keys.
 SQLite is snapshotted consistently with VACUUM INTO while live, then gzipped.
+Snapshot SQLite work, hashing and compression run in a Bun Worker thread, keeping
+the daemon's HTTP proxy responsive. Database hashing/compression stream through
+files staged beside the database; disk uploads copy the gzip file and R2 streams
+it with bounded multipart buffering. The DB checksum covers uncompressed SQLite
+bytes. Worker failures remove staging files and fail the backup; daemon shutdown
+cancels active snapshots.
 Files use metadata SHA-256 and upload only if absent. Manifest contains timestamp,
 db key/checksum, file id→SHA-256, package version and migration name/hash list.
 Manifests publish last. Retention keeps the newest `keep` snapshots (default 24)

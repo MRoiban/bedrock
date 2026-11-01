@@ -24,7 +24,7 @@ async function fixture() {
 test("live VACUUM snapshot, gzip, content dedup, metadata and verified restore round-trip", async () => {
   const f = await fixture();
   const puts: string[] = [];
-  const target = { ...f.target, async put(key: string, bytes: Uint8Array) { puts.push(key); await f.target.put(key, bytes); } };
+  const target = { ...f.target, async put(key: string, bytes: Uint8Array | Bun.BunFile) { puts.push(key); await f.target.put(key, bytes); } };
   try {
     const first = await snapshot(target, "notes", join(f.data, "db.sqlite"), join(f.data, "files"), new Date("2026-10-06T01:00:00Z"));
     await snapshot(target, "notes", join(f.data, "db.sqlite"), join(f.data, "files"), new Date("2026-10-06T02:00:00Z"));

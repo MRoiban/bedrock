@@ -4,7 +4,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 
 export interface BackupTarget {
-  put(key: string, bytes: Uint8Array): Promise<void>;
+  put(key: string, bytes: Uint8Array | Bun.BunFile): Promise<void>;
   get(key: string): Promise<Uint8Array>;
   exists(key: string): Promise<boolean>;
   list(prefix: string): Promise<string[]>;
@@ -56,7 +56,24 @@ export function r2Target(config: R2Credentials, suppliedClient?: S3Operations): 
     accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey,
   });
   return {
-    async put(key, bytes) { await client.write(key, bytes); },
+    async put(key, bytes) {
+      if (bytes instanceof Uint8Array) { await client.write(key, bytes); return; }
+      const partSize = 5 * 1024 * 1024;
+      const writer = client.file(key).writer({ partSize, queueSize: 1 });
+      let buffered = 0;
+      try {
+        for await (const chunk of bytes.stream()) {
+          await writer.write(chunk);
+          buffered += chunk.byteLength;
+          // A fast disk must not queue the whole file behind a slow network.
+          if (buffered >= partSize) { await writer.flush(); buffered = 0; }
+        }
+        await writer.end();
+      } catch (error) {
+        await Promise.resolve().then(() => writer.end(error instanceof Error ? error : new Error(String(error)))).catch(() => {});
+        throw error;
+      }
+    },
     async get(key) { return new Uint8Array(await client.file(key).arrayBuffer()); },
     exists: key => client.exists(key),
     async delete(key) { await client.delete(key); },

@@ -1,11 +1,11 @@
-import { snapshotDirectories, restoreDirectories, type DirectoryManifest } from "./directories";
+import { restoreDirectories, type DirectoryManifest } from "./directories";
 import type { DirectoryBackup } from "../config/hosting";
 import { Database } from "bun:sqlite";
-import { mkdtemp, mkdir, rm, rename } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, rm, rename } from "node:fs/promises";
+import { join } from "node:path";
 import { BedrockError } from "../error";
 import type { BackupTarget } from "./target";
-import { version } from "../../package.json";
+import { snapshotInWorker } from "./snapshot-thread";
 
 export interface Manifest extends Partial<DirectoryManifest> {
   timestamp: string;
@@ -20,38 +20,7 @@ const prefix = (name: string) => name === "_daemon" ? "daemon/" : `pebbles/${nam
 const hasTable = (db: Database, name: string) => !!db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
 
 export async function snapshot(target: BackupTarget, name: string, databasePath: string, filesDir?: string, now = new Date(), directories?: DirectoryBackup): Promise<Manifest> {
-  // Beside the database, not in the OS temp dir, which may be RAM-backed and too small for a copy.
-  const temp = await mkdtemp(join(dirname(databasePath), ".bedrock-backup-"));
-  let source: Database | undefined;
-  let copy: Database | undefined;
-  try {
-    source = new Database(databasePath, { readonly: true });
-    source.exec("PRAGMA busy_timeout=5000");
-    source.query("VACUUM INTO ?").run(join(temp, "snapshot.sqlite"));
-    copy = new Database(join(temp, "snapshot.sqlite"), { readonly: true });
-    const bytes = new Uint8Array(await Bun.file(join(temp, "snapshot.sqlite")).arrayBuffer());
-    const timestamp = now.toISOString();
-    const filename = timestamp.replaceAll(":", "-");
-    const base = prefix(name);
-    const manifest: Manifest = { timestamp, db: `${base}db/${filename}.sqlite.gz`, dbSha256: sha256(bytes), files: {}, version, migrations: hasTable(copy, "_bedrock_migrations") ? copy.query("SELECT name, hash FROM _bedrock_migrations ORDER BY name").all() as Manifest["migrations"] : [] };
-    if (filesDir && hasTable(copy, "_bedrock_files")) {
-      const files = copy.query("SELECT id, bucket, sha256 FROM _bedrock_files").all() as { id: string; bucket: string; sha256: string }[];
-      for (const file of files) {
-        const key = `${base}files/${file.sha256}`;
-        if (!await target.exists(key)) {
-          const body = new Uint8Array(await Bun.file(join(filesDir, file.bucket, file.id)).arrayBuffer());
-          if (sha256(body) !== file.sha256) throw new BedrockError("BACKUP_CHECKSUM", `File ${file.id} does not match its metadata.`, "Repair the file before backing up; retry if it was deleted during backup.");
-          await target.put(key, body);
-        }
-        manifest.files[file.id] = file.sha256;
-      }
-    }
-    if (directories) Object.assign(manifest, await snapshotDirectories(target, base, join(databasePath, ".."), directories));
-    await target.put(manifest.db, Bun.gzipSync(bytes));
-    // Publishing the manifest last makes incomplete uploads invisible to restore.
-    await target.put(`${base}manifests/${filename}.json`, new TextEncoder().encode(JSON.stringify(manifest)));
-    return manifest;
-  } finally { source?.close(); copy?.close(); await rm(temp, { recursive: true, force: true }); }
+  return snapshotInWorker(target, { name, databasePath, filesDir, now, directories });
 }
 
 export async function manifests(target: BackupTarget, name: string) {

@@ -1154,6 +1154,11 @@ content-addressed `pebbles/<name>/files/<sha256>` uploads only when absent. A
 manifest at `pebbles/<name>/manifests/<filename timestamp>.json` records DB key/checksum,
 file id→sha256, version, and migration names/hashes. Publish it last. The daemon's
 identity DB is snapshotted under `daemon/db/` and `daemon/manifests/` too.
+Snapshot SQLite work, hashing, and compression run in a Bun Worker thread so
+backups do not block the daemon's HTTP proxy. The database is hashed and gzipped
+as a stream; disk uploads copy the staged gzip file and R2 uses bounded multipart
+uploads. The checksum still covers the uncompressed SQLite bytes. Worker failures
+fail the backup and remove staging files; daemon shutdown cancels active snapshots.
 Filename timestamps replace ISO time colons with hyphens on every platform;
 manifest timestamps and `--at` retain ISO format. Existing backup keys remain
 readable and restore/pruning use the manifest's stored database key.
@@ -1162,8 +1167,8 @@ Retain the newest `keep` snapshots per pebble and for identity (default 24, so o
 day at the default 60-minute interval), delete older DBs/manifests, and GC file
 blobs unreferenced by remaining manifests. `backup.intervalMinutes` and `keep`
 (`backup setup --interval-minutes <n> --keep <n>`) are stored with target
-metadata; the older `hourly`/`daily` keys are ignored. The `VACUUM INTO` copy is
-staged in a `.bedrock-backup-*` directory beside the database, never in the OS
+metadata; the older `hourly`/`daily` keys are ignored. The `VACUUM INTO` copy and
+gzip file are staged in a `.bedrock-backup-*` directory beside the database, never in the OS
 temp directory. Directory-backup settings come from `.bedrock-backup.json`, which
 the daemon writes into a release from the child's health check, so backups do
 not import pebble code into the daemon (a release not started since falls back
