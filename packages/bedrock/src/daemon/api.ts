@@ -78,7 +78,7 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
         const child = supervisor.child(record.name);
         let healthy = false;
         if (child) try { healthy = (await fetch(`http://127.0.0.1:${child.port}/_bedrock/health`, { signal: AbortSignal.timeout(2000) })).ok; } catch {}
-        return { name: record.name, status: record.status, healthy };
+        return { name: record.name, status: record.status, healthy, provenance: record.provenance };
       })) };
     } else if (request.method === "POST" && url.pathname === "/api/self-update" && maintenance) {
       value = await maintenance.update();

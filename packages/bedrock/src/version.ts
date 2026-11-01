@@ -23,3 +23,17 @@ export async function buildInfo(checkout = checkoutRoot, execute = run, platform
 export function formatBuild(info: Partial<BuildInfo>) {
   return `bedrock ${info.version ?? "unknown"}${info.commit ? ` ${info.branch ?? "detached"}@${info.commit.slice(0, 7)}${info.dirty ? " (dirty)" : ""}` : ""} · ${info.platform ?? "unknown"}-${info.arch ?? "unknown"} · bun ${info.bun ?? "unknown"}`;
 }
+
+export type Provenance = Pick<BuildInfo, "commit" | "branch" | "dirty">;
+export async function gitProvenance(directory: string, execute = run): Promise<Provenance> {
+  try {
+    const git = process.platform === "win32" ? "git.exe" : "git";
+    const commit = await execute([git, "-C", directory, "rev-parse", "HEAD"]);
+    const branch = await execute([git, "-C", directory, "symbolic-ref", "--short", "-q", "HEAD"]).catch(() => null);
+    const dirty = !!await execute([git, "-C", directory, "status", "--porcelain", "--untracked-files=normal"]);
+    return { commit, branch, dirty };
+  } catch { return { commit: null, branch: null, dirty: null }; }
+}
+export function formatProvenance(info?: Provenance | null) {
+  return info?.commit ? `${info.branch ?? "detached"}@${info.commit.slice(0, 7)}${info.dirty ? " (dirty)" : ""}` : "unknown source";
+}

@@ -1,5 +1,5 @@
 import { lstat, mkdir, readdir, rm, symlink } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { BedrockError } from "../error";
 
 export async function run(command: string[], cwd?: string, env?: Record<string, string>) {
@@ -100,6 +100,8 @@ async function exists(path: string) {
 }
 
 export async function createArchive(dir: string, archive: string) {
+  // Create the output before tar reads directory mtimes when TMPDIR is inside the source.
+  await Bun.write(resolve(archive), "");
   // macOS tar synthesizes ._* AppleDouble entries from extended attributes unless COPYFILE_DISABLE is set.
-  await run(["tar", "--exclude=node_modules", "--exclude=.bedrock", "--exclude=.git", "--exclude=._*", "--exclude=.DS_Store", "-czf", archive, "-C", resolve(dir), "."], undefined, { COPYFILE_DISABLE: "1" });
+  await run(["tar", "--exclude=node_modules", "--exclude=.bedrock", "--exclude=.git", "--exclude=._*", "--exclude=.DS_Store", "--exclude=.env", "--exclude=.env.*", `--exclude=./${relative(resolve(dir), resolve(archive)).split("\\").join("/")}`, "-czf", resolve(archive), "-C", resolve(dir), "."], undefined, { COPYFILE_DISABLE: "1" });
 }

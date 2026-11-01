@@ -1,3 +1,4 @@
+import { parseProvenance, provenanceFile } from "./provenance";
 import { assertRollbackSafe } from "./rollback";
 import { mkdir, readdir, rename, rm, symlink } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -70,6 +71,7 @@ export class Releases {
         if (!request.body) throw new BedrockError("INVALID_ARCHIVE", "Deploy body is empty.", "Upload a tar.gz containing pebble.ts at its root.");
         await Bun.write(archive, new Response(request.body));
         await extract(archive, release);
+        await Bun.write(join(release, provenanceFile), JSON.stringify(parseProvenance(request.headers.get("x-bedrock-provenance"))));
         await installRelease(release);
         child = await this.supervisor.launch(name, release);
         await this.switch(name, child, this.db.get(name));

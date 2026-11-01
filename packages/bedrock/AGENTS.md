@@ -207,6 +207,20 @@ Dev/deploy apply migrations automatically. Never edit applied SQL: checksums are
 recorded in `_bedrock_migrations`. Put each schema change in a new migration.
 Bedrock owns migration transaction boundaries.
 
+Deploy archives exclude `node_modules`, `.bedrock`, `.git`, `._*`, `.DS_Store`,
+`.env` and `.env.*` at every depth, plus the archive itself. `.envoy/` and
+`.environment` remain included. Git ignore rules are **not** applied: ignored
+web/build output still ships. Use `bedrock deploy <clean-export-dir>` to ship less.
+Scratch trees otherwise ship; compressed archives over 50 MB warn with the five
+largest top-level directories and their uncompressed sizes (metadata only, no
+symlink traversal). Dirty Git trees, including untracked files, also warn.
+Human output prints warnings; JSON deploy output has `warnings: string[]` and
+remains one value on stdout. Releases report `provenance: { commit, branch,
+dirty }` in deploy/lifecycle/list/status responses, retained after daemon restarts
+and rollback to describe the selected release. Missing Git, non-repositories and
+older releases have null provenance fields; detached HEAD has a null branch.
+Older clients/daemons continue deploying, but older daemons do not retain provenance.
+
 Deploy keeps the last three code releases. `bedrock rollback notes` switches code,
 not data; it refuses a target missing applied migrations. `--force` bypasses the
 check when you have established compatibility. Restore a matching backup for

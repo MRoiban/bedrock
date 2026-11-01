@@ -719,6 +719,24 @@ $BEDROCK_HOME (default ~/.bedrock)
   stay plain text). Errors from pebble code are unaffected. The local CLI login
   callback also answers with a styled page.
 - **Deploy**: `bedrock deploy` in a pebble directory. Local: copies to a new release. Remote: tars the directory and uploads to `https://bedrock.<domain>/api/deploy` with a creator deploy token (`bedrock login` stores it). Daemon then installs deps (`bun install --production`), migrates, swaps.
+  Archives always omit `node_modules`, `.bedrock`, `.git`, `._*`, `.DS_Store`,
+  `.env` and `.env.*` at every depth, and the archive output itself. `.envoy/`
+  and `.environment` are included. Git ignore rules are never applied: ignored
+  web/build output is deployed too. Deploy a clean export with `bedrock deploy
+  <dir>` to ship less; scratch trees are otherwise included.
+  Releases record `provenance: { commit, branch, dirty }` from the deployed
+  directory's Git state, including untracked files. Missing Git/non-repositories
+  yield null fields and do not block deployment. Detached HEAD has a null branch.
+  Provenance is retained with each release across daemon restarts and rollback;
+  deploy, lifecycle, list and status responses describe the selected release.
+  Older releases/clients without provenance report unknown source (null fields).
+  Dirty deploys warn without blocking. Compressed archives over 50 MB (decimal)
+  warn with the five largest included top-level directories and their uncompressed
+  file sizes; sizing reads metadata only, skips excluded paths and follows no links.
+  Human deploy output prints warnings; `--json` keeps one stdout value with a
+  `warnings: string[]` field. Older daemons accept deployment but cannot retain
+  provenance sent by newer CLIs.
+
 - `bedrock service install|uninstall|status` manages a macOS **LaunchAgent**
   (`~/Library/LaunchAgents/dev.bedrock.daemon.plist`, RunAtLoad/KeepAlive) or Linux
   **systemd user** unit (`~/.config/systemd/user/bedrock.service`, Restart=always).
