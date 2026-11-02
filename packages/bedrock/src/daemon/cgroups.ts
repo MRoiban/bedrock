@@ -73,7 +73,8 @@ export class PebbleCgroups {
   }
   async remove(group: ChildCgroup) { await rmdir(group.path).catch(() => {}); }
   command(group: ChildCgroup | undefined, command: string[]) {
-    return group ? ["/bin/sh", "-c", 'echo $$ > "$0" && exec "$@"', join(group.path, "cgroup.procs"), ...command] : command;
+    // Joining is best effort: a pebble must still start if its cgroup vanished or refuses the pid.
+    return group ? ["/bin/sh", "-c", 'echo $$ > "$0" 2>/dev/null; exec "$@"', join(group.path, "cgroup.procs"), ...command] : command;
   }
   activity(group?: ChildCgroup) {
     if (!group) return;
