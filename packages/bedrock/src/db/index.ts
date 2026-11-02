@@ -10,6 +10,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { asBedrockError } from "../error";
 import { writeEffects } from "./effects";
 import { TableTracker } from "./tracker";
+import { createCheckpoints } from "./checkpoints";
 
 export { TableTracker } from "./tracker";
 export type { TableUsage } from "./tracker";
@@ -24,7 +25,7 @@ export function openDatabase(dataDir: string, schema: Record<string, unknown> = 
   try {
     mkdirSync(resolve(dataDir), { recursive: true });
     sqlite = new Database(join(dataDir, "db.sqlite"), { create: true, strict: true });
-    // NORMAL skips the per-commit fsync: WAL still survives process crashes, and power loss can drop only the latest commits.
+    // NORMAL avoids fsync on most commits (WAL reuse can still sync): WAL still survives process crashes, and power loss can drop only the latest commits.
     sqlite.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     sqlite.exec(storageMigration);
     sqlite.exec(idempotencyMigration);
@@ -35,10 +36,15 @@ export function openDatabase(dataDir: string, schema: Record<string, unknown> = 
     const refreshTracking = () => tracker.setEffects(writeEffects(sqlite!));
     refreshTracking();
     const db = drizzle(sqlite, { schema, logger: tracker });
+    const checkpoints = createCheckpoints(sqlite, join(resolve(dataDir), "db.sqlite"));
     // Finalize cached statements so Windows can move or remove the database after close.
-    return { dataDir, sqlite, db, tracker, tableNames, refreshTracking, close: () => sqlite!.close(true) };
+    const closeWriter = () => sqlite!.close(true);
+    return { dataDir, sqlite, db, tracker, tableNames, refreshTracking, checkpoints,
+      close() { checkpoints.stop(); closeWriter(); },
+      closeAsync(deadline = Date.now() + 500) { return checkpoints.close(closeWriter, deadline); },
+    };
   } catch (error) {
     sqlite?.close(true);
-    throw asBedrockError(error, "DATABASE_OPEN_FAILED", "Check that the data directory is writable and the SQLite file is valid.");
+    throw asBedrockError(error, "DATABASE_OPEN_FAILED", "Check that the data directory is writable and the SQLite file is valid.", dataDir);
   }
 }

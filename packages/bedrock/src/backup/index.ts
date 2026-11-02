@@ -6,7 +6,8 @@ import type { DaemonDatabase } from "../daemon/db";
 import type { Releases } from "../daemon/releases";
 import { BedrockError, asBedrockError } from "../error";
 import { fsTarget, r2Target, type BackupTarget } from "./target";
-import { DEFAULT_KEEP, manifests, prune, restoreData, snapshot } from "./snapshot";
+import { DEFAULT_KEEP, manifests, prune, restoreData } from "./snapshot";
+import { snapshotInWorker } from "./snapshot-thread";
 export { fsTarget, r2Target } from "./target";
 export { snapshot, manifests, prune, restoreData } from "./snapshot";
 export type { BackupTarget } from "./target";
@@ -50,6 +51,7 @@ async function directoryBackup(release: string): Promise<DirectoryBackup | undef
 export function createBackups(home: string, db: DaemonDatabase, releases: Releases, targetOverride?: BackupTarget) {
   let active: Promise<unknown> | undefined;
   let stopping = false;
+  const shutdown = new AbortController();
   let lastAttempt = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
   async function exclusive<T>(action: () => Promise<T>) {
@@ -64,25 +66,44 @@ export function createBackups(home: string, db: DaemonDatabase, releases: Releas
     return exclusive(async () => {
       const { config, target: destination } = await target();
       const result = [];
+      const warnings: Record<string, ReturnType<BedrockError["toJSON"]>> = {};
+      const succeeded: string[] = [];
+      const attempt = async <T>(pebble: string, action: () => Promise<T>) => {
+        try { const value = await action(); succeeded.push(pebble); return value; }
+        catch (error) {
+          const typed = asBedrockError(error);
+          if (typed.code !== "DISK_FULL") throw typed;
+          warnings[pebble] = typed.toJSON();
+          console.warn(`Backup skipped for ${pebble}; retrying next cycle`, typed.toJSON());
+          return { skipped: pebble, warning: typed.toJSON() };
+        }
+      };
       const names = name ? [name] : db.list().map(record => record.name);
       for (const pebble of names) {
         const record = releases.record(pebble);
-        result.push(await releases.exclusive(pebble, async () => {
+        result.push(await attempt(pebble, () => releases.exclusive(pebble, async () => {
           const data = pebbleDataDir(releases.supervisor.dataRoot, pebble);
-          const value = await snapshot(destination, pebble, join(data, "db.sqlite"), join(data, "files"), new Date(), await directoryBackup(record.release));
+          const value = await snapshotInWorker(destination, { name: pebble, databasePath: join(data, "db.sqlite"), filesDir: join(data, "files"), now: new Date(), directories: await directoryBackup(record.release) }, shutdown.signal);
           await prune(destination, pebble, config.keep);
           return value;
-        }));
+        })));
       }
-      result.push(await snapshot(destination, "_daemon", join(home, "bedrock.sqlite")));
-      await prune(destination, "_daemon", config.keep);
+      result.push(await attempt("_daemon", async () => {
+        const value = await snapshotInWorker(destination, { name: "_daemon", databasePath: join(home, "bedrock.sqlite"), now: new Date() }, shutdown.signal);
+        await prune(destination, "_daemon", config.keep);
+        return value;
+      }));
       const statePath = join(home, "backup-state.json");
       const state = await Bun.file(statePath).json().catch(() => ({ pebbles: {} }));
       state.pebbles ??= {};
-      for (const pebble of names) state.pebbles[pebble] = Date.now();
-      state.daemon = Date.now();
-      state.lastSuccess = Date.now();
-      if (!name) state.lastFullSuccess = state.lastSuccess;
+      for (const pebble of succeeded) {
+        if (pebble === "_daemon") state.daemon = Date.now();
+        else state.pebbles[pebble] = Date.now();
+      }
+      state.warnings = { ...state.warnings, ...warnings };
+      for (const pebble of succeeded) delete state.warnings[pebble];
+      if (succeeded.length) state.lastSuccess = Date.now();
+      if (!name && !Object.keys(warnings).length) state.lastFullSuccess = state.lastSuccess;
       await atomicWrite(statePath, JSON.stringify(state) + "\n");
       return result;
     });
@@ -114,6 +135,6 @@ export function createBackups(home: string, db: DaemonDatabase, releases: Releas
       const check = () => { void tick().catch(error => console.error("Backup failed", asBedrockError(error).toJSON())); };
       timer = setInterval(check, 60000); timer.unref(); check();
     },
-    async stop() { stopping = true; clearInterval(timer); await active?.catch(() => {}); },
+    async stop() { stopping = true; clearInterval(timer); shutdown.abort(); await active?.catch(() => {}); },
   };
 }

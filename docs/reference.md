@@ -155,7 +155,7 @@ WebSocket error frames use one status rule, first match wins:
 1. `status`, if it is an integer from 400 to 599.
 2. Bedrock's table: `*_NOT_FOUND` for functions, files, buckets and uploads → 404;
    `UNAUTHENTICATED` → 401; `FORBIDDEN`, `INVALID_IDENTITY` → 403;
-   `FILE_TOO_LARGE` → 413; `LOGIN_LIMIT` → 429; `PEBBLE_STOPPED` → 503;
+   `DISK_FULL` → 507; `FILE_TOO_LARGE` → 413; `LOGIN_LIMIT` → 429; `PEBBLE_STOPPED` → 503;
    `READ_ONLY`, `UNKNOWN_TABLE`, `UNKNOWN_BUCKET`, `DETACHED_CONTEXT`,
    `NETWORK_IN_SLOT`, `TOKENS_DISABLED`, `OAUTH_NOT_CONFIGURED` → 500 (programming or server faults);
    storage rejections (`QUOTA_EXCEEDED`, `FILE_TYPE_REJECTED`, …) → 400.
@@ -175,9 +175,30 @@ throw new BedrockError("TIME_CONFLICT", "This local time is ambiguous.",
   { data: { candidates: ["2026-10-25T00:30:00Z", "2026-10-25T01:30:00Z"] } }); // 409
 ```
 
+SQLite `SQLITE_FULL` (including wrapped driver errors) and filesystem
+`ENOSPC`/`EDQUOT` become `DISK_FULL`, naming the affected path/filesystem and
+asking the operator to remove old backups/logs/releases or increase quota.
+Reads remain available and failed writes do not poison the queue; writes resume
+on retry after space is freed, without restarting. SQLite can auto-roll back on
+FULL, so rollback only runs while the connection is still in a transaction.
+Daemon logs drop disk writes on exhaustion with one stderr notice per outage;
+they retry on incoming log output at most once per minute.
+
+`bedrock doctor` (also `--json`) reports available and total bytes for the home
+filesystem and configured data directory. It warns below 1 GiB or 5% available.
+There is no background disk-space polling. Deploys reject with `DISK_FULL`
+before reading the upload if its declared size plus 64 MiB cannot fit; before
+extraction they check gzip's uncompressed-size lower bound plus 64 MiB.
+Dependency installation and concurrent writers can still exhaust space;
+the previous release remains selected when deployment fails before activation.
+
 ## 4. Database
 
-- File: `<data root>/pebbles/<name>/data/db.sqlite` (the data root is `dataDir`, default `$BEDROCK_HOME`; see §8), opened with `PRAGMA journal_mode=WAL; synchronous=NORMAL; foreign_keys=ON; busy_timeout=5000`. `synchronous=NORMAL` skips the disk sync on each commit: in WAL mode a process crash loses nothing, and a power loss can drop only the most recent commits, never corrupt the file. The daemon's `bedrock.sqlite` uses the same pragmas.
+- File: `<data root>/pebbles/<name>/data/db.sqlite` (the data root is `dataDir`, default `$BEDROCK_HOME`; see §8), opened with `PRAGMA journal_mode=WAL; synchronous=NORMAL; foreign_keys=ON; busy_timeout=5000`. `synchronous=NORMAL` avoids disk sync on most commits (WAL header reuse can still sync): in WAL mode a process crash loses nothing, and a power loss can drop only the most recent commits, never corrupt the file. The daemon's `bedrock.sqlite` uses the same pragmas.
+- On SQLite builds safe from the WAL-reset bug, pebble writers set `wal_autocheckpoint=0`. SQLite 3.7.0 through 3.51.2 is vulnerable, except patched 3.44.x ≥ 3.44.6 and 3.50.x ≥ 3.50.7. Bedrock reads `sqlite_version()` from the writer; vulnerable or unrecognized versions keep 1,000-page auto-checkpoint, never start a checkpoint Worker (including shutdown), and log one `DATABASE_CHECKPOINT_UNSAFE_SQLITE` warning per open with an upgrade hint. Upgrade Bun / use a Bun build with newer SQLite; Bun on macOS may use system SQLite. See [SQLite WAL-reset bug](https://www.sqlite.org/wal.html#walresetbug). Bedrock samples WAL size asynchronously every 250 ms, rather than statting on each commit, and starts a short-lived Bun Worker around 1,000 pages (normally 4 MiB). Its separate connection performs a PASSIVE checkpoint without waiting for readers. On SQLite versions with NOOP support it first checks the pending frame count, so reusing an allocated WAL does not cause premature checkpoints. At the backstop it also attempts a non-waiting TRUNCATE to reclaim the file. Attempts are at least one second apart; idle pebbles have no checkpoint Worker. The daemon's `bedrock.sqlite` keeps SQLite's normal auto-checkpoint behavior.
+- A slow checkpoint can also fall behind an active writer; each Worker makes up to three PASSIVE passes to catch up. At 64 MiB of sampled WAL, the next queued write holds its slot for up to 5 seconds while a TRUNCATE checkpoint runs, so writes and queued reads pause instead of failing. If a held reader still blocks it, that write fails with `DATABASE_WAL_BUSY`, and later writes fail immediately for 5 seconds so the queue does not back up; reads continue. Finish held read transactions, including backups, and retry. This backstop permits one polling interval and one transaction of overshoot; keep transactions short. Raw `db.$client` writes inside queue slots share the protection. Standalone scripts bypass the queue's admission check: yield between bounded batches, and avoid long-lived readers. SQLite auto-checkpoint also cannot bound a WAL pinned by a reader.
+- A Worker startup/runtime failure or a 30-second checkpoint watchdog restores the writer's 1,000-page SQLite auto-checkpoint and logs `DATABASE_CHECKPOINT_FAILED` with a repair hint. Commits can pause in this degraded mode. Bedrock retries automatically after 30 seconds, doubling after each failure up to 10 minutes, even on an idle WAL. Repeated failures in one degraded episode do not repeat the warning. Only a successfully completed Worker restores `wal_autocheckpoint=0` and logs `DATABASE_CHECKPOINT_RECOVERED` once; a new episode resets the backoff. Shutdown/close cancels retries. The 64 MiB admission backstop remains active in degraded and unsafe-build modes: while holding the queue slot, the writer attempts a non-waiting TRUNCATE without another connection, then applies the same bounded wait and `DATABASE_WAL_BUSY` behavior. Fix Worker support, permissions or storage to allow recovery. Off-thread checkpoints remove automatic checkpoint work from normal commits, but SQLite locks, WAL reuse and storage contention can still delay a write.
+- Runtime shutdown stops monitoring and hands the final checkpoint and last-connection close to a Worker, with up to 500 ms inside the supervisor's extra shutdown allowance. An unfinished checkpoint is cancelled and logs `DATABASE_CHECKPOINT_STOPPED`; committed WAL data remains recoverable. Forced exits need no Worker cleanup for recovery. Preserve `db.sqlite` and its `-wal` together when moving a stopped database; never delete a WAL by hand. `bedrock dev` uses the same lifecycle. Backup Workers open the source read-only: `VACUUM INTO` writes only the separate destination, so it does not introduce a source writer/checkpointer. Rollback migration inspection also opens read-only. Closing the last writable connection can checkpoint, but SQLite coordinates last-close cleanup with other connections; it is not a concurrent background checkpoint while a writer remains open. `bedrock data move` requires a stopped daemon and copies files without opening SQLite; doctor does not open pebble databases. Release deploy/restart/rollback refuses to launch alongside a live child on vulnerable builds (`DATABASE_UNSAFE_SQLITE`); upgrade Bun or stop the pebble first. Local `db plan`/`db migrate` also require a fixed build, since they open a writable connection (including internal migrations) to a file a dev process may own. Generate/check use scratch databases. These guards do not police external SQL tools; avoid concurrent external writers/checkpointers on vulnerable SQLite. `VACUUM INTO` backups and manual `db.$client.exec("PRAGMA wal_checkpoint(TRUNCATE)")` remain supported; a held reader can postpone checkpoint completion.
 - Migrations live in `<pebble>/migrations/*.sql`. The files are the baseline: there is no `meta/` journal or snapshot (an old `migrations/meta/` is ignored and can be deleted). The runner applies every unapplied `*.sql` in name order, tracked by name and SHA-256 in `_bedrock_migrations`, including a file that sorts before one already applied.
 - `bedrock db generate [name] [--allow-data-loss]` replays every migration into an in-memory SQLite database with the runner's own code (foreign keys on, same validation), then diffs it with the Drizzle tables in `pebble.schema` using `pushSQLiteSchema` from `drizzle-kit/api` (the drizzle-kit installed beside `bedrock` when there is one, else the pebble's; `DRIZZLE_KIT_MISSING` otherwise). drizzle-kit's spinner and prompts are suppressed. No difference: nothing is written. Otherwise it writes `migrations/<UTC YYYYMMDDHHMMSS>_<slug>.sql` (slug from `name`, reduced to `[a-z0-9_]`, default `schema`), stamped one second after the newest timestamped file if the clock is not later. Legacy `0000_*` names sort first. Before writing, the new SQL must pass migration validation, replay after the existing files, and leave an empty diff (`GENERATE_FAILED` otherwise).
 - Generate refuses with `MIGRATION_DATA_LOSS` when the SQL drops columns, unless `--allow-data-loss`; a NOT NULL column added to an existing table without a SQL default fails with `MIGRATION_NOT_NULL` (SQLite rejects it once the table has rows, and push would wipe the table). A table that both loses and gains columns fails with `MIGRATION_AMBIGUOUS`, because a rename and a drop plus add look alike. Tables and views the migrations create but `pebble.schema` does not declare are reported as `unmanagedTables` and never diffed, so generate never drops a table; drop it by hand.
@@ -689,7 +710,7 @@ $BEDROCK_HOME (default ~/.bedrock)
   daemon's copies of first-party peers (`react`, `react-dom`, `drizzle-kit`) are
   linked in only when the release does not install them.
 - `new`, `init`, `db`, `deploy`, `rm`, `start`, `stop`, `restart`, `rollback`,
-  `secrets`, `token`, `backup`, and `jobs` accept `--help` or `-h`: print command
+  `secrets`, `token`, `pebble-token`, `session`, `backup`, and `jobs` accept `--help` or `-h`: print command
   usage and a description, exit 0, and perform no actions. With `--json`, help
   is `{ ok: true, command, usage, description }`. Unknown flags to `new`/`init`
   fail with `INVALID_ARGS` and a usage hint. Invalid pebble names fail with
@@ -709,6 +730,94 @@ $BEDROCK_HOME (default ~/.bedrock)
   present (even empty or invalid), existing Origin/session rules apply and the
   bearer is ignored. Incoming identity headers are still stripped.
 - Each pebble runs as **its own Bun subprocess** (`startPebble`) on a private localhost port. The daemon routes by `Host` header, proxies HTTP and WebSockets, restarts crashed pebbles with backoff, and does zero-downtime swaps on deploy (start new, health-check, switch, stop old).
+- Crash recovery retries indefinitely. The first four failures use exponential
+  backoff (`250 ms * 2^failures`, capped at 30 s), with 0–10% downward jitter.
+  From the fifth failure, status is `crashed` and retries continue every 4.5–5
+  minutes; successful health checks restore `running`. A run of at least ten
+  minutes (twice the retry cap) resets the failure streak. Start/deploy/rollback
+  replacements reset it too. Stop, deletion and shutdown cancel pending retries;
+  replacement activation supersedes them. At boot, `running`, `restarting` and
+  `crashed` pebbles are restored, and failed restoration keeps retrying.
+  `/api/status` and `/api/pebbles` include `next_retry_at` (Unix milliseconds,
+  or null when no retry timer is pending), also available through CLI JSON.
+- On Linux, child `oom_score_adj` is raised to the daemon's value plus 500,
+  capped at 1000, so the kernel prefers a pebble over the daemon under memory
+  pressure. This is best effort on restricted procfs; macOS/Windows skip it.
+- **Idle pebbles scale to zero by default.** After 15 minutes without proxied
+  HTTP activity, open WebSockets (anonymous, bearer, session, sync or application),
+  or child IPC work, an eligible production child is gracefully stopped and its
+  persisted status becomes `idle`. The daemon sweeps once a minute, so sleep can
+  take up to one extra minute. HTTP activity lasts through request uploads and the
+  full response stream; the quiet period starts again when work finishes.
+  `idle` is distinct from user-selected `stopped`, `restarting` and `crashed` in
+  CLI status, the API and dashboard. Its PID/port are null and `healthy` is false
+  because there is no child to probe; doctor treats idle as healthy operation.
+  Development daemons and `bedrock dev` never idle-stop.
+- The next HTTP request, WebSocket upgrade or daemon IPC operation that needs
+  the child wakes an idle pebble using the existing health-gated launch. Concurrent
+  arrivals share one launch and wait for it, including while the old child is
+  finishing its graceful shutdown. Failed wakes return the usual styled/plain
+  503 with `Retry-After: 5` to proxy callers and enter normal crash supervision.
+  Explicit stop still requires explicit start; traffic never starts a stopped
+  or crashed pebble. Deploy, rollback, restart and secrets `--restart` health-gate
+  a replacement even from idle, and that replacement may later sleep again.
+  Daemon restart preserves idle pebbles asleep; running/restarting pebbles still
+  start at boot. Data moves preserve the registry state. Backups read SQLite
+  directly and use release backup metadata, so do not wake sleeping pebbles.
+- **Sleep safety is conservative.** Any declared job or service (including an
+  exclusive service) keeps a pebble awake. Immediately before sleep the daemon
+  asks the child over IPC to check pending HTTP requests, WebSockets, queued and
+  detached execution, and unexpired resumable uploads (24-hour expiry). Failure
+  or timeout keeps the child awake. Health info supplies job/service names and
+  access policy; `.bedrock-idle.json` beside the release persists these and its
+  source eligibility, alongside public-route and backup metadata.
+  Bun currently omits live timers from resource/handle introspection. Therefore
+  eligibility also requires a conservative scan of `pebble.ts` and its static
+  local imports: unknown imports, dynamic imports, timers, outbound fetch/sockets,
+  workers, process/global access, dynamic execution and Bun APIs other than
+  `Bun.file` keep it awake, even when only used inside a request handler or comment.
+  Only `bedrock` and `node:path`/`path` imports are trusted without scanning;
+  unresolvable imports and non-JavaScript imports keep it awake too. Custom
+  Bun configuration (other than the standard static bundler plugin), inherited
+  TypeScript configuration, import aliases and unreadable configurations also
+  keep it awake, so preloads/plugins cannot silently introduce background work. This is a
+  heuristic for trusted source, not a sandbox or proof against computed/obfuscated
+  access to runtime APIs. No new author option is added. In-memory caches/state
+  may be lost; persist durable state in SQLite/files and declare autonomous work
+  as a job or service rather than hiding loops at module scope.
+- **Quiet running pebbles hibernate in place on supported Linux hosts.** The
+  production daemon detects a writable, delegated cgroup v2 memory controller
+  at startup; missing support (including development mode) logs one disable line
+  and leaves supervision unchanged. Each child launch gets a separate cgroup,
+  including overlapping deploy candidates. A tiny shell joins that cgroup before
+  execing Bun, so runtime/module allocations are charged there from startup.
+  The daemon and cloudflared stay in a `supervisor` leaf; older running units move
+  processes out of the delegation root before enabling `+memory`. Empty stale
+  child cgroups are removed at boot and child exit. No io controller is needed.
+- After 15 quiet minutes (the same conservative delay as idle sleep), the daemon
+  first attempts eligible idle stops, then reclaims anonymous memory of remaining
+  running children. Requests, full HTTP streams, open WebSockets and pending IPC
+  prevent reclaim. Jobs/services/timers keep running and live state survives;
+  pages fault back on demand. Reclaim runs once per child per quiet period and
+  only proxied activity re-arms it, so jobs pulling pages back cannot cause churn.
+  First requests after a long quiet period may take tens of milliseconds.
+- Reclaim writes the child's `memory.stat` anonymous byte count with
+  `swappiness=200` to `memory.reclaim`: file pages (including SQLite's page cache)
+  are never targeted. EAGAIN/partial reclaim is normal. The host must have free
+  swap for the uncompressed anonymous bytes plus `max(256 MiB, 25% of those
+  bytes)` reserved for other users. There is no fallback to file-page reclaim.
+  A short-lived Worker performs the blocking write, one child at a time, keeping
+  the daemon event loop free. Failures are best effort and leave the child running.
+- Each child has `memory.high = max(1 GiB, 25% of physical RAM)`, a generous
+  runaway throttle well above ordinary small pebble usage; `memory.max` is never
+  set. This is resource management for trusted processes, not isolation.
+  `/api/pebbles`, `/api/status` and `bedrock status --json` include a per-pebble
+  `memory: { resident, swapped, hibernated_at }`. Resident is cgroup
+  `memory.current` in bytes (including charged cache/kernel memory, not process
+  RSS); swapped is `memory.swap.current` in bytes. `hibernated_at` is the Unix
+  millisecond time of the completed reclaim attempt, cleared by proxied activity.
+  A partial reclaim still counts. All three are null without a supported live
+  child cgroup. Hibernation keeps status `running`; it adds no author option.
 - Reserved subdomains: `auth`, `bedrock` (daemon API/dashboard), `www`.
 - A deployed pebble that is not running (stopped, crashed, restarting) answers 503
   with `Retry-After: 5` and a `bedrock start <name>` hint; 404 means no such pebble.
@@ -719,9 +828,34 @@ $BEDROCK_HOME (default ~/.bedrock)
   stay plain text). Errors from pebble code are unaffected. The local CLI login
   callback also answers with a styled page.
 - **Deploy**: `bedrock deploy` in a pebble directory. Local: copies to a new release. Remote: tars the directory and uploads to `https://bedrock.<domain>/api/deploy` with a creator deploy token (`bedrock login` stores it). Daemon then installs deps (`bun install --production`), migrates, swaps.
+  Archives always omit `node_modules`, `.bedrock`, `.git`, `._*`, `.DS_Store`,
+  `.env` and `.env.*` at every depth, and the archive output itself. `.envoy/`
+  and `.environment` are included. Git ignore rules are never applied: ignored
+  web/build output is deployed too. Deploy a clean export with `bedrock deploy
+  <dir>` to ship less; scratch trees are otherwise included.
+  Releases record `provenance: { commit, branch, dirty }` from the deployed
+  directory's Git state, including untracked files. Missing Git/non-repositories
+  yield null fields and do not block deployment. Detached HEAD has a null branch.
+  Provenance is retained with each release across daemon restarts and rollback;
+  deploy, lifecycle, list and status responses describe the selected release.
+  Older releases/clients without provenance report unknown source (null fields).
+  Dirty deploys warn without blocking. Compressed archives over 50 MB (decimal)
+  warn with the five largest included top-level directories and their uncompressed
+  file sizes; sizing reads metadata only, skips excluded paths and follows no links.
+  Human deploy output prints warnings; `--json` keeps one stdout value with a
+  `warnings: string[]` field. Older daemons accept deployment but cannot retain
+  provenance sent by newer CLIs.
+
 - `bedrock service install|uninstall|status` manages a macOS **LaunchAgent**
   (`~/Library/LaunchAgents/dev.bedrock.daemon.plist`, RunAtLoad/KeepAlive) or Linux
-  **systemd user** unit (`~/.config/systemd/user/bedrock.service`, Restart=always).
+  **systemd user** unit (`~/.config/systemd/user/bedrock.service`, Restart=always, OOMPolicy=continue,
+  Delegate=yes, DelegateSubgroup=supervisor).
+  A pebble OOM kill therefore leaves the daemon and other pebbles serving.
+  Install writes the current unit; Linux daemon CLI startup and local/remote
+  self-update refresh an existing matching-home unit's OOM and delegation settings idempotently
+  and run `systemctl --user daemon-reload` when it changes. `DelegateSubgroup`
+  is supported by systemd 257; startup also handles a populated delegation root
+  on managers that ignore it.
   Units use absolute Bun/CLI paths and BEDROCK_HOME. `install --dry-run` prints the
   file without writing it or invoking the service manager. Linux users can run
   `loginctl enable-linger "$USER"` for startup without login; macOS runs at user login.
@@ -739,7 +873,10 @@ $BEDROCK_HOME (default ~/.bedrock)
   session, single-use, expires after five minutes, and requires the exact Origin.
   The callback state is random and checked before accepting the token. Repeating
   login verifies and reuses valid credentials; logout is required before switching
-  servers.
+  servers. On the server, login reports that it uses the local admin token and
+  gives `pebble-token create --as` / `session create --as` commands for an existing
+  creator. It also explains that browser login must run on the computer with the
+  browser, because the callback is loopback-only.
 - CLI credentials are `{url, token}` in `~/.config/bedrock/credentials.json`
   (or `$XDG_CONFIG_HOME/bedrock/credentials.json`), mode 0600. Explicit URL/token
   flags override environment variables; the reachable local daemon takes priority
@@ -752,7 +889,7 @@ $BEDROCK_HOME (default ~/.bedrock)
 - `bedrock doctor` checks Bun, local daemon/configuration, domain/creators, OAuth,
   cloudflared installation/process, tunnel ingress/DNS via the API when a transient
   API token is available, wildcard resolution via Cloudflare DoH, available disk,
-  each pebble's live health (a pebble stopped on purpose passes), and backup age (warn when > 2× interval). From a
+  each pebble's live health (idle and intentionally stopped pebbles pass), and backup age (warn when > 2× interval). From a
   source checkout it warns when `bedrock` or `@bedrock/ui` is not `bun link`ed
   to that checkout (`link:<name>`); run in a pebble directory, it warns when the
   pebble still uses `file:` dependencies (`pebble-deps`, hint: the `bun add
@@ -766,7 +903,8 @@ $BEDROCK_HOME (default ~/.bedrock)
 
 The daemon controls pebble children over parent/child IPC, separately from HTTP
 identity forwarding. Requests are `{ op, requestId, ...payload }`: `jobs.list`,
-`jobs.run` (payload `{ name }`), and `service-token` (payload `{ user, input?, id? }`).
+`jobs.run` (payload `{ name }`), `service-token` (payload `{ user, input?, id? }`),
+`idle.check` (no payload; returns a boolean), and `services.exclusive.start` (no payload; returns `{ started: string[] }`).
 Replies are `{ op: "reply", requestId, value }` or
 `{ op: "reply", requestId, error: { code, message, hint } }`. The daemon sends
 `{ op: "stop" }` without a reply; the child performs cleanup and exits. Startup
@@ -774,18 +912,29 @@ also reports the stop budget and readiness over IPC. Pending requests reject
 with `PEBBLE_STOPPED` when the child exits. Unknown `/_bedrock/*` HTTP paths return
 the JSON 404; there is no HTTP jobs control endpoint or special daemon user identity.
 
+Child health includes `exclusive_services: string[]` (declared exclusive service
+names, including before they start); malformed lists fail launch with
+`HEALTH_FAILED`. The supervisor starts these services only after activation and
+all retiring children of the pebble have exited: deploy, rollback, restart,
+initial/daemon restore, crash restart and attached dev launch. The exit barrier
+survives a replacement crashing while its predecessor drains. The IPC request
+has a 60-second deadline (`EXCLUSIVE_START_TIMEOUT`); a timeout kills the child
+so normal crash handling applies. Other startup failures are logged and the
+child replies with the error, gracefully stops, and exits with code 1.
+
 ### Pebble secrets and delegated administration
 
 The daemon provides these bearer-authenticated endpoints. All successful daemon
 API responses use `{ ok: true, value }`; the shapes below describe `value`. Errors
 use `{ ok: false, error: { code, message, hint } }`. Secrets and service-token
-responses retain `Cache-Control: no-store`. CLI JSON output remains unchanged.
+responses retain `Cache-Control: no-store`. CLI JSON retains its existing envelopes.
 
 - `GET /api/pebbles/:name/secrets` → `{ secrets: [{ name, updatedAt }] }`, sorted
   by name. Never returns values. Works before a pebble is deployed; an absent
   file returns an empty list.
 - `PUT /api/pebbles/:name/secrets` accepts `{ set?: Record<string,string>,
-  unset?: string[], restart?: boolean }` and returns the same metadata shape.
+  unset?: string[], restart?: boolean }` and returns the same metadata shape
+  (plus `exclusive_services` when `restart: true`).
   All input is validated before writing; set is applied before unset. Secret
   names match `^[A-Z][A-Z0-9_]{0,63}$`; values are exact strings without NUL.
   `BEDROCK_*`, `BUN_*`, `NODE_*`, `LD_*`, `DYLD_*` and operating-system environment
@@ -830,7 +979,9 @@ encode secrets into application responses or other files.
 `restart: true` requires an existing deployed pebble. The normal restart now
 launches and health-checks a replacement before switching routing and retiring
 the old child, while retaining release/rollback selection. The old child keeps
-serving on failed startup. Secret changes remain saved if restart fails, and
+serving on failed non-exclusive startup. Exclusive startup happens after the
+old child exits; its failure returns `exclusive_services: "failed"` with the
+replacement still selected. Secret changes remain saved if restart fails, and
 will be used on the next successful launch. Secret changes and service-token
 operations share the per-pebble deploy/lifecycle exclusion lock; concurrent work
 returns 409 `PEBBLE_BUSY`. Without restart, the current child retains its previous
@@ -846,6 +997,9 @@ bedrock secrets unset upty DISCORD_TOKEN OTHER_SECRET --restart
 bedrock token create --name manager --pebbles "upty,bot-*" \
   --actions deploy,lifecycle,logs,secrets,status,service-tokens --json
 bedrock token ls --json
+bedrock pebble-token create upty --name agent --permissions query:status --as you@example.com --json
+bedrock pebble-token revoke upty <id> --as you@example.com --yes --json
+bedrock session create upty --ttl 15m --as you@example.com --json
 ```
 
 Secret set accepts exactly one name, reads the value from stdin or a hidden
@@ -887,13 +1041,61 @@ ownership and transaction rules to ordinary pebble tokens. No daemon SQLite
 connection writes to the pebble DB. Invalid registered permissions return 400
 `INVALID_TOKEN_PERMISSION`; wrong ownership returns 403 `FORBIDDEN`.
 
-Ownerless legacy/manual/local admin tokens cannot mint or revoke service tokens:
-403 `TOKEN_OWNER_REQUIRED` instructs the caller to use a creator login token
-and create the scoped token from it. This avoids inventing a creator identity.
+`bedrock pebble-token create <pebble> --name <name> --permissions <a,b>` calls
+this API and prints the raw token once; `pebble-token revoke <pebble> <id> --yes`
+revokes it. Both accept `--as <email>`, `--url`, `--token`, and `--json` (one JSON
+value on stdout). There is no service-token list API, so no CLI `ls` command.
+
+The local admin token may select an **already existing, configured creator** with
+`--as <email>` (API query `?as=<email>`). Its identity is the exact token loaded
+from `$BEDROCK_HOME/admin-token`, never the request's source address: tunneled
+requests can arrive from loopback too. Unknown users get 403 `CREATOR_NOT_FOUND`;
+non-creators get 403 `FORBIDDEN`, with repair hints. This never creates a user,
+adds a creator, or persists an owner on the admin token. Under ARCHITECTURE.md §8,
+the host user already runs the daemon and its trusted code, so selecting an
+existing creator adds no real power. A creator login token acts as itself;
+`--as` may repeat its own email but cannot switch identity. Ownerless legacy or
+manual tokens still cannot mint/revoke service tokens, even with `--as`.
+403 `TOKEN_OWNER_REQUIRED` points to the working server commands above, or to
+running `bedrock login <domain>` on the computer with the browser.
 IPC failure on child exit returns `PEBBLE_STOPPED`; 15-second timeouts return
 `SERVICE_TOKEN_TIMEOUT`. A timed-out creation may have committed, so callers
 must not assume that no token was created. Ordinary pebble tokens remain in
 `data/db.sqlite` and are included in database backups.
+
+
+### One-time creator session links
+
+`bedrock session create <pebble> [--ttl 15m] [--as <email>] [--json]` returns
+`{ ok: true, command: "session create", value: { url, expiresAt } }`. Like other
+remote commands it accepts `--url` / `--token`. It calls
+`POST /api/pebbles/:name/sessions[?as=<email>]` with `{ ttl?: "15m" }`. The pebble
+must be deployed; no token opt-in is needed. Only unscoped deploy tokens can
+create sessions, with the same existing-creator selection rules as above.
+Durations use integer `s`, `m`, or `h`, default to 15 minutes, and must be positive
+and at most one hour (`INVALID_ARGS` otherwise). Expiry is measured from issuance,
+not redemption, and is returned as Unix milliseconds.
+
+The URL opens `https://<pebble>.<domain>/_bedrock/session#<secret>`. A GET renders
+an explicit confirmation form; it never consumes the link. A CSP-hashed script
+moves the fragment into a hidden POST field and removes it from browser history.
+JavaScript and a button press are required: GET link scanners cannot burn links.
+Fragments never enter HTTP request URLs or access logs, and Bedrock never logs
+the secret or forwards it to the pebble. The confirmation page and redemption
+response use `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
+
+The daemon stores only a SHA-256 hash in `session_links`, bound to the user,
+pebble, and expiry. Redemption requires the exact pebble Origin, rechecks creator
+membership, and consumes the link and creates a session atomically. Concurrent
+redemptions yield at most one session. Invalid, unknown, expired, or reused secrets
+submitted to the form get the existing styled error page (`INVALID_SESSION_LINK`).
+A successful POST sets the ordinary HttpOnly/Secure/SameSite session cookie and
+redirects 303 to the clean pebble root. Its fixed expiry is the link's original
+expiry; neither HTTP nor WebSockets slide it to the normal 30-day lifetime.
+The entry URL is pebble-bound, but the resulting identity is an ordinary global
+creator session, valid across the domain until that expiry. Treat an unused link
+as a creator credential; its first redeemer gets that identity. These are daemon
+operations and require no new pebble author API.
 
 ## 9. Cloudflare Tunnel
 
@@ -1005,7 +1207,9 @@ the runtime starts) logs one `console.warn` line naming its kind (`query`,
 `mutation`, `route`, `job`, `storage read`/`storage write`, `detached read`/`detached write`), its
 name (function name, `METHOD /path` route key, job name, or request path) and
 its duration. When at least half of the time was the `COMMIT` itself, the line
-adds `(commit N ms)` and says the disk is the bottleneck. After one warning,
+adds `(commit N ms)` and recommends batching writes and checking held readers,
+competing SQLite connections and checkpoint fallback warnings. Storage or lock
+contention can dominate even on a fast disk; a faster disk alone may not fix it. After one warning,
 further slow slots with the same kind and name are counted for 60 seconds and
 reported as one summary line (`was slow N more time(s) in the last 60 s (max M ms)`). In `bedrock dev`, in tests that call `startPebble` directly, and
 in production when the daemon runs with `BEDROCK_STRICT_SLOTS=1`, calling
@@ -1115,26 +1319,65 @@ before exceeding the bound. Whole 10 MiB text and binary messages are supported;
 frame larger transfers or use HTTP. The bound covers queued payload bytes, not
 WebSocket framing overhead or the currently decoded input frame.
 
-`service({ start(ctx), stop?(value), stopTimeout?: milliseconds })` returns the awaited start value to all
-function, route, socket and job contexts through `ctx.services`. ServiceContext
-is `{ pebble, dataDir, read, write, log, signal }`; raw SQL invalidation belongs
-inside `write` through its FunctionContext. It has no lifetime transaction.
-Services start in map declaration order, after migrations and before HTTP/health
-and child readiness. A failed start throws hinted `SERVICE_START_FAILED`, aborts the signal and unwinds earlier
-services. Later startup failures also unwind services.
+`service({ start(ctx), stop?(value), stopTimeout?: milliseconds, exclusive?: boolean })`
+returns the awaited start value to all function, route, socket and job contexts
+through `ctx.services`. ServiceContext is `{ pebble, dataDir, read, write, log,
+signal }`; raw SQL invalidation belongs inside `write` through its
+FunctionContext. It has no lifetime transaction. `exclusive` must be a boolean
+when supplied; invalid values throw hinted `INVALID_SERVICE`.
+
+Non-exclusive services start in map declaration order, after migrations and
+before HTTP/health and child readiness. A failed start throws hinted
+`SERVICE_START_FAILED`, aborts the signal and unwinds earlier services. Later
+startup failures also unwind services. Exclusive services start after all
+non-exclusive services, in their own declaration order, once the previous child
+has exited. Non-exclusive services must not depend on exclusive ones. Exclusive
+services can access earlier values through `ctx.read`/`ctx.write` contexts.
+Standalone `startPebble` starts both groups before returning; the daemon uses
+`deferExclusive: true` and the running object's idempotent `startExclusive()`.
+
+Use `exclusive: true` for a service that owns a port, browser profile, lock or
+upstream sync. Within one daemon, it never runs in two releases of the same
+pebble at once, across deploy, rollback, restart, crash restart and daemon
+stop/start. HTTP, sockets and non-exclusive services retain the health-gated
+zero-downtime swap. There is a gap with no exclusive instance, from old stop
+through new exclusive startup. Handlers touching that service during the gap
+throw hinted `SERVICE_NOT_STARTED` rather than receiving `undefined`. A local
+five-handoff measurement with a trivial service measured 0.587–1.501 ms (median
+0.619 ms) from observed old process exit to new start entry; drain, old cleanup
+and the new service's own startup add to the total gap. This is a measurement,
+not a latency guarantee; a full-suite run measured a 1.542 ms median.
+
+Deploy, rollback and restart results include
+`exclusive_services: "none" | "running" | "failed"`. A failed exclusive start
+unwinds the exclusive services already started, then stops the child and exits
+non-zero. Normal crash backoff retries it and marks it `crashed` after five
+rapid failures. The replacement is already selected: this is a successful
+release selection with `"failed"`, not `DEPLOY_FAILED` claiming the previous
+release is still selected. The CLI warns on stderr with `bedrock logs <name>`,
+also for JSON output. Pre-activation failures retain the previous release.
 
 Stopping closes the listener, sends 1012 "Service restart" to sockets, aborts
-the service signal, invokes stops in reverse order within a shared deadline,
-then stops jobs/executor/database. The deadline is the maximum declared
-`stopTimeout`, at least 2000 ms and capped at 30000 ms (positive integer
-milliseconds). It is one budget for all services, not a fresh timeout per stop.
-The child reports this budget before service startup and again at readiness;
-the supervisor allows the budget plus 1000 ms before SIGKILL for stop and swap
-cleanup. The default remains three seconds. Retired releases first get up to
-three seconds to drain HTTP requests. SIGTERM and IPC stop both run
-this cleanup. Crashes/forced kills cannot guarantee cleanup. New release services
-may overlap old ones during a health-gated swap: coordinate shared resources.
-In-memory state such as terminal sessions does not survive deploys/restarts.
+the service signal, invokes stops in reverse actual-start order across both
+groups within a shared deadline, then stops jobs/executor/database. An exclusive
+start in progress is awaited before cleanup so a late-acquired resource is
+also stopped; the supervisor's kill deadline still bounds shutdown. The
+deadline is the maximum declared `stopTimeout`, at least 2000 ms and capped at
+30000 ms (positive integer milliseconds). It is one budget for all services,
+not a fresh timeout per stop. The child reports this budget before service
+startup and again at readiness; the supervisor allows the budget plus 1000 ms
+before SIGKILL for stop and swap cleanup. The default remains three seconds.
+Retired releases first get up to three seconds to drain HTTP requests. SIGTERM
+and IPC stop both run this cleanup. Crashes/forced kills cannot guarantee
+cleanup. In-memory state such as terminal sessions does not survive
+deploys/restarts.
+
+Not covered: two daemons sharing a `BEDROCK_HOME` (unsupported), or a separate
+`bedrock dev` running the same pebble with its own data directory. Exclusive
+services govern the child process lifetime, not external subprocesses or
+remote work that outlives it. Keep an application lease for stronger guarantees
+on shared external resources.
+
 `ServicesOf<typeof pebble>` derives service values; annotate
 `FunctionContext<ServicesOf<typeof pebble>>` or `DetachedContext<...>` (using a
 separate services definition to avoid circular inference) for checked handler
@@ -1154,6 +1397,11 @@ content-addressed `pebbles/<name>/files/<sha256>` uploads only when absent. A
 manifest at `pebbles/<name>/manifests/<filename timestamp>.json` records DB key/checksum,
 file id→sha256, version, and migration names/hashes. Publish it last. The daemon's
 identity DB is snapshotted under `daemon/db/` and `daemon/manifests/` too.
+Snapshot SQLite work, hashing, and compression run in a Bun Worker thread so
+backups do not block the daemon's HTTP proxy. The database is hashed and gzipped
+as a stream; disk uploads copy the staged gzip file and R2 uses bounded multipart
+uploads. The checksum still covers the uncompressed SQLite bytes. Worker failures
+fail the backup and remove staging files; daemon shutdown cancels active snapshots.
 Filename timestamps replace ISO time colons with hyphens on every platform;
 manifest timestamps and `--at` retain ISO format. Existing backup keys remain
 readable and restore/pruning use the manifest's stored database key.
@@ -1162,9 +1410,22 @@ Retain the newest `keep` snapshots per pebble and for identity (default 24, so o
 day at the default 60-minute interval), delete older DBs/manifests, and GC file
 blobs unreferenced by remaining manifests. `backup.intervalMinutes` and `keep`
 (`backup setup --interval-minutes <n> --keep <n>`) are stored with target
-metadata; the older `hourly`/`daily` keys are ignored. The `VACUUM INTO` copy is
-staged in a `.bedrock-backup-*` directory beside the database, never in the OS
-temp directory. Directory-backup settings come from `.bedrock-backup.json`, which
+metadata; the older `hourly`/`daily` keys are ignored. The `VACUUM INTO` copy and
+gzip file are staged in a `.bedrock-backup-*` directory beside the database, never in the OS
+temp directory. Before staging, available space on that filesystem must cover
+twice the DB + WAL size (SQLite copy and potentially incompressible gzip) plus
+64 MiB. Filesystem backup targets also check object size plus 64 MiB before
+each put. Insufficient space skips only that pebble (or identity), emits a
+warning and retries next cycle. Run results include `{ skipped, warning }`;
+`backup-state.json` stores per-pebble `warnings`, also reported by doctor.
+Skipped backups do not advance their success timestamps or the full-cycle
+success timestamp. Normal failure, worker exit and shutdown cancellation
+terminate the worker and remove staging files. Staging directories carry the
+daemon PID; a subsequent snapshot removes directories whose owner process no
+longer exists before checking space (including after a killed daemon). These checks are best effort:
+concurrent writers can consume available space after inspection.
+
+Directory-backup settings come from `.bedrock-backup.json`, which
 the daemon writes into a release from the child's health check, so backups do
 not import pebble code into the daemon (a release not started since falls back
 to loading `pebble.ts`).

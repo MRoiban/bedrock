@@ -1,3 +1,4 @@
+import { diskSpace } from "../disk";
 import { statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { openDataRoot, readConfig } from "../daemon/config";
@@ -44,6 +45,7 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
     const successes = [state?.daemon ?? 0, ...(status?.pebbles ?? []).map(pebble => state?.pebbles?.[pebble.name] ?? 0)];
     const oldest = Math.min(...successes);
     const age = oldest ? Date.now() - oldest : Infinity;
+    for (const [name, warning] of Object.entries(state?.warnings ?? {})) add(`backup:${name}`, "warn", (warning as { message: string }).message, (warning as { hint: string }).hint);
     add("backup", age <= 2 * (config.backup.intervalMinutes ?? 60) * 60000 ? "pass" : "warn", Number.isFinite(age) ? `Oldest latest backup: ${Math.floor(age / 60000)} minutes ago.` : "Some data has no successful backup recorded.", "Run bedrock backup run; check the daemon logs and backup target.");
   } else add("backup", "warn", "Backups are not configured.", "Run bedrock backup setup --dir <path> or configure R2.");
   try { add("cloudflared-installed", "pass", (options.binary ?? cloudflaredBinary)(), "Keep cloudflared updated with your OS package manager."); }
@@ -73,20 +75,18 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
     } catch { add("dns", "warn", "Skipped: DNS-over-HTTPS is unavailable (offline).", "Check internet connectivity and retry doctor.", true); }
   } else add("dns", "warn", "Skipped: no public domain.", "Configure a public domain and tunnel.", true);
   try {
-    const space = await (options.disk ?? statfs)(home);
-    const bytes = Number(space.bavail) * Number(space.bsize);
-    add("disk", bytes < 5 * 1024 ** 3 ? "warn" : "pass", `${(bytes / 1024 ** 3).toFixed(1)} GiB free.`, "Keep at least 5 GiB free for deployments and databases.");
+    const space = await diskSpace(home, options.disk ?? statfs);
+    add("disk", space.warning ? "warn" : "pass", `${home}: ${space.free} bytes free of ${space.total} bytes.`, "Free space when below 1 GiB or 5% for deployments and databases.");
   } catch { add("disk", "warn", "Could not inspect free disk space.", "Check BEDROCK_HOME exists and is readable."); }
   if (config?.dataDir) {
     try {
       const root = await openDataRoot(home, config);
-      const space = await (options.disk ?? statfs)(root);
-      const bytes = Number(space.bavail) * Number(space.bsize);
-      add("data-dir", bytes < 5 * 1024 ** 3 ? "warn" : "pass", `Pebble data in ${root}: ${(bytes / 1024 ** 3).toFixed(1)} GiB free.`, "Keep at least 5 GiB free on the data disk.");
+      const space = await diskSpace(root, options.disk ?? statfs);
+      add("data-dir", space.warning ? "warn" : "pass", `Pebble data in ${root}: ${space.free} bytes free of ${space.total} bytes.`, "Free space when below 1 GiB or 5% on the data disk.");
     } catch (error) { add("data-dir", "fail", `Pebble data directory ${config.dataDir} is unavailable.`, error instanceof BedrockError ? error.hint : "Mount the data disk."); }
   }
-  // A pebble someone stopped on purpose is not a fault.
-  if (status) for (const pebble of status.pebbles) add(`pebble:${pebble.name}`, pebble.healthy || pebble.status === "stopped" ? "pass" : "fail", `${pebble.name}: ${pebble.status}${pebble.status === "stopped" ? "" : pebble.healthy ? ", healthy" : ", unhealthy"}`, pebble.status === "stopped" ? `Start it with bedrock start ${pebble.name}.` : `Inspect bedrock logs ${pebble.name}; restart or redeploy it.`);
+  // Sleeping and intentionally stopped pebbles need no live health check.
+  if (status) for (const pebble of status.pebbles) add(`pebble:${pebble.name}`, pebble.healthy || ["stopped", "idle"].includes(pebble.status) ? "pass" : "fail", `${pebble.name}: ${pebble.status}${["stopped", "idle"].includes(pebble.status) ? "" : pebble.healthy ? ", healthy" : ", unhealthy"}`, pebble.status === "idle" ? "It wakes on the next request." : pebble.status === "stopped" ? `Start it with bedrock start ${pebble.name}.` : `Inspect bedrock logs ${pebble.name}; restart or redeploy it.`);
   else add("pebbles", "warn", "Skipped: daemon unavailable.", "Start the daemon and retry doctor.", true);
   return checks;
 }

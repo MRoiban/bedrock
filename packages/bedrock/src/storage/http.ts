@@ -115,5 +115,5 @@ export function createFileHandler(pebble: PebbleConfig, execute: ReturnType<type
       throw storageError('FILE_NOT_FOUND', 'Unknown file endpoint.');
     } catch (error) { return errorResponse(error); }
   }
-  return { handle, cleanup: () => uploads.cleanup() };
+  return { handle, active: () => uploads.active(), cleanup: () => uploads.cleanup() };
 }

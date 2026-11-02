@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { serviceFile, type ServiceOptions } from "./index";
+import { refreshLinuxService, serviceFile, type ServiceOptions } from "./index";
 import { windowsServiceCommand } from "./windows";
 import { BedrockError } from "../error";
 import { updateRun } from "../self-update";
@@ -28,5 +28,6 @@ export async function scheduleUpdateRestart(options: ServiceOptions, launch = as
   await new Promise<void>((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
   child.unref();
 }) {
+  await refreshLinuxService(options);
   await launch(restartHelperCommand(options));
 }

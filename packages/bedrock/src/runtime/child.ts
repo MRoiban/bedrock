@@ -9,22 +9,29 @@ try {
   const pebble = await loadPebble(process.env.BEDROCK_RELEASE!);
   // Startup failures may unwind services before readiness; publish the budget first.
   process.send?.({ op: "stop-budget", stopTimeout: serviceStopTimeout(pebble.services ?? {}) });
-  const running = await startPebble({ pebble, dir: process.env.BEDROCK_RELEASE!, dataDir: process.env.BEDROCK_DATA!, port: 0, dev: process.env.BEDROCK_DEV === "1", strictSlots: strictSlotsFromEnv() });
+  const running = await startPebble({ pebble, dir: process.env.BEDROCK_RELEASE!, dataDir: process.env.BEDROCK_DATA!, port: 0, deferExclusive: true, dev: process.env.BEDROCK_DEV === "1", strictSlots: strictSlotsFromEnv() });
   process.send?.({ name: running.pebble.name, port: running.server.port, stopTimeout: running.stopTimeout });
   let stopping = false;
-  const stop = async () => {
+  let exitCode = 0;
+  const stop = async (code = 0) => {
+    exitCode = Math.max(exitCode, code);
     if (stopping) return;
     stopping = true;
     await running.stop();
-    process.exit(0);
+    process.exit(exitCode);
   };
-  process.on("SIGINT", stop);
-  process.on("SIGTERM", stop);
+  process.on("SIGINT", () => void stop());
+  process.on("SIGTERM", () => void stop());
   process.on("message", message => {
     if ((message as { op?: string })?.op === "stop") void stop();
-    else void handleControl(running, message).then(value => process.send?.(value));
+    else void handleControl(running, message).then(async value => {
+      try { process.send?.(value); }
+      finally {
+        if ((message as { op?: string })?.op === "services.exclusive.start" && "error" in value) await stop(1);
+      }
+    });
   });
-  process.on("disconnect", stop);
+  process.on("disconnect", () => void stop());
 } catch (error) {
   const typed = asBedrockError(error).toJSON();
   console.error(JSON.stringify(typed));

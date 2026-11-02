@@ -1,3 +1,4 @@
+import { asBedrockError } from '../error';
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FunctionContext, BucketConfig } from '../config/types';
@@ -42,6 +43,15 @@ export function createUploads(root: string) {
   }
   return {
     cleanup,
+    async active() {
+      if (tails.size) return true;
+      for (const id of await readdir(root)) {
+        if (!/^[0-9a-f-]{36}$/.test(id)) continue;
+        const upload = await Bun.file(join(path(id), "manifest.json")).json().catch(() => null);
+        if (upload && Date.now() - upload.createdAt < 86400000) return true;
+      }
+      return false;
+    },
     serial,
     load,
     async start(bucket: string, config: BucketConfig, ctx: FunctionContext, input: any) {
@@ -51,8 +61,13 @@ export function createUploads(root: string) {
       const upload: Upload = { bucket, ownerId: ctx.user?.id ?? null, ...info, size: input.size, sha256: input.sha256, meta: uploadMeta(input.meta), createdAt: Date.now() };
       await authorizeUpload(config, ctx, { ...upload, meta: upload.meta });
       const uploadId = crypto.randomUUID();
-      await mkdir(path(uploadId), { recursive: true });
-      await Bun.write(join(path(uploadId), 'manifest.json'), JSON.stringify(upload));
+      try {
+        await mkdir(path(uploadId), { recursive: true });
+        await Bun.write(join(path(uploadId), 'manifest.json'), JSON.stringify(upload));
+      } catch (error) {
+        await rm(path(uploadId), { recursive: true, force: true });
+        throw asBedrockError(error, "STORAGE_WRITE_FAILED", "Retry the upload.", root);
+      }
       return { uploadId, chunkSize: CHUNK_SIZE };
     },
     async chunk(id: string, upload: Upload, index: string, body: ReadableStream<Uint8Array>) {

@@ -5,7 +5,7 @@ import { authPage, cookieToken, escapeHtml, wrongAccountPage } from "../auth/htt
 import { enforceAccess } from "../auth/policy";
 
 // Problems first: the dashboard is opened to check whether anything needs you.
-const ORDER: Record<string, number> = { crashed: 0, restarting: 1, stopped: 2, running: 3 };
+const ORDER: Record<string, number> = { crashed: 0, restarting: 1, stopped: 2, idle: 3, running: 3 };
 
 function deployedAgo(release: string, now = Date.now()) {
   // Release directories are named `<deploy ms>-<id>`; dev releases are project paths.
@@ -41,8 +41,9 @@ export function dashboard(request: Request, origin: string, config: DaemonConfig
   const port = new URL(origin).port;
   const tiles = records.map(record => tile(record, dev ? `http://${record.name}.localhost:${port}` : `https://${record.name}.${config.domain}`)).join("");
   const crashed = records.filter(record => record.status === "crashed").length;
+  const idle = records.filter(record => record.status === "idle").length;
   const summary = !records.length ? "No pebbles yet."
-    : `${records.length} ${records.length === 1 ? "pebble" : "pebbles"} · ${crashed ? `<span class="bad">${crashed} crashed</span>` : records.every(record => record.status === "running") ? "all running" : `${records.filter(record => record.status === "running").length} running`}`;
+    : `${records.length} ${records.length === 1 ? "pebble" : "pebbles"} · ${crashed ? `<span class="bad">${crashed} crashed</span>` : records.every(record => record.status === "running") ? "all running" : `${records.filter(record => record.status === "running").length} running${idle ? ` · ${idle} idle` : ""}`}`;
   const start = ["bedrock login " + config.domain, "bedrock new my-app", "cd my-app && bedrock dev", "bedrock deploy"].map(line => `<i>$ </i>${escapeHtml(line)}`).join("\n");
   return authPage({
     title: escapeHtml(config.domain), wide: true, heading: escapeHtml(config.domain),

@@ -2,6 +2,7 @@
 cd my-app
 bedrock dev
 bedrock deploy
+Source: unknown source
 ✓ Deployed my-app
 https://my-app.example.com
 Public routes: none

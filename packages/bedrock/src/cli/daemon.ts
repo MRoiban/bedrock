@@ -1,13 +1,16 @@
-import { formatBuild } from "../version";
+import { refreshLinuxService } from "../service";
+import { deployWarnings } from "./deploy-warnings";
+import { formatBuild, formatProvenance, gitProvenance } from "../version";
 import { checkDaemonFeatures } from "../features";
 import { openBrowser, readCredentials, type Credentials } from "./credentials";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { BedrockError } from "../error";
+import { BedrockError, asBedrockError } from "../error";
 import { startDaemon } from "../daemon";
 import { bedrockHome, readConfig } from "../daemon/config";
 import { createArchive } from "../daemon/archive";
+import { encodeProvenance } from "../daemon/provenance";
 import { loadPebble } from "../runtime/load";
 
 function parse(args: string[], hint: string) {
@@ -81,6 +84,8 @@ export async function daemonCommand(command: string, args: string[], json: boole
   if (Object.keys(flags).some(key => !allowed.includes(key))) invalid();
   if (command === "daemon") {
     if (positionals.length) invalid();
+    // An unattended host must still boot when the unit cannot be refreshed (full disk, no user bus).
+    await refreshLinuxService({ home: bedrockHome() }).catch(error => console.warn("Could not refresh the systemd unit; continuing.", asBedrockError(error).toJSON()));
     const running = await startDaemon({ ...(flags["--port"] ? { port: Number(flags["--port"]) } : {}) });
     const value = { command, url: `http://bedrock.localhost:${running.server.port}`, home: running.home };
     console.log(json ? JSON.stringify({ ok: true, ...value }) : `Bedrock daemon: ${value.url}`);
@@ -94,7 +99,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
     const daemon = await connection(flags);
     const value = (await (await call(flags, "/api/status")).json()).value;
     const pebbles = value.pebbles.map((pebble: { name: string }) => ({ ...pebble, url: value.domain === "localhost" ? `http://${pebble.name}.localhost:${new URL(daemon.url).port}` : `https://${pebble.name}.${value.domain}` }));
-    if (!json) { console.log(`Daemon  ${daemon.url} · ${formatBuild(value)}\nUser: ${value.user ?? "creator deploy token"}\n${pebbles.map((pebble: { name: string; url: string }) => `${pebble.name}  ${pebble.url}`).join("\n") || "No pebbles yet. Run bedrock new my-app."}`); return; }
+    if (!json) { console.log(`Daemon  ${daemon.url} · ${formatBuild(value)}\nUser: ${value.user ?? "creator deploy token"}\n${pebbles.map((pebble: { name: string; url: string; provenance?: import("../version").Provenance }) => `${pebble.name}  ${pebble.url}  ${formatProvenance(pebble.provenance)}`).join("\n") || "No pebbles yet. Run bedrock new my-app."}`); return; }
     return { command, daemon: daemon.url, ...value, pebbles };
   }
   if (command === "deploy") {
@@ -103,29 +108,34 @@ export async function daemonCommand(command: string, args: string[], json: boole
     const pebble = await loadPebble(dir);
     const status = (await (await call(flags, "/api/status")).json()).value;
     checkDaemonFeatures(pebble, status);
+    const provenance = await gitProvenance(dir);
     const temp = await mkdtemp(join(tmpdir(), "bedrock-deploy-"));
     try {
       const archive = join(temp, "pebble.tar.gz");
       await createArchive(dir, archive);
+      const warnings = await deployWarnings(dir, archive, provenance);
       const first = !status.pebbles.some((record: { name: string }) => record.name === pebble.name);
-      const result = await (await call(flags, `/api/deploy?name=${pebble.name}`, { method: "POST", body: Bun.file(archive), headers: { "content-type": "application/gzip" } })).json();
+      const result = await (await call(flags, `/api/deploy?name=${pebble.name}`, { method: "POST", body: Bun.file(archive), headers: { "content-type": "application/gzip", "x-bedrock-provenance": encodeProvenance(provenance) } })).json();
+      warnExclusive(pebble.name, result);
       const domain = status.domain ?? new URL((await connection(flags)).url).hostname.replace(/^bedrock\./, "");
       const url = domain === "localhost" ? `http://${pebble.name}.localhost:${new URL((await connection(flags)).url).port}` : `https://${pebble.name}.${domain}`;
       if (!json) {
+        for (const warning of warnings) console.log(`Warning: ${warning}`);
+        console.log(`Source: ${formatProvenance(result.value.provenance)}`);
         console.log(`✓ Deployed ${pebble.name}\n${url}`);
         console.log(`Public routes: ${(result.value.public_routes ?? []).join(", ") || "none"}`);
         if (first && pebble.access && pebble.access !== "public") console.log(`Access: ${pebble.access === "users" ? "anyone signed in with Google" : pebble.access === "creators" ? "server creators" : pebble.access.allow.join(", ")}.`);
         if ((options.tty ?? process.stdin.isTTY) && !flags["--no-open"]) await (options.open ?? openBrowser)(url);
         return;
       }
-      return { command, ...result, url };
+      return { command, ...result, url, warnings };
     } finally { await rm(temp, { recursive: true, force: true }); }
   }
   if (command === "ls") {
     if (positionals.length) invalid();
     const result = await (await call(flags, "/api/pebbles")).json();
     if (!json) {
-      for (const pebble of result.value) console.log(`${pebble.name}  ${pebble.status}  Public routes: ${(pebble.public_routes ?? []).join(", ") || "none"}`);
+      for (const pebble of result.value) console.log(`${pebble.name}  ${pebble.status}  ${formatProvenance(pebble.provenance)}  Public routes: ${(pebble.public_routes ?? []).join(", ") || "none"}`);
       return;
     }
     return { command, ...result };
@@ -172,5 +182,11 @@ export async function daemonCommand(command: string, args: string[], json: boole
     if (!flags["--yes"]) throw new BedrockError("CONFIRM_REQUIRED", "Deleting a pebble removes all code, data, and logs.", "Run bedrock rm <name> --yes to confirm.");
     return { command, ...(await (await call(flags, `${path}?confirm=true`, { method: "DELETE" })).json()) };
   }
-  return { command, ...(await (await call(flags, `${path}/${command}${flags["--force"] ? "?force=true" : ""}`, { method: "POST" })).json()) };
+  const result = await (await call(flags, `${path}/${command}${flags["--force"] ? "?force=true" : ""}`, { method: "POST" })).json();
+  warnExclusive(name!, result);
+  return { command, ...result };
+}
+
+export function warnExclusive(name: string, result: { value?: { exclusive_services?: string } }) {
+  if (result.value?.exclusive_services === "failed") console.warn(`Warning: exclusive services failed for ${name}; the replacement release is selected. Check bedrock logs ${name}.`);
 }

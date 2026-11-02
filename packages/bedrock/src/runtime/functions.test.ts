@@ -128,3 +128,25 @@ test("unknown invalidation names and unregistered tables throw repair hints and 
     expect(notifications).toEqual([]);
   } finally { await execute.close(); database.close(); temp.cleanup(); }
 });
+
+test("SQLITE_FULL rolls back safely, serves reads and recovers without restarting", async () => {
+  const temp = tempDirectory();
+  const database = openDatabase(temp.dir);
+  database.sqlite.exec("CREATE TABLE payloads (body BLOB)");
+  const execute = createExecutor(definePebble({
+    name: "full",
+    queries: { count: query(() => database.sqlite.query("SELECT count(*) AS n FROM payloads").get()) },
+    mutations: { add: mutation(() => database.db.run("INSERT INTO payloads VALUES (zeroblob(1048576))")) },
+  }), database);
+  const request = new Request("http://localhost");
+  try {
+    const pages = (database.sqlite.query("PRAGMA page_count").get() as { page_count: number }).page_count;
+    database.sqlite.exec(`PRAGMA max_page_count=${pages}`);
+    await expect(execute("mutation", "add", null, request)).rejects.toMatchObject({ code: "DISK_FULL", message: expect.stringContaining(temp.dir) });
+    expect(database.sqlite.inTransaction).toBe(false);
+    expect((await execute("query", "count", null, request)).value).toEqual({ n: 0 });
+    database.sqlite.exec("PRAGMA max_page_count=1000000");
+    await execute("mutation", "add", null, request);
+    expect((await execute("query", "count", null, request)).value).toEqual({ n: 1 });
+  } finally { await execute.close(); database.close(); temp.cleanup(); }
+});

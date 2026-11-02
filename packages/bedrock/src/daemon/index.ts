@@ -1,3 +1,5 @@
+import { detectCgroups } from "./cgroups";
+import { createSessionLinks } from "../auth/session-links";
 import { matchesPublicRoute } from "./public-routes";
 import { buildInfo } from "../version";
 import { updateCheckout } from "../self-update";
@@ -23,7 +25,7 @@ import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
 
-export interface StartDaemonOptions { home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
+export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; hibernateTimeoutForTests?: number; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
   const home = resolve(options.home ?? bedrockHome());
@@ -36,10 +38,12 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const db = await openDaemonDatabase(home);
   const dev = options.dev === true;
   const master = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
-  const supervisor = new Supervisor(home, db, master, config.creators, dev, data);
+  const cgroups = await detectCgroups({ dev });
+  const supervisor = new Supervisor(home, db, master, config.creators, dev, data, options.idleTimeoutForTests, undefined, cgroups, options.hibernateTimeoutForTests);
   const sessions = createSessions(db.db);
   const sockets = sessionSockets(sessions);
   const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);
+  const links = createSessionLinks(db, sessions, config, dev);
   const cliLogin = createCliLogin(config, sessions, db, dev);
   const tunnelToken = dev ? "" : (await Bun.file(tunnelTokenPath(home)).text().catch(() => "")).trim();
   const tunnel = config.cloudflare && (config.cloudflare.mode === "local" || tunnelToken) ? new TunnelSupervisor(home, tunnelToken, options.tunnelBinary, config.cloudflare.mode === "local" ? localTunnelFiles(home, config.cloudflare).configFile : undefined) : undefined;
@@ -47,7 +51,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const backups = createBackups(home, db, releases);
   let server: Bun.Server<Relay> | undefined;
   try {
-    await localToken(home, db);
+    const adminToken = await localToken(home, db);
     let updating = false;
     const maintenance = options.maintenance ?? { info: await buildInfo(), async update() {
       if (updating) throw new BedrockError("UPDATE_BUSY", "A self-update is already in progress or awaiting restart.", "Wait for the daemon to restart before retrying.");
@@ -59,7 +63,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
         return result;
       } catch (error) { updating = false; throw error; }
     } };
-    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups, config, maintenance);
+    const api = createApi(db, releases, supervisor, () => tunnel?.status() ?? { running: false, pid: null }, backups, config, maintenance, { adminToken, links, port: () => server!.port! });
     const notice = (request: Request, status: number, heading: string, hint: string) => wantsPage(request)
       ? noticePage(status, heading, hint)
       : new Response(`${heading}. ${hint.replace(/<\/?code>/g, "")}`, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
@@ -82,7 +86,11 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           }
           if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
           if (!target || ["auth", "www"].includes(target)) return notFound(request);
-          const child = supervisor.child(target);
+          if (url.pathname === "/_bedrock/session" && db.get(target)) return await links.handle(request, origin, target);
+          // Cold starts may exceed Bun's default request timeout on a slow disk.
+          server.timeout(request, 0);
+          let child;
+          try { child = await supervisor.ensure(target); } catch { /* Normal crash supervision retries failed wakes. */ }
           // A deployed but stopped pebble is a temporary condition, not a missing site.
           if (!child) {
             if (!db.get(target)) return notFound(request);
@@ -97,8 +105,8 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             request.headers.delete("authorization");
             for (const name of [...request.headers.keys()]) if (name.startsWith("x-bedrock-")) request.headers.delete(name);
             server.timeout(request, 0);
-            child.requests++;
-            return await proxyHttp(request, child.port, child.releaseId, () => { child.requests--; }, { "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) });
+            const complete = supervisor.activity(child);
+            return await proxyHttp(request, child.port, child.releaseId, complete, { "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) });
           }
           const hasSessionCookie = (request.headers.get("cookie") ?? "").split(";").some(part => part.trim().split("=", 1)[0] === "bedrock_session");
           const bearer = !hasSessionCookie && request.headers.get("authorization")?.startsWith("Bearer brk_") === true;
@@ -128,16 +136,18 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           if (hasSessionCookie) request.headers.delete("authorization");
           const identity = { ...(session ? signIdentity(session.user, deriveIdentitySecret(master, target)) : {}), "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) };
           if (websocket) {
-            const response = await proxyWebSocket(request, server, child.port, identity, session ? relay => {
-              const remove = sockets.register(relay, token!, session.hash);
-              sockets.revalidate();
-              return remove;
-            } : undefined);
-            return response;
+            const complete = supervisor.activity(child);
+            try {
+              return await proxyWebSocket(request, server, child.port, identity, relay => {
+                const remove = session ? sockets.register(relay, token!, session.hash) : undefined;
+                if (session) sockets.revalidate();
+                return () => { remove?.(); complete(); };
+              });
+            } catch (error) { complete(); throw error; }
           }
           server.timeout(request, 0);
-          child.requests++;
-          const response = await proxyHttp(request, child.port, child.releaseId, () => { child.requests--; }, identity);
+          const complete = supervisor.activity(child);
+          const response = await proxyHttp(request, child.port, child.releaseId, complete, identity);
           if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));
           return response;
         } catch (error) { return daemonError(error, request); }
@@ -149,6 +159,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       if (!dev) throw new BedrockError("INVALID_DEV_DOMAIN", "A dev pebble requires development mode.", "Use bedrock dev.");
       const child = await supervisor.launch(options.devPebble.name, options.devPebble.dir, true);
       supervisor.activate(options.devPebble.name, child);
+      await supervisor.startExclusive(options.devPebble.name, child);
     } else await supervisor.restore();
     await atomicWrite(join(home, "daemon.json"), JSON.stringify({ port: server.port, domain: config.domain }) + "\n");
     tunnel?.start();

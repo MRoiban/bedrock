@@ -24,3 +24,18 @@ test("releases use daemon-owned first-party packages from every dependency secti
     expect(await readlink(join(temp, "node_modules/@bedrock/ui"))).toBe(resolve(import.meta.dir, "../../../ui"));
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
+
+test("archive excludes secrets at every depth and itself while preserving ignored web output", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "bedrock-archive-"));
+  try {
+    const { createArchive, run } = await import("./archive");
+    for (const name of [".env", ".env.local", "nested/.env", "nested/.env.local", ".envoy/config", ".environment", "web/index.html", ".gitignore"]) await Bun.write(join(temp, name), name === ".gitignore" ? "/web/\n" : "content");
+    await run(["git", "init", temp]);
+    expect((await run(["git", "-C", temp, "check-ignore", "web/index.html"])).trim()).toBe("web/index.html");
+    const archive = join(temp, "output.tar.gz");
+    await createArchive(temp, archive);
+    const names = (await run(["tar", "-tzf", archive])).trim().split("\n");
+    for (const name of [".env", ".env.local", "nested/.env", "nested/.env.local", "output.tar.gz"]) expect(names).not.toContain(`./${name}`);
+    for (const name of [".envoy/config", ".environment", "web/index.html", ".gitignore"]) expect(names).toContain(`./${name}`);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});

@@ -1,3 +1,4 @@
+import { releaseProvenance } from "./provenance";
 import { validateTokenScope, type TokenScope } from "./token-scope";
 import type { User } from "../config";
 import { BedrockError } from "../error";
@@ -19,7 +20,7 @@ function storedRelease(home: string, path: string | null) {
   return inside && inside !== ".." && !inside.startsWith(".." + sep) && !isAbsolute(inside) ? inside : path;
 }
 const loadedRecord = (home: string, record: PebbleRecord | null) => record && {
-  ...record, release: resolve(home, record.release), previous_release: record.previous_release && resolve(home, record.previous_release),
+  ...record, provenance: releaseProvenance(resolve(home, record.release)), release: resolve(home, record.release), previous_release: record.previous_release && resolve(home, record.previous_release),
 };
 // Registries written before relative paths name the old home; the tail is Bedrock's own layout.
 function relativizeReleases(db: Database) {

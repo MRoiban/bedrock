@@ -15,25 +15,25 @@ export function createSessions(db: Database, now = Date.now) {
     const row = db.query("SELECT id, email, name, COALESCE(avatar_url, '') AS avatarUrl FROM users WHERE email=?").get(email) as User;
     return row;
   }
-  function create(userId: string) {
+  function create(userId: string, expiresAt?: number) {
     const token = randomToken();
     const time = now();
     db.query("DELETE FROM sessions WHERE expires_at <= ?").run(time);
-    db.query("INSERT INTO sessions VALUES (?, ?, ?, ?)").run(tokenHash(token), userId, time + SESSION_LIFETIME, time);
+    db.query("INSERT INTO sessions (id_hash, user_id, expires_at, created_at, fixed_expiry) VALUES (?, ?, ?, ?, ?)").run(tokenHash(token), userId, expiresAt ?? time + SESSION_LIFETIME, time, expiresAt === undefined ? 0 : 1);
     return token;
   }
   function resolve(token: string | null, slide = true): Session | null {
     if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
     const hash = tokenHash(token);
-    const row = db.query(`SELECT u.id, u.email, u.name, COALESCE(u.avatar_url, '') AS avatarUrl, s.expires_at
-      FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id_hash=?`).get(hash) as (User & { expires_at: number }) | null;
+    const row = db.query(`SELECT u.id, u.email, u.name, COALESCE(u.avatar_url, '') AS avatarUrl, s.expires_at, s.fixed_expiry
+      FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id_hash=?`).get(hash) as (User & { expires_at: number; fixed_expiry: number }) | null;
     if (!row) return null;
     const time = now();
     if (row.expires_at <= time) { db.query("DELETE FROM sessions WHERE id_hash=?").run(hash); return null; }
-    const refreshed = slide && row.expires_at <= time + SESSION_LIFETIME - DAY;
+    const refreshed = !row.fixed_expiry && slide && row.expires_at <= time + SESSION_LIFETIME - DAY;
     const expiresAt = refreshed ? time + SESSION_LIFETIME : row.expires_at;
     if (refreshed) db.query("UPDATE sessions SET expires_at=? WHERE id_hash=?").run(expiresAt, hash);
-    const { expires_at, ...identity } = row;
+    const { expires_at, fixed_expiry, ...identity } = row;
     return { hash, user: identity, expiresAt, refreshed };
   }
   return { user, create, resolve, revoke: (hash: string) => db.query("DELETE FROM sessions WHERE id_hash=?").run(hash) };

@@ -1,3 +1,5 @@
+import { Database } from "bun:sqlite";
+import { assertConcurrentWalSafe } from "../db/sqlite-version";
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { is, Table } from "drizzle-orm";
@@ -27,6 +29,9 @@ export async function dbCommand(command: string, dir = process.cwd(), options: D
     }
     return { command: "db check", migrations: diff.migrations, unmanagedTables: diff.unmanaged, message: "Migrations match the schema." };
   }
+  // Local dev may still own this file; opening it also applies internal migrations.
+  const probe = new Database(":memory:");
+  try { assertConcurrentWalSafe(probe); } finally { probe.close(); }
   const database = openDatabase(join(dir, ".bedrock"), pebble.schema);
   try {
     if (command === "plan") return { command: "db plan", pending: await migrationPlan(database.sqlite, migrations) };

@@ -23,7 +23,7 @@ export function validateDirectories(config?: DirectoryBackup) {
   }
 }
 const hash = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
-export async function snapshotDirectories(target: BackupTarget, base: string, dataDir: string, config: DirectoryBackup): Promise<DirectoryManifest> {
+export async function snapshotDirectories(target: Pick<BackupTarget, "put" | "exists">, base: string, dataDir: string, config: DirectoryBackup): Promise<DirectoryManifest> {
   validateDirectories(config);
   const result: DirectoryManifest = { directories: Object.create(null), emptyDirs: Object.create(null) };
   const globs = (config.exclude ?? []).map(pattern => new Bun.Glob(pattern));
@@ -41,10 +41,11 @@ export async function snapshotDirectories(target: BackupTarget, base: string, da
         for (const name of entries.sort()) await walk(path ? `${path}/${name}` : name);
       } else if (stat.isFile()) {
         const bytes = new Uint8Array(await Bun.file(join(dataDir, relative)).arrayBuffer());
+        const size = bytes.length;
         const sha256 = hash(bytes);
         const key = `${base}files/${sha256}`;
         if (!await target.exists(key)) await target.put(key, bytes);
-        files.push({ path, sha256, size: bytes.length, mode: stat.mode & 0o777, mtimeMs: stat.mtimeMs });
+        files.push({ path, sha256, size, mode: stat.mode & 0o777, mtimeMs: stat.mtimeMs });
       }
     }
     // Each parent is checked too: a symlink root ancestor must never escape dataDir.

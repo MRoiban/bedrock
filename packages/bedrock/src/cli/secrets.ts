@@ -1,4 +1,4 @@
-import { call } from "./daemon";
+import { call, warnExclusive } from "./daemon";
 import { promptSecret } from "./terminal";
 import { validateSecretName } from "../daemon/secrets";
 import { validateName } from "../config";
@@ -28,6 +28,7 @@ export async function secretsCommand(args: string[], options: { stdin?: () => Pr
   if (flags["--restart"]) body.restart = true;
   const response = await (options.request ?? call)(flags, `/api/pebbles/${name}/secrets`, action === "ls" ? {} : { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const reply = await response.json();
+  warnExclusive(name!, reply);
   // Daemons before the unified envelope answered with bare metadata; accept both until servers self-update.
   return { command: `secrets ${action}`, ...(reply?.ok === true && "value" in reply ? reply.value : reply) };
 }

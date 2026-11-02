@@ -1,10 +1,11 @@
+import { requireSpace } from "../disk";
 import { listR2, type R2Credentials, type ListPage } from "./r2-list";
 import { mkdir, readdir, rm, rename } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 
 export interface BackupTarget {
-  put(key: string, bytes: Uint8Array): Promise<void>;
+  put(key: string, bytes: Uint8Array | Bun.BunFile): Promise<void>;
   get(key: string): Promise<Uint8Array>;
   exists(key: string): Promise<boolean>;
   list(prefix: string): Promise<string[]>;
@@ -22,8 +23,8 @@ export function fsTarget(directory: string): BackupTarget {
     async put(key, bytes) {
       const file = path(key);
       const temporary = `${file}.${crypto.randomUUID()}.tmp`;
-      await mkdir(dirname(file), { recursive: true });
-      try { await Bun.write(temporary, bytes); await rename(temporary, file); }
+      try { await mkdir(dirname(file), { recursive: true }); await requireSpace(dirname(file), bytes instanceof Uint8Array ? bytes.byteLength : bytes.size); await Bun.write(temporary, bytes); await rename(temporary, file); }
+      catch (error) { throw asBedrockError(error, "BACKUP_FAILED", "Check the backup destination and retry.", file); }
       finally { await rm(temporary, { force: true }); }
     },
     async get(key) { try { return new Uint8Array(await Bun.file(path(key)).arrayBuffer()); } catch (error) { throw asBedrockError(error, "BACKUP_READ_FAILED", "Check the backup directory and object key."); } },
@@ -56,7 +57,24 @@ export function r2Target(config: R2Credentials, suppliedClient?: S3Operations): 
     accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey,
   });
   return {
-    async put(key, bytes) { await client.write(key, bytes); },
+    async put(key, bytes) {
+      if (bytes instanceof Uint8Array) { await client.write(key, bytes); return; }
+      const partSize = 5 * 1024 * 1024;
+      const writer = client.file(key).writer({ partSize, queueSize: 1 });
+      let buffered = 0;
+      try {
+        for await (const chunk of bytes.stream()) {
+          await writer.write(chunk);
+          buffered += chunk.byteLength;
+          // A fast disk must not queue the whole file behind a slow network.
+          if (buffered >= partSize) { await writer.flush(); buffered = 0; }
+        }
+        await writer.end();
+      } catch (error) {
+        await Promise.resolve().then(() => writer.end(error instanceof Error ? error : new Error(String(error)))).catch(() => {});
+        throw error;
+      }
+    },
     async get(key) { return new Uint8Array(await client.file(key).arrayBuffer()); },
     exists: key => client.exists(key),
     async delete(key) { await client.delete(key); },

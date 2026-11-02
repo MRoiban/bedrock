@@ -20,11 +20,14 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
   const idempotency = createIdempotency(database.sqlite);
   let tail: Promise<unknown> = Promise.resolve();
   let closed = false;
+  let pending = 0;
   const detachedRuns = new Set<Promise<unknown>>();
   const listeners = new Set<(writes: Set<string>) => void>();
   function execute(kind: "query" | "mutation", name: string, args: unknown, request: Request, identity?: { user: User | null; token?: RequestIdentity["token"]; validated?: boolean }, handler?: (ctx: FunctionContext) => unknown, permission?: string, options?: ExecuteOptions) {
     if (closed) return Promise.reject(new BedrockError("PEBBLE_STOPPED", "The pebble has stopped.", "Start a new pebble runtime before executing functions."));
+    pending++;
     const run = tail.then(() => runSlot(slots, slotInfo(kind, name, !!handler, options?.label), async () => {
+      if (kind === "mutation") await database.checkpoints.beforeWrite();
       const definitions = kind === "query" ? pebble.queries : pebble.mutations;
       if (!handler && (!definitions || !Object.hasOwn(definitions, name))) {
         throw new BedrockError("FUNCTION_NOT_FOUND", `Unknown ${kind}: ${name}`, "Check the function name in pebble.ts.");
@@ -87,13 +90,13 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         if (!committed) for (const cleanup of effects.rollback) await cleanup().catch(error => console.error("Storage rollback cleanup failed", error));
         throw asBedrockError(error, "FUNCTION_FAILED", kind === "query"
           ? "Queries must only read data. Check the query handler and database schema."
-          : "Check the mutation handler, arguments, and database schema.");
+          : "Check the mutation handler, arguments, and database schema.", database.dataDir);
       } finally {
         if (kind === "query") sqlite.exec("PRAGMA query_only=OFF");
       }
     }));
     // Rejections must not poison the queue for later requests.
-    tail = run.catch(() => {});
+    tail = run.then(() => { pending--; }, () => { pending--; });
     // Observers run outside the queue slot, so they can safely enqueue queries.
     if (kind === "mutation") void run.then(result => {
       for (const listener of listeners) listener(new Set(result.writes));
@@ -137,6 +140,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
   }
   return Object.assign(execute, {
     identify,
+    pending: () => pending + detachedRuns.size,
     flushTokens() { return execute("mutation", "tokens", null, new Request("http://localhost"), { user: null }, () => {}); },
     detached,
     storage(kind: "query" | "mutation", request: Request, handler: (ctx: FunctionContext) => unknown, identity?: RequestIdentity) {

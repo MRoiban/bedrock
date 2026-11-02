@@ -16,3 +16,20 @@ test('filesystem driver atomically replaces files, handles ranges, and rejects t
     await driver.delete('bucket/id'); expect(await driver.stat('bucket/id')).toBeNull();
   } finally { temp.cleanup(); }
 });
+
+test("storage maps injected ENOSPC before opening a writer and retries normally", async () => {
+  const temp = tempDirectory();
+  let full = true;
+  const { mkdir } = await import("node:fs/promises");
+  const directory = (async (...args: Parameters<typeof mkdir>) => {
+    if (full) throw Object.assign(new Error("full"), { code: "ENOSPC" });
+    return mkdir(...args);
+  }) as typeof mkdir;
+  const driver = fsDriver(temp.dir, directory);
+  try {
+    await expect(driver.put("bucket/file", new Blob(["data"]))).rejects.toMatchObject({ code: "DISK_FULL", message: expect.stringContaining(temp.dir) });
+    full = false;
+    await driver.put("bucket/file", new Blob(["data"]));
+    expect(await driver.get("bucket/file").text()).toBe("data");
+  } finally { temp.cleanup(); }
+});

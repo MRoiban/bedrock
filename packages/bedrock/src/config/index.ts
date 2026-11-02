@@ -48,6 +48,7 @@ export function definePebble<const P extends PebbleConfig>(config: P): P {
   }
   for (const [name, definition] of Object.entries(config.services ?? {})) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name) || ["constructor", "prototype", "__proto__"].includes(name) || !definition || typeof definition.start !== "function" || definition.stop !== undefined && typeof definition.stop !== "function") throw new BedrockError("INVALID_SERVICE", `Invalid service: ${name}`, "Use a letter-led name and service({ start, stop? }).");
+    if (definition.exclusive !== undefined && typeof definition.exclusive !== "boolean") throw new BedrockError("INVALID_SERVICE", `Invalid exclusive option for ${name}.`, "Use service({ exclusive: true, start, stop }) or omit exclusive.");
     if (definition.stopTimeout !== undefined && (!Number.isSafeInteger(definition.stopTimeout) || definition.stopTimeout <= 0)) throw new BedrockError("INVALID_SERVICE", `Invalid stopTimeout for ${name}.`, "Use a positive integer in milliseconds; the shared service deadline is capped at 30000 ms.");
   }
   validateDirectories(config.backup);

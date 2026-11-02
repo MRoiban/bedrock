@@ -37,3 +37,17 @@ test("doctor passes intentionally stopped pebbles and fails crashed ones", async
     expect(checks.find(check => check.name === "pebble:bot")).toMatchObject({ status: "fail", message: "bot: crashed, unhealthy" });
   } finally { temp.cleanup(); }
 });
+
+test("doctor reports both home and data filesystem space with low-space warnings", async () => {
+  const temp = tempDirectory();
+  const data = join(temp.dir, "data");
+  const { statfs, mkdir } = await import("node:fs/promises");
+  await mkdir(join(data, "pebbles"), { recursive: true });
+  try {
+    await atomicWrite(join(temp.dir, "config.json"), JSON.stringify({ domain: "localhost", creators: [], port: 3000, dataDir: data }));
+    const disk = (async (path: unknown) => ({ bsize: 1, bavail: path === data ? 100 : 10 * 1024 ** 3, blocks: 100 * 1024 ** 3 })) as unknown as typeof statfs;
+    const checks = await doctor(temp.dir, { disk, checkout: null, binary: () => "/test/cloudflared", fetch: (async () => { throw new Error("offline"); }) as unknown as typeof fetch });
+    expect(checks.find(check => check.name === "disk")).toMatchObject({ status: "pass", message: expect.stringContaining(temp.dir) });
+    expect(checks.find(check => check.name === "data-dir")).toMatchObject({ status: "warn", message: expect.stringContaining("100 bytes free") });
+  } finally { temp.cleanup(); }
+});
