@@ -35,7 +35,7 @@ export interface Child {
   publicRoutes: string[];
   exclusiveServices: string[];
 }
-interface State { launching?: number; relaunch?: Promise<unknown>; nextRetryAt?: number; waking?: Promise<Child | undefined>; sleeping?: Promise<void>; child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number; retired: Promise<void> }
+interface State { launching?: number; candidates?: Set<Child>; relaunch?: Promise<unknown>; nextRetryAt?: number; waking?: Promise<Child | undefined>; sleeping?: Promise<void>; child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number; retired: Promise<void> }
 
 export async function stopChild(child: Child) {
   if (child.process.exitCode === null) {
@@ -191,11 +191,16 @@ export class Supervisor {
   async launch(name: string, release: string, devSource = false, onFailure?: (child: Child) => void): Promise<Child> {
     const state = this.state(name);
     const current = this.child(name);
-    // A wake and a deploy can both be starting; each would open a writer.
-    if (current && current.process.exitCode === null || state.launching) assertConcurrentWalSafe(this.db.db);
+    // A wake and a deploy can both be starting, or a healthy candidate may await activation; each is a writer.
+    const candidate = [...state.candidates ?? []].some(child => child.process.exitCode === null);
+    if (current && current.process.exitCode === null || state.launching || candidate) assertConcurrentWalSafe(this.db.db);
     state.launching = (state.launching ?? 0) + 1;
-    try { return await this.spawnChild(name, release, devSource, onFailure); }
-    finally { state.launching!--; }
+    try {
+      const child = await this.spawnChild(name, release, devSource, onFailure);
+      (state.candidates ??= new Set()).add(child);
+      void child.process.exited.then(() => state.candidates?.delete(child));
+      return child;
+    } finally { state.launching!--; }
   }
   private async spawnChild(name: string, release: string, devSource: boolean, onFailure?: (child: Child) => void): Promise<Child> {
     const started = this.timing.now();
@@ -311,6 +316,7 @@ export class Supervisor {
   activate(name: string, child: Child, resetFailures = true) {
     if (this.stopping) throw new BedrockError("DAEMON_STOPPING", "The daemon is stopping.", "Restart the daemon and retry.");
     const state = this.state(name);
+    state.candidates?.delete(child);
     child.lastActive = Date.now();
     clearTimeout(state.timer);
     delete state.timer;
@@ -359,6 +365,8 @@ export class Supervisor {
   }
   async start(record: PebbleRecord) {
     if (this.child(record.name)) return;
+    // Join a wake already in progress; a stale idle record (e.g. restore after stop) launches normally.
+    if (this.db.get(record.name)?.status === "idle") { await this.ensure(record.name); return; }
     await this.stop(record.name, false);
     let child: Child;
     try { child = await this.launch(record.name, record.release); }
