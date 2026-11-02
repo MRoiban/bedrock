@@ -6,7 +6,7 @@ import { openBrowser, readCredentials, type Credentials } from "./credentials";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { BedrockError } from "../error";
+import { BedrockError, asBedrockError } from "../error";
 import { startDaemon } from "../daemon";
 import { bedrockHome, readConfig } from "../daemon/config";
 import { createArchive } from "../daemon/archive";
@@ -84,7 +84,8 @@ export async function daemonCommand(command: string, args: string[], json: boole
   if (Object.keys(flags).some(key => !allowed.includes(key))) invalid();
   if (command === "daemon") {
     if (positionals.length) invalid();
-    await refreshLinuxService({ home: bedrockHome() });
+    // An unattended host must still boot when the unit cannot be refreshed (full disk, no user bus).
+    await refreshLinuxService({ home: bedrockHome() }).catch(error => console.warn("Could not refresh the systemd unit; continuing.", asBedrockError(error).toJSON()));
     const running = await startDaemon({ ...(flags["--port"] ? { port: Number(flags["--port"]) } : {}) });
     const value = { command, url: `http://bedrock.localhost:${running.server.port}`, home: running.home };
     console.log(json ? JSON.stringify({ ok: true, ...value }) : `Bedrock daemon: ${value.url}`);
