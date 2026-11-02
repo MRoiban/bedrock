@@ -1,3 +1,4 @@
+import { requireSpace } from "../disk";
 import { decodeProvenance, provenanceFile } from "./provenance";
 import { assertRollbackSafe } from "./rollback";
 import { mkdir, readdir, rename, rm, symlink } from "node:fs/promises";
@@ -67,8 +68,10 @@ export class Releases {
       const archive = join(root, `upload-${crypto.randomUUID()}.tar.gz`);
       let child: Child | undefined;
       let activated = false;
-      await mkdir(root, { recursive: true });
       try {
+        const length = Number(request.headers.get("content-length"));
+        await requireSpace(this.home, Number.isFinite(length) && length > 0 ? length : 0);
+        await mkdir(root, { recursive: true });
         if (!request.body) throw new BedrockError("INVALID_ARCHIVE", "Deploy body is empty.", "Upload a tar.gz containing pebble.ts at its root.");
         await Bun.write(archive, new Response(request.body));
         await extract(archive, release);
@@ -84,7 +87,7 @@ export class Releases {
           if (child) await stopChild(child);
           await rm(release, { recursive: true, force: true });
         }
-        throw asBedrockError(error, "DEPLOY_FAILED", `Check bedrock logs ${name}, fix the archive or dependencies, and redeploy. The previous release is still selected.`);
+        throw asBedrockError(error, "DEPLOY_FAILED", `Check bedrock logs ${name}, fix the archive or dependencies, and redeploy. The previous release is still selected.`, root);
       } finally { await rm(archive, { force: true }); }
     });
   }

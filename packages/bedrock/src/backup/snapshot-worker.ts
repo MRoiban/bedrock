@@ -5,7 +5,7 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import { join, dirname } from "node:path";
-import { BedrockError } from "../error";
+import { asBedrockError, BedrockError } from "../error";
 import { snapshotDirectories } from "./directories";
 import { sha256, type Manifest } from "./snapshot";
 import type { BackupTarget } from "./target";
@@ -71,7 +71,7 @@ async function snapshot(input: SnapshotInput & { temp: string }): Promise<Manife
     // Publishing last keeps incomplete uploads invisible to restore.
     await target.put(`${base}manifests/${filename}.json`, new TextEncoder().encode(JSON.stringify(manifest)));
     return manifest;
-  } finally { source?.close(); copy?.close(); }
+  } catch (error) { throw asBedrockError(error, "BACKUP_FAILED", "Check the backup target and retry.", databasePath); } finally { source?.close(); copy?.close(); }
 }
 
 try { port.postMessage({ manifest: await snapshot(workerData) }); }

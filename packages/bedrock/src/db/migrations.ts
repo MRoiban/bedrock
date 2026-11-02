@@ -107,12 +107,12 @@ export async function applyMigrations(sqlite: Database, dir: string): Promise<st
         });
         if (ran) applied.push(migration.name);
       } catch (error) {
-        throw asBedrockError(error, "MIGRATION_FAILED", `Fix ${migration.name} and retry. This migration was rolled back; earlier migrations remain applied.`);
+        throw asBedrockError(error, "MIGRATION_FAILED", `Fix ${migration.name} and retry. This migration was rolled back; earlier migrations remain applied.`, sqlite.filename);
       }
     }
     return applied;
   } catch (error) {
-    throw asBedrockError(error, "MIGRATION_FAILED", "Check the migrations directory and SQL files, then retry.");
+    throw asBedrockError(error, "MIGRATION_FAILED", "Check the migrations directory and SQL files, then retry.", sqlite.filename);
   }
 }
 

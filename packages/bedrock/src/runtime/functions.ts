@@ -88,7 +88,7 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         if (!committed) for (const cleanup of effects.rollback) await cleanup().catch(error => console.error("Storage rollback cleanup failed", error));
         throw asBedrockError(error, "FUNCTION_FAILED", kind === "query"
           ? "Queries must only read data. Check the query handler and database schema."
-          : "Check the mutation handler, arguments, and database schema.");
+          : "Check the mutation handler, arguments, and database schema.", database.dataDir);
       } finally {
         if (kind === "query") sqlite.exec("PRAGMA query_only=OFF");
       }

@@ -41,8 +41,25 @@ function serializableData(error: BedrockError) {
 // Only Bedrock knows which errors were unexpected throws; pebbles cannot claim it.
 const wrapped = new WeakSet<BedrockError>();
 
-export function asBedrockError(error: unknown, code = "INTERNAL_ERROR", hint = "Check the pebble's code and server logs.") {
+export function isDiskFull(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  while (error && typeof error === "object" && !seen.has(error)) {
+    seen.add(error);
+    const value = error as { code?: string; errno?: number; cause?: unknown };
+    if (["SQLITE_FULL", "ENOSPC", "EDQUOT"].includes(value.code ?? "") || value.errno === 13 && value.code?.startsWith("SQLITE")) return true;
+    error = value.cause;
+  }
+  return false;
+}
+
+export function diskFull(path: string) {
+  return new BedrockError("DISK_FULL", `Insufficient disk space or quota on the filesystem holding ${path}.`,
+    `Free space on that filesystem (remove old backups, logs, or unused releases), or increase its quota, then retry. Writes resume without restarting Bedrock.`);
+}
+
+export function asBedrockError(error: unknown, code = "INTERNAL_ERROR", hint = "Check the pebble's code and server logs.", path?: string) {
   if (error instanceof BedrockError) return error;
+  if (isDiskFull(error)) return diskFull(path ?? (error as { path?: string }).path ?? process.env.BEDROCK_DATA ?? process.env.BEDROCK_HOME ?? "the Bedrock data directory");
   const typed = new BedrockError(code, error instanceof Error ? error.message : String(error), hint);
   wrapped.add(typed);
   return typed;
@@ -53,7 +70,7 @@ const STATUS: Record<string, number> = {
   UNAUTHENTICATED: 401, FORBIDDEN: 403, INVALID_IDENTITY: 403, FILE_TOO_LARGE: 413,
   QUOTA_EXCEEDED: 400, INVALID_FILE: 400, INVALID_CHUNK: 400, FILE_TYPE_REJECTED: 400, UPLOAD_CHECKSUM_MISMATCH: 400,
   INVALID_ARGS: 400, INVALID_TOKEN_PERMISSION: 400, INVALID_JSON: 400, INVALID_USER: 400,
-  LOGIN_LIMIT: 429, PEBBLE_STOPPED: 503,
+  DISK_FULL: 507, LOGIN_LIMIT: 429, PEBBLE_STOPPED: 503,
   // Programming or server faults that callers cannot fix by changing the request.
   READ_ONLY: 500, UNKNOWN_TABLE: 500, DETACHED_CONTEXT: 500, NETWORK_IN_SLOT: 500, OAUTH_NOT_CONFIGURED: 500,
   UNKNOWN_BUCKET: 500, TOKENS_DISABLED: 500,

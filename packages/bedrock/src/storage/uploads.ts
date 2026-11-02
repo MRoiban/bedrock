@@ -1,3 +1,4 @@
+import { asBedrockError } from '../error';
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FunctionContext, BucketConfig } from '../config/types';
@@ -51,8 +52,13 @@ export function createUploads(root: string) {
       const upload: Upload = { bucket, ownerId: ctx.user?.id ?? null, ...info, size: input.size, sha256: input.sha256, meta: uploadMeta(input.meta), createdAt: Date.now() };
       await authorizeUpload(config, ctx, { ...upload, meta: upload.meta });
       const uploadId = crypto.randomUUID();
-      await mkdir(path(uploadId), { recursive: true });
-      await Bun.write(join(path(uploadId), 'manifest.json'), JSON.stringify(upload));
+      try {
+        await mkdir(path(uploadId), { recursive: true });
+        await Bun.write(join(path(uploadId), 'manifest.json'), JSON.stringify(upload));
+      } catch (error) {
+        await rm(path(uploadId), { recursive: true, force: true });
+        throw asBedrockError(error, "STORAGE_WRITE_FAILED", "Retry the upload.", root);
+      }
       return { uploadId, chunkSize: CHUNK_SIZE };
     },
     async chunk(id: string, upload: Upload, index: string, body: ReadableStream<Uint8Array>) {

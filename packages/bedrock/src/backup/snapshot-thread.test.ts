@@ -120,3 +120,39 @@ test("backup manager shutdown cancels a waiting worker and releases the pebble l
     expect(await target.list("pebbles/notes/manifests/")).toEqual([]);
   } finally { await backups.stop(); db.close(); temp.cleanup(); }
 });
+
+test("disk-full backup skips one pebble, records warning, cleans temp files and retries", async () => {
+  const temp = tempDirectory();
+  const home = join(temp.dir, "home");
+  const db = await openDaemonDatabase(home);
+  const releases = new Releases(home, db, new Supervisor(home, db, "test-secret"));
+  const release = join(temp.dir, "release");
+  const data = pebbleDataDir(home, "notes");
+  const target = fsTarget(join(temp.dir, "target"));
+  let full = true;
+  const backups = createBackups(home, db, releases, { ...target, async put(key, body) {
+    if (full && key.startsWith("pebbles/notes/")) throw Object.assign(new Error("full"), { code: "ENOSPC", path: join(temp.dir, "target") });
+    await target.put(key, body);
+  } });
+  const notice = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await Bun.write(join(release, ".bedrock-backup.json"), "null");
+    await mkdir(data, { recursive: true });
+    const sqlite = new Database(join(data, "db.sqlite"));
+    sqlite.exec("CREATE TABLE notes (body TEXT)"); sqlite.close();
+    db.save({ name: "notes", release, previous_release: null, status: "stopped" });
+    await backups.run();
+    const state = await Bun.file(join(home, "backup-state.json")).json();
+    expect(state.warnings.notes.code).toBe("DISK_FULL");
+    expect(state.pebbles.notes).toBeUndefined();
+    expect(state.daemon).toBeGreaterThan(0);
+    expect(state.lastFullSuccess).toBeUndefined();
+    expect(await temporaryFiles(data)).toEqual([]);
+    full = false;
+    await backups.run();
+    const recovered = await Bun.file(join(home, "backup-state.json")).json();
+    expect(recovered.warnings).toEqual({});
+    expect(recovered.pebbles.notes).toBeGreaterThan(0);
+    expect(recovered.lastFullSuccess).toBeGreaterThan(0);
+  } finally { notice.mockRestore(); await backups.stop(); db.close(); temp.cleanup(); }
+});

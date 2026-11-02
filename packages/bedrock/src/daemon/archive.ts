@@ -1,12 +1,14 @@
 import { lstat, mkdir, readdir, rm, symlink } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import { BedrockError } from "../error";
+import { requireSpace } from "../disk";
+import { diskFull, BedrockError } from "../error";
 
 export async function run(command: string[], cwd?: string, env?: Record<string, string>) {
   const child = Bun.spawn(command, { ...(cwd ? { cwd } : {}), ...(env ? { env: { ...process.env, ...env } } : {}), stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => child.kill("SIGKILL"), 120000);
   try {
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    if (code !== 0 && /no space left on device|disk quota exceeded|ENOSPC|EDQUOT/i.test(stderr + stdout)) throw diskFull(cwd ?? command.at(-1)!);
     if (code !== 0) throw new BedrockError("DEPLOY_COMMAND_FAILED", `${command[0]} failed: ${(stderr || stdout).trim()}`, "Check the archive, package dependencies, and network connection, then retry.");
     return stdout;
   } finally { clearTimeout(timer); }
@@ -23,6 +25,10 @@ export async function extract(archive: string, release: string) {
   if (entries.split("\n").filter(Boolean).some(line => !["-", "d"].includes(line[0]!))) {
     throw new BedrockError("UNSAFE_ARCHIVE", "Archive contains links or special files.", "Deploy regular files and directories only; replace symbolic links with files.");
   }
+  // gzip stores the uncompressed size modulo 4 GiB: a cheap lower bound.
+  const file = Bun.file(archive);
+  const trailer = new DataView(await file.slice(Math.max(0, file.size - 4)).arrayBuffer());
+  await requireSpace(resolve(archive, ".."), trailer.getUint32(0, true));
   await mkdir(release, { recursive: true });
   await run(["tar", "-xzf", archive, "--no-same-owner", "--no-same-permissions", "-C", release]);
 }

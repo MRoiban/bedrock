@@ -155,7 +155,7 @@ WebSocket error frames use one status rule, first match wins:
 1. `status`, if it is an integer from 400 to 599.
 2. Bedrock's table: `*_NOT_FOUND` for functions, files, buckets and uploads → 404;
    `UNAUTHENTICATED` → 401; `FORBIDDEN`, `INVALID_IDENTITY` → 403;
-   `FILE_TOO_LARGE` → 413; `LOGIN_LIMIT` → 429; `PEBBLE_STOPPED` → 503;
+   `DISK_FULL` → 507; `FILE_TOO_LARGE` → 413; `LOGIN_LIMIT` → 429; `PEBBLE_STOPPED` → 503;
    `READ_ONLY`, `UNKNOWN_TABLE`, `UNKNOWN_BUCKET`, `DETACHED_CONTEXT`,
    `NETWORK_IN_SLOT`, `TOKENS_DISABLED`, `OAUTH_NOT_CONFIGURED` → 500 (programming or server faults);
    storage rejections (`QUOTA_EXCEEDED`, `FILE_TYPE_REJECTED`, …) → 400.
@@ -174,6 +174,23 @@ throw new BedrockError("TIME_CONFLICT", "This local time is ambiguous.",
   "Choose the earlier or later reading.", undefined,
   { data: { candidates: ["2026-10-25T00:30:00Z", "2026-10-25T01:30:00Z"] } }); // 409
 ```
+
+SQLite `SQLITE_FULL` (including wrapped driver errors) and filesystem
+`ENOSPC`/`EDQUOT` become `DISK_FULL`, naming the affected path/filesystem and
+asking the operator to remove old backups/logs/releases or increase quota.
+Reads remain available and failed writes do not poison the queue; writes resume
+on retry after space is freed, without restarting. SQLite can auto-roll back on
+FULL, so rollback only runs while the connection is still in a transaction.
+Daemon logs drop disk writes on exhaustion with one stderr notice per outage;
+they retry on incoming log output at most once per minute.
+
+`bedrock doctor` (also `--json`) reports available and total bytes for the home
+filesystem and configured data directory. It warns below 1 GiB or 5% available.
+There is no background disk-space polling. Deploys reject with `DISK_FULL`
+before reading the upload if its declared size plus 64 MiB cannot fit; before
+extraction they check gzip's uncompressed-size lower bound plus 64 MiB.
+Dependency installation and concurrent writers can still exhaust space;
+the previous release remains selected when deployment fails before activation.
 
 ## 4. Database
 
@@ -1317,7 +1334,20 @@ blobs unreferenced by remaining manifests. `backup.intervalMinutes` and `keep`
 (`backup setup --interval-minutes <n> --keep <n>`) are stored with target
 metadata; the older `hourly`/`daily` keys are ignored. The `VACUUM INTO` copy and
 gzip file are staged in a `.bedrock-backup-*` directory beside the database, never in the OS
-temp directory. Directory-backup settings come from `.bedrock-backup.json`, which
+temp directory. Before staging, available space on that filesystem must cover
+twice the DB + WAL size (SQLite copy and potentially incompressible gzip) plus
+64 MiB. Filesystem backup targets also check object size plus 64 MiB before
+each put. Insufficient space skips only that pebble (or identity), emits a
+warning and retries next cycle. Run results include `{ skipped, warning }`;
+`backup-state.json` stores per-pebble `warnings`, also reported by doctor.
+Skipped backups do not advance their success timestamps or the full-cycle
+success timestamp. Normal failure, worker exit and shutdown cancellation
+terminate the worker and remove staging files. Staging directories carry the
+daemon PID; a subsequent snapshot removes directories whose owner process no
+longer exists before checking space (including after a killed daemon). These checks are best effort:
+concurrent writers can consume available space after inspection.
+
+Directory-backup settings come from `.bedrock-backup.json`, which
 the daemon writes into a release from the child's health check, so backups do
 not import pebble code into the daemon (a release not started since falls back
 to loading `pebble.ts`).

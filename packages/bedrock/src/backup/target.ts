@@ -1,3 +1,4 @@
+import { requireSpace } from "../disk";
 import { listR2, type R2Credentials, type ListPage } from "./r2-list";
 import { mkdir, readdir, rm, rename } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -22,8 +23,8 @@ export function fsTarget(directory: string): BackupTarget {
     async put(key, bytes) {
       const file = path(key);
       const temporary = `${file}.${crypto.randomUUID()}.tmp`;
-      await mkdir(dirname(file), { recursive: true });
-      try { await Bun.write(temporary, bytes); await rename(temporary, file); }
+      try { await mkdir(dirname(file), { recursive: true }); await requireSpace(dirname(file), bytes instanceof Uint8Array ? bytes.byteLength : bytes.size); await Bun.write(temporary, bytes); await rename(temporary, file); }
+      catch (error) { throw asBedrockError(error, "BACKUP_FAILED", "Check the backup destination and retry.", file); }
       finally { await rm(temporary, { force: true }); }
     },
     async get(key) { try { return new Uint8Array(await Bun.file(path(key)).arrayBuffer()); } catch (error) { throw asBedrockError(error, "BACKUP_READ_FAILED", "Check the backup directory and object key."); } },

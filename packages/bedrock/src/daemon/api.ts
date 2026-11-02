@@ -20,7 +20,7 @@ export function daemonError(error: unknown, request?: Request) {
     : ["PEBBLE_NOT_FOUND", "NOT_FOUND"].includes(typed.code) ? 404
     : ["PEBBLE_BUSY", "PEBBLE_STOPPED", "TOKENS_DISABLED"].includes(typed.code) ? 409
     : ["INVALID_ARGS", "INVALID_TOKEN_PERMISSION", "INVALID_RETURN_URL", "INVALID_OAUTH_STATE", "OAUTH_FAILED", "INVALID_PEBBLE_NAME", "CONFIRM_REQUIRED", "INVALID_ARCHIVE", "UNSAFE_ARCHIVE"].includes(typed.code) ? 400
-    : typed.code === "UPSTREAM_UNAVAILABLE" ? 502 : 500;
+    : typed.code === "DISK_FULL" ? 507 : typed.code === "UPSTREAM_UNAVAILABLE" ? 502 : 500;
   if (request && wantsPage(request)) return noticePage(status, typed.message, escapeHtml(typed.hint), typed.code);
   return Response.json({ ok: false, error: typed.toJSON() }, { status });
 }

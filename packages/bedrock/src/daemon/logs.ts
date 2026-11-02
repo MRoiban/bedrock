@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync, renameSync, statSync, existsSync, rmSync, openSync, readSync, closeSync, fstatSync } from "node:fs";
-import { join } from "node:path";
+import { isDiskFull } from "../error";
+import { dirname, join } from "node:path";
 
 const MIN_SECRET_LENGTH = 8;
 const MAX_PENDING_LINE = 64 * 1024;
@@ -18,10 +19,12 @@ export class PebbleLogs {
   private listeners = new Set<(chunk: Uint8Array) => void>();
   private followers = new Set<() => void>();
   private lineStart = true;
+  private retryAt = 0;
   // cloudflared stamps its own lines and is pumped in arbitrary chunks, so it opts out.
-  constructor(home: string, name: string, private limit = 10 * 1024 * 1024, directory?: string, filename = "pebble.log", private timestamps = true) {
+  constructor(home: string, name: string, private limit = 10 * 1024 * 1024, directory?: string, filename = "pebble.log", private timestamps = true, private append = appendFileSync, private now = Date.now) {
     const dir = directory ?? join(home, "pebbles", name, "logs");
-    mkdirSync(dir, { recursive: true });
+    try { mkdirSync(dir, { recursive: true }); }
+    catch (error) { if (!isDiskFull(error)) throw error; }
     this.path = join(dir, filename);
   }
   private stamp(text: string) {
@@ -39,18 +42,27 @@ export class PebbleLogs {
       const text = this.redact(new TextDecoder().decode(chunk));
       chunk = new TextEncoder().encode(this.timestamps ? this.stamp(text) : text);
     }
-    // Split oversized chunks so a noisy child cannot bypass rotation.
-    for (let offset = 0; offset < chunk.length; offset += this.limit) {
-      const part = chunk.subarray(offset, offset + this.limit);
-      if (existsSync(this.path) && statSync(this.path).size + part.length > this.limit) {
-        rmSync(`${this.path}.3`, { force: true });
-        for (let i = 2; i >= 0; i--) {
-          const source = i ? `${this.path}.${i}` : this.path;
-          if (existsSync(source)) renameSync(source, `${this.path}.${i + 1}`);
+    if (this.now() < this.retryAt) return;
+    try {
+      if (!existsSync(dirname(this.path))) mkdirSync(dirname(this.path), { recursive: true });
+      // Split oversized chunks so a noisy child cannot bypass rotation.
+      for (let offset = 0; offset < chunk.length; offset += this.limit) {
+        const part = chunk.subarray(offset, offset + this.limit);
+        if (existsSync(this.path) && statSync(this.path).size + part.length > this.limit) {
+          rmSync(`${this.path}.3`, { force: true });
+          for (let i = 2; i >= 0; i--) {
+            const source = i ? `${this.path}.${i}` : this.path;
+            if (existsSync(source)) renameSync(source, `${this.path}.${i + 1}`);
+          }
         }
+        this.append(this.path, part);
+        for (const listener of this.listeners) listener(part);
       }
-      appendFileSync(this.path, part);
-      for (const listener of this.listeners) listener(part);
+      this.retryAt = 0;
+    } catch (error) {
+      if (!isDiskFull(error)) throw error;
+      if (!this.retryAt) console.error(`DISK_FULL: dropping logs for ${this.path}; free disk space or quota. Retrying once a minute.`);
+      this.retryAt = this.now() + 60000;
     }
   }
   async pump(stream: ReadableStream<Uint8Array>) {

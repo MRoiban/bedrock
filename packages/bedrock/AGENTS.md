@@ -1192,3 +1192,19 @@ homes and fake users for tests, never real creator cookies.
 - Expecting rollback to undo schema/data or a backup to contain release code.
   Keep source/config backups too, inspect migrations, and test restores.
 - Testing against ~/.bedrock or real Cloudflare/R2. Use temp directories and mocks.
+
+Disk exhaustion: SQLite FULL and filesystem ENOSPC/EDQUOT surface as
+`DISK_FULL` (HTTP 507), with the affected path and a free-space/quota hint.
+Reads remain available; retry writes after freeing space, without restarting.
+The mutation queue keeps SQLite's auto-rollback guard. Logs drop disk writes on
+exhaustion, emit one stderr notice per outage and retry at most once a minute.
+`bedrock doctor --json` reports available/total bytes for the daemon home and
+configured data directory; it warns below 1 GiB or 5% available. Deploys check
+available space before accepting the archive and before extracting it.
+Backups check for twice the database + WAL size plus 64 MiB beside the database;
+filesystem targets also reserve the object size plus 64 MiB before writing.
+A disk-full backup is skipped independently and retried next cycle. Inspect
+`backup-state.json` warnings, backup command results, doctor and daemon logs;
+skipped snapshots never advance their success timestamps. Snapshot staging is
+removed after failure/cancellation; the next snapshot also reclaims staging
+owned by dead daemon PIDs before checking space.

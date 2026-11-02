@@ -45,6 +45,6 @@ export function openDatabase(dataDir: string, schema: Record<string, unknown> = 
     };
   } catch (error) {
     sqlite?.close(true);
-    throw asBedrockError(error, "DATABASE_OPEN_FAILED", "Check that the data directory is writable and the SQLite file is valid.");
+    throw asBedrockError(error, "DATABASE_OPEN_FAILED", "Check that the data directory is writable and the SQLite file is valid.", dataDir);
   }
 }
