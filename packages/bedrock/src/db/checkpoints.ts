@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { stat } from "node:fs/promises";
+import { hasWalResetBug } from "./sqlite-version";
 import { BedrockError } from "../error";
 
 const PAGES = 1000;
@@ -10,6 +11,14 @@ const BACKSTOP_WAIT_MS = 5000;
 export function createCheckpoints(sqlite: Database, path: string) {
   const page = (sqlite.query("PRAGMA page_size").get() as { page_size: number }).page_size;
   const threshold = 32 + PAGES * (page + 24);
+  const version = (sqlite.query("SELECT sqlite_version() AS version").get() as { version: string }).version;
+  const supported = !hasWalResetBug(version);
+  sqlite.exec(`PRAGMA wal_autocheckpoint=${supported ? 0 : PAGES}`);
+  if (!supported) console.warn(new BedrockError("DATABASE_CHECKPOINT_UNSAFE_SQLITE",
+    `Background checkpoints disabled for ${path}: SQLite ${version} has the WAL-reset corruption bug.`,
+    "Upgrade Bun / use a Bun build with a newer SQLite (3.51.3+, or patched 3.44.6 / 3.50.7). SQLite auto-checkpoint remains enabled; commits may pause.").toJSON());
+  let retryAt = 0;
+  let retryDelay = 30_000;
   let stopped = false;
   let failed = false;
   let checking: Promise<void> | undefined;
@@ -21,40 +30,62 @@ export function createCheckpoints(sqlite: Database, path: string) {
   let active: ReturnType<typeof start> | undefined;
 
   function fallback(error: unknown) {
-    if (failed || stopped) return;
+    if (stopped) return;
+    retryAt = Date.now() + retryDelay;
+    retryDelay = Math.min(retryDelay * 2, 600_000);
+    if (failed) return;
     failed = true;
     sqlite.exec(`PRAGMA wal_autocheckpoint=${PAGES}`);
     console.warn(new BedrockError("DATABASE_CHECKPOINT_FAILED", `Background checkpoint failed for ${path}: ${error}`,
-      "SQLite auto-checkpoint is restored; commits may pause. Check disk space, database permissions and Bun Worker support, then restart the pebble.").toJSON());
+      "SQLite auto-checkpoint is restored; commits may pause. Check disk space, database permissions and Bun Worker support; background checkpoints retry automatically (30 seconds to 10 minutes).").toJSON());
+  }
+
+  function recovered() {
+    if (!failed || stopped) return;
+    sqlite.exec("PRAGMA wal_autocheckpoint=0");
+    failed = false;
+    retryDelay = 30_000;
+    lastModified = -1;
+    lastSize = -1;
+    console.info({ code: "DATABASE_CHECKPOINT_RECOVERED", message: `Background checkpoints recovered for ${path}; SQLite auto-checkpoint is disabled again.` });
   }
 
   function start(final = false) {
-    let worker: Worker;
+    let worker!: Worker;
     let ready!: () => void;
     let finish!: () => void;
     const opened = new Promise<void>(resolve => { ready = resolve; });
     const done = new Promise<void>(resolve => { finish = resolve; });
     let completed = false;
+    let errored = false;
+    const fail = (error: unknown) => {
+      if (errored) return;
+      errored = true;
+      fallback(error);
+    };
     const settle = () => { clearTimeout(watchdog); ready(); finish(); };
-    let watchdog: ReturnType<typeof setTimeout>;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
       worker = new Worker(new URL("./checkpoint-worker.ts", import.meta.url).href, { smol: true, ref: false });
       worker.onmessage = ({ data }) => {
         if (data === "ready") ready();
         else if (data === "done") completed = true;
-        else fallback(data.error);
+        else fail(data.error);
       };
-      worker.onerror = event => { event.preventDefault(); fallback(event.message); worker.terminate(); };
+      worker.onerror = event => { event.preventDefault(); fail(event.message); worker.terminate(); };
       worker.addEventListener("close", () => {
-        if (!completed) fallback("Worker exited before completing the checkpoint");
+        if (!completed) fail("Worker exited before completing the checkpoint");
+        if (completed && !errored) recovered();
         settle();
       });
-      watchdog = setTimeout(() => { fallback("Worker did not finish within 30 seconds"); worker.terminate(); }, 30_000);
+      watchdog = setTimeout(() => { fail("Worker did not finish within 30 seconds"); worker.terminate(); }, 30_000);
       watchdog.unref();
       worker.postMessage({ path, final, truncate: size >= MAX_WAL });
       return { opened, done, finish: () => worker.postMessage("finish"), cancel: () => worker.terminate(), completed: () => completed };
     } catch (error) {
-      fallback(error);
+      fail(error);
+      clearTimeout(watchdog);
+      worker?.terminate();
       ready(); finish();
       return { opened, done, finish() {}, cancel() {}, completed: () => false };
     }
@@ -67,8 +98,9 @@ export function createCheckpoints(sqlite: Database, path: string) {
         throw error;
       });
       size = info?.size ?? 0;
-      if (!force && size < MAX_WAL && info?.mtimeMs === lastModified && size === lastSize) return;
-      if (stopped || failed || active || size < threshold || (!force && Date.now() - lastAttempt < 1000)) return;
+      if (!failed && !force && size < MAX_WAL && info?.mtimeMs === lastModified && size === lastSize) return;
+      if (stopped || !supported || active) return;
+      if (failed ? Date.now() < retryAt : size < threshold || (!force && Date.now() - lastAttempt < 1000)) return;
       lastAttempt = Date.now();
       lastModified = info?.mtimeMs ?? -1;
       lastSize = size;
@@ -89,16 +121,22 @@ export function createCheckpoints(sqlite: Database, path: string) {
     check: () => inspect(true),
     // The sampled limit deliberately allows one transaction and one polling interval of overshoot.
     async beforeWrite() {
-      if (size < MAX_WAL || failed) return;
+      if (size < MAX_WAL) return;
       // Every write passes through this one queue, so holding the slot gives TRUNCATE a quiet WAL.
       // A short pause matches today's stall; failing the caller would be a new way for saves to break.
       const deadline = Date.now() + BACKSTOP_WAIT_MS;
-      while (size >= MAX_WAL && !failed && !stopped && Date.now() >= blockedUntil && Date.now() < deadline) {
-        await Promise.race([active?.done, Bun.sleep(Math.max(0, deadline - Date.now()))]);
+      while (size >= MAX_WAL && !stopped && Date.now() >= blockedUntil && Date.now() < deadline) {
+        if ((failed || !supported) && !active) {
+          // Fallback keeps the same bound without adding a second checkpointing connection.
+          const timeout = (sqlite.query("PRAGMA busy_timeout").get() as { timeout: number }).timeout;
+          sqlite.exec("PRAGMA busy_timeout=0");
+          try { sqlite.exec("PRAGMA wal_checkpoint(TRUNCATE)"); }
+          finally { sqlite.exec(`PRAGMA busy_timeout=${timeout}`); }
+        } else if (active) await Promise.race([active.done, Bun.sleep(Math.max(0, deadline - Date.now()))]);
         await inspect(true);
         if (size >= MAX_WAL) await Bun.sleep(50);
       }
-      if (size < MAX_WAL || failed) return;
+      if (size < MAX_WAL) return;
       // A pinned reader can outlast any wait, so later writes fail fast instead of queueing behind this one.
       if (Date.now() >= blockedUntil) blockedUntil = Date.now() + BACKSTOP_WAIT_MS;
       throw new BedrockError("DATABASE_WAL_BUSY", `The WAL for ${path} has reached ${Math.round(size / 1024 / 1024)} MiB; writes are paused.`,
@@ -122,6 +160,7 @@ export function createCheckpoints(sqlite: Database, path: string) {
         await untilDeadline(pending.done);
         if (!pending.completed()) pending.cancel();
       }
+      if (!supported || failed) { closeWriter(); return; }
       // Holding a second connection moves SQLite's last-close checkpoint off the main thread too.
       const final = active = start(true);
       await untilDeadline(final.opened);

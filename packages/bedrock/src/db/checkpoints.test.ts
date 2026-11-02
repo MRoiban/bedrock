@@ -157,3 +157,118 @@ test("the backstop still sees WAL growth while a slow checkpoint is running", as
     await expect(database.checkpoints.beforeWrite()).rejects.toMatchObject({ code: "DATABASE_WAL_BUSY" });
   } finally { await database.closeAsync(Date.now()); worker.mockRestore(); warn.mockRestore(); temp.cleanup(); }
 }, 15000);
+
+test("failed Workers retry with capped backoff, recover automatically and bound sustained writes", async () => {
+  const temp = tempDirectory();
+  const database = openDatabase(temp.dir);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const info = spyOn(console, "info").mockImplementation(() => {});
+  const realNow = Date.now.bind(Date);
+  let offset = 0;
+  const now = spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+  const worker = spyOn(globalThis as unknown as { Worker: (...args: any[]) => any }, "Worker")
+    .mockImplementation(() => { throw new Error("forced disk/Worker failure"); });
+  let peak = 0;
+  try {
+    fill(database.sqlite);
+    await database.checkpoints.check();
+    expect(worker.mock.calls.length).toBe(1);
+    for (const delay of [30_000, 60_000, 120_000, 240_000, 480_000, 600_000, 600_000]) {
+      await database.checkpoints.check();
+      const attempts = worker.mock.calls.length;
+      offset += delay;
+      await database.checkpoints.check();
+      expect(worker.mock.calls.length).toBe(attempts + 1);
+      for (let batch = 0; batch < 8; batch++) {
+        await database.checkpoints.beforeWrite();
+        fill(database.sqlite);
+        peak = Math.max(peak, walSize(temp.dir));
+      }
+    }
+    expect(warn.mock.calls).toHaveLength(1);
+    expect(database.sqlite.query("PRAGMA wal_autocheckpoint").get()).toEqual({ wal_autocheckpoint: 1000 });
+    worker.mockRestore();
+    offset += 600_000;
+    // The polling loop must recover without an explicit check, even when the WAL is idle.
+    const deadline = realNow() + 3000;
+    while (!info.mock.calls.length && realNow() < deadline) await Bun.sleep(25);
+    expect(info.mock.calls).toHaveLength(1);
+    expect(database.sqlite.query("PRAGMA wal_autocheckpoint").get()).toEqual({ wal_autocheckpoint: 0 });
+    for (let batch = 0; batch < 8; batch++) {
+      await database.checkpoints.beforeWrite();
+      fill(database.sqlite);
+      peak = Math.max(peak, walSize(temp.dir));
+      await database.checkpoints.check();
+    }
+    expect(peak).toBeLessThan(16 * 1024 * 1024);
+    expect(database.sqlite.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    console.log(`WAL recovery measurement: 64 batches, peak ${peak} bytes, final ${walSize(temp.dir)} bytes; 8 forced failures, 1 degradation, 1 recovery`);
+  } finally { now.mockRestore(); worker.mockRestore(); warn.mockRestore(); info.mockRestore(); await database.closeAsync(); temp.cleanup(); }
+}, 15000);
+
+test("vulnerable SQLite never starts a checkpoint Worker, including shutdown", async () => {
+  const { createCheckpoints } = await import("./checkpoints");
+  const temp = tempDirectory();
+  const sqlite = new Database(join(temp.dir, "db.sqlite"));
+  sqlite.exec("PRAGMA journal_mode=WAL");
+  const query = sqlite.query.bind(sqlite);
+  const version = spyOn(sqlite, "query").mockImplementation((sql: string) =>
+    sql === "SELECT sqlite_version() AS version" ? { get: () => ({ version: "3.51.2" }) } as any : query(sql));
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const worker = spyOn(globalThis as unknown as { Worker: (...args: any[]) => any }, "Worker")
+    .mockImplementation(() => { throw new Error("must not start"); });
+  const checkpoints = createCheckpoints(sqlite, join(temp.dir, "db.sqlite"));
+  try {
+    fill(sqlite);
+    await checkpoints.check();
+    expect(sqlite.query("PRAGMA wal_autocheckpoint").get()).toEqual({ wal_autocheckpoint: 1000 });
+    expect(warn.mock.calls).toHaveLength(1);
+    expect(warn.mock.calls[0]![0]).toMatchObject({ code: "DATABASE_CHECKPOINT_UNSAFE_SQLITE", hint: expect.stringContaining("Upgrade Bun") });
+    await checkpoints.close(() => sqlite.close(), Date.now() + 500);
+    expect(worker.mock.calls).toHaveLength(0);
+  } finally { checkpoints.stop(); sqlite.close(); version.mockRestore(); worker.mockRestore(); warn.mockRestore(); temp.cleanup(); }
+});
+
+test("stop cancels pending retry without a recovery or another Worker", async () => {
+  const temp = tempDirectory();
+  const database = openDatabase(temp.dir);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const worker = spyOn(globalThis as unknown as { Worker: (...args: any[]) => any }, "Worker")
+    .mockImplementation(() => { throw new Error("forced failure"); });
+  let now: ReturnType<typeof spyOn> | undefined;
+  try {
+    fill(database.sqlite);
+    await database.checkpoints.check();
+    database.checkpoints.stop();
+    const later = Date.now() + 700_000;
+    now = spyOn(Date, "now").mockReturnValue(later);
+    await database.checkpoints.check();
+    await Bun.sleep(300);
+    expect(worker.mock.calls).toHaveLength(1);
+    expect(database.sqlite.query("PRAGMA wal_autocheckpoint").get()).toEqual({ wal_autocheckpoint: 1000 });
+  } finally { now?.mockRestore(); worker.mockRestore(); warn.mockRestore(); database.close(); temp.cleanup(); }
+});
+
+test("degraded auto-checkpoint still refuses writes pinned beyond the WAL backstop", async () => {
+  const temp = tempDirectory();
+  const database = openDatabase(temp.dir);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const worker = spyOn(globalThis as unknown as { Worker: (...args: any[]) => any }, "Worker")
+    .mockImplementation(() => { throw new Error("forced failure"); });
+  let reader: Database | undefined;
+  try {
+    fill(database.sqlite);
+    await database.checkpoints.check();
+    database.sqlite.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    reader = new Database(join(temp.dir, "db.sqlite"), { readonly: true });
+    reader.exec("BEGIN"); reader.query("SELECT count(*) FROM sample").get();
+    database.sqlite.exec("UPDATE sample SET body=randomblob(65536)");
+    await database.checkpoints.check();
+    await expect(database.checkpoints.beforeWrite()).rejects.toMatchObject({ code: "DATABASE_WAL_BUSY" });
+    expect(database.sqlite.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
+    reader.close(); reader = undefined;
+    await Bun.sleep(5100);
+    await database.checkpoints.beforeWrite();
+    expect(walSize(temp.dir)).toBe(0);
+  } finally { reader?.close(); worker.mockRestore(); warn.mockRestore(); await database.closeAsync(); temp.cleanup(); }
+}, 15000);

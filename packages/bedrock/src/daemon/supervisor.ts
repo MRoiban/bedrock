@@ -1,4 +1,5 @@
 import { preferPebbleOom } from "./oom";
+import { assertConcurrentWalSafe } from "../db/sqlite-version";
 import { validatePublicRouteKey } from "../config/public-route";
 import { childEnvironment } from "./child-env";
 import { createSecrets } from "./secrets";
@@ -93,6 +94,8 @@ export class Supervisor {
     return state;
   }
   async launch(name: string, release: string, devSource = false): Promise<Child> {
+    const current = this.child(name);
+    if (current && current.process.exitCode === null) assertConcurrentWalSafe(this.db.db);
     const started = this.timing.now();
     const releaseId = basename(release) + (this.dev ? `-${started}` : "");
     const record = this.db.get(name);

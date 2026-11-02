@@ -133,7 +133,21 @@ polling interval and one transaction of overshoot. Raw `db.$client` SQL inside
 queue slots shares this protection; standalone scripts must yield between short
 batches and avoid held readers. Manual `PRAGMA wal_checkpoint(TRUNCATE)` still
 works. A `DATABASE_CHECKPOINT_FAILED` warning means SQLite auto-checkpoint was
-restored, so commits may pause again; fix the reported cause and restart. For
+restored, so commits may pause again. Fix the reported cause; retries start after
+30 seconds and double to a 10-minute cap without repeated failure warnings. A
+successfully completed Worker restores background checkpointing and logs
+`DATABASE_CHECKPOINT_RECOVERED` once. Close/shutdown cancels retries. On SQLite
+3.7.0–3.51.2 (except patched 3.44.x ≥ 3.44.6 and 3.50.x ≥ 3.50.7),
+`DATABASE_CHECKPOINT_UNSAFE_SQLITE` warns once per open: background Workers,
+including the final shutdown Worker, are disabled to avoid SQLite’s WAL-reset
+corruption bug. Upgrade Bun / use a build with newer SQLite (macOS may use
+system SQLite). Auto-checkpoint remains enabled. The admission backstop still
+applies in both fallback modes, using the writer for a non-waiting checkpoint
+inside its queue slot. Read-only backup sources (`VACUUM INTO` writes a separate
+file) remain supported. Overlapping release deploy/restart/rollback is refused on
+vulnerable builds (`DATABASE_UNSAFE_SQLITE`); upgrade or stop the pebble first.
+Local `db plan`/`db migrate` require a fixed build because a dev process may own
+the same file. Avoid concurrent external SQL writers/checkpointers on old SQLite. For
 commit-dominated slow slots, check SQLite locks, WAL reuse, storage contention and
 these fallback warnings; a faster disk alone may not help. Shutdown attempts a
 bounded final checkpoint; after a crash or cancelled checkpoint, keep the
