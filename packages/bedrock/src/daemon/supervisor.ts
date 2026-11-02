@@ -1,3 +1,4 @@
+import { preferPebbleOom } from "./oom";
 import { validatePublicRouteKey } from "../config/public-route";
 import { childEnvironment } from "./child-env";
 import { createSecrets } from "./secrets";
@@ -28,7 +29,7 @@ export interface Child {
   publicRoutes: string[];
   exclusiveServices: string[];
 }
-interface State { child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number; retired: Promise<void> }
+interface State { nextRetryAt?: number; child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number; retired: Promise<void> }
 
 export async function stopChild(child: Child) {
   if (child.process.exitCode === null) {
@@ -44,6 +45,8 @@ export async function retireChild(child: Child) {
   await stopChild(child);
 }
 
+export const restartTiming = { baseMs: 250, fastCapMs: 30000, capMs: 300000, stableMs: 600000, now: Date.now, random: Math.random };
+
 export class Supervisor {
   apiUrl = "";
   private requests = new Map<string, { child: Child; resolve: (value: unknown) => void; reject: (error: unknown) => void }>();
@@ -51,7 +54,7 @@ export class Supervisor {
   private loggers = new Map<string, PebbleLogs>();
   private stopping = false;
   private launches = new Set<Promise<unknown>>();
-  constructor(readonly home: string, readonly db: DaemonDatabase, private readonly master: string, readonly creators: string[] = [], readonly dev = false, readonly dataRoot = home) {}
+  constructor(readonly home: string, readonly db: DaemonDatabase, private readonly master: string, readonly creators: string[] = [], readonly dev = false, readonly dataRoot = home, private readonly timing = restartTiming) {}
   logs(name: string) {
     let logs = this.loggers.get(name);
     if (!logs) { logs = new PebbleLogs(this.dataRoot, name); this.loggers.set(name, logs); }
@@ -82,6 +85,7 @@ export class Supervisor {
       return await response;
     } finally { clearTimeout(timer); this.requests.delete(requestId); }
   }
+  nextRetryAt(name: string) { return this.states.get(name)?.nextRetryAt ?? null; }
   child(name: string) { return this.states.get(name)?.child; }
   private state(name: string) {
     let state = this.states.get(name);
@@ -89,7 +93,7 @@ export class Supervisor {
     return state;
   }
   async launch(name: string, release: string, devSource = false): Promise<Child> {
-    const started = Date.now();
+    const started = this.timing.now();
     const releaseId = basename(release) + (this.dev ? `-${started}` : "");
     const record = this.db.get(name);
     const previous = record?.release === release ? record.previous_release : record?.release;
@@ -132,6 +136,7 @@ export class Supervisor {
         pending.reject(new BedrockError("PEBBLE_STOPPED", "The pebble stopped during the control request.", "Start the pebble and retry."));
       }
     });
+    void preferPebbleOom(processChild.pid);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const value = await Promise.race([
@@ -190,6 +195,7 @@ export class Supervisor {
     const state = this.state(name);
     clearTimeout(state.timer);
     delete state.timer;
+    delete state.nextRetryAt;
     state.generation++;
     if (resetFailures) state.failures = 0;
     // Preserve retiring children across replacement crashes, until they actually exit.
@@ -201,28 +207,35 @@ export class Supervisor {
     const state = this.state(name);
     if (this.stopping || state.child !== child) return;
     delete state.child;
-    state.failures = Date.now() - child.started < 10000 ? state.failures + 1 : 0;
-    if (state.failures >= 5) { this.db.status(name, "crashed"); return; }
-    this.db.status(name, "restarting");
+    state.failures = this.timing.now() - child.started >= this.timing.stableMs ? 1 : state.failures + 1;
+    this.retry(name, child.release, child.devSource);
+  }
+  private retry(name: string, release: string, devSource = false) {
+    const state = this.state(name);
+    this.db.status(name, state.failures >= 5 ? "crashed" : "restarting");
+    const delay = state.failures >= 5 ? this.timing.capMs : Math.min(this.timing.fastCapMs, this.timing.baseMs * 2 ** state.failures);
+    // Downward jitter spreads retries without exceeding the five-minute ceiling.
+    const wait = delay * (0.9 + this.timing.random() * 0.1);
+    state.nextRetryAt = this.timing.now() + wait;
     const generation = state.generation;
     state.timer = setTimeout(() => {
       delete state.timer;
-      const work = this.launch(name, child.release, child.devSource).then(async next => {
-        if (this.stopping || state.generation !== generation || (!child.devSource && this.db.get(name)?.status !== "restarting")) return stopChild(next);
+      delete state.nextRetryAt;
+      const work = this.launch(name, release, devSource).then(async next => {
+        if (this.stopping || state.generation !== generation || (!devSource && !["restarting", "crashed"].includes(this.db.get(name)?.status ?? ""))) return stopChild(next);
         this.activate(name, next, false);
         this.db.status(name, "running");
         await this.startExclusive(name, next);
       }).catch(error => {
         if (this.stopping || state.generation !== generation) return;
-        this.logs(name).write(new TextEncoder().encode(JSON.stringify(asBedrockError(error).toJSON()) + "\n"));
+        this.reportFailure(name, error);
         // Failed restarts count just like children which die after becoming healthy.
-        state.child = child;
-        child.started = Date.now();
-        this.crashed(name, child);
+        state.failures++;
+        this.retry(name, release, devSource);
       });
       this.launches.add(work);
       void work.finally(() => this.launches.delete(work));
-    }, Math.min(30000, 250 * 2 ** state.failures));
+    }, wait);
   }
   async start(record: PebbleRecord) {
     if (this.child(record.name)) return;
@@ -238,19 +251,25 @@ export class Supervisor {
     state.generation++;
     clearTimeout(state.timer);
     delete state.timer;
+    delete state.nextRetryAt;
     const child = state.child;
     delete state.child;
     if (persist) this.db.status(name, "stopped");
     if (child) await stopChild(child);
   }
   forget(name: string) { this.loggers.get(name)?.close(); this.states.delete(name); this.loggers.delete(name); }
+  private reportFailure(name: string, error: unknown) {
+    try { this.logs(name).write(new TextEncoder().encode(JSON.stringify(asBedrockError(error).toJSON()) + "\n")); }
+    catch { console.error(`Could not write crash failure for ${name}; recovery will keep retrying.`); }
+  }
   async restore() {
     for (const record of this.db.list()) {
-      if (["running", "restarting"].includes(record.status)) {
+      if (["running", "restarting", "crashed"].includes(record.status)) {
         try { await this.start(record); }
         catch (error) {
-          this.db.status(record.name, "crashed");
-          this.logs(record.name).write(new TextEncoder().encode(JSON.stringify(asBedrockError(error).toJSON()) + "\n"));
+          this.state(record.name).failures++;
+          this.retry(record.name, record.release);
+          this.reportFailure(record.name, error);
         }
       }
     }

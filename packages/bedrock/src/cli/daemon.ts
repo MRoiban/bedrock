@@ -1,3 +1,4 @@
+import { refreshLinuxService } from "../service";
 import { deployWarnings } from "./deploy-warnings";
 import { formatBuild, formatProvenance, gitProvenance } from "../version";
 import { checkDaemonFeatures } from "../features";
@@ -83,6 +84,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
   if (Object.keys(flags).some(key => !allowed.includes(key))) invalid();
   if (command === "daemon") {
     if (positionals.length) invalid();
+    await refreshLinuxService({ home: bedrockHome() });
     const running = await startDaemon({ ...(flags["--port"] ? { port: Number(flags["--port"]) } : {}) });
     const value = { command, url: `http://bedrock.localhost:${running.server.port}`, home: running.home };
     console.log(json ? JSON.stringify({ ok: true, ...value }) : `Bedrock daemon: ${value.url}`);

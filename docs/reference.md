@@ -713,6 +713,19 @@ $BEDROCK_HOME (default ~/.bedrock)
   present (even empty or invalid), existing Origin/session rules apply and the
   bearer is ignored. Incoming identity headers are still stripped.
 - Each pebble runs as **its own Bun subprocess** (`startPebble`) on a private localhost port. The daemon routes by `Host` header, proxies HTTP and WebSockets, restarts crashed pebbles with backoff, and does zero-downtime swaps on deploy (start new, health-check, switch, stop old).
+- Crash recovery retries indefinitely. The first four failures use exponential
+  backoff (`250 ms * 2^failures`, capped at 30 s), with 0–10% downward jitter.
+  From the fifth failure, status is `crashed` and retries continue every 4.5–5
+  minutes; successful health checks restore `running`. A run of at least ten
+  minutes (twice the retry cap) resets the failure streak. Start/deploy/rollback
+  replacements reset it too. Stop, deletion and shutdown cancel pending retries;
+  replacement activation supersedes them. At boot, `running`, `restarting` and
+  `crashed` pebbles are restored, and failed restoration keeps retrying.
+  `/api/status` and `/api/pebbles` include `next_retry_at` (Unix milliseconds,
+  or null when no retry timer is pending), also available through CLI JSON.
+- On Linux, child `oom_score_adj` is raised to the daemon's value plus 500,
+  capped at 1000, so the kernel prefers a pebble over the daemon under memory
+  pressure. This is best effort on restricted procfs; macOS/Windows skip it.
 - Reserved subdomains: `auth`, `bedrock` (daemon API/dashboard), `www`.
 - A deployed pebble that is not running (stopped, crashed, restarting) answers 503
   with `Retry-After: 5` and a `bedrock start <name>` hint; 404 means no such pebble.
@@ -743,7 +756,11 @@ $BEDROCK_HOME (default ~/.bedrock)
 
 - `bedrock service install|uninstall|status` manages a macOS **LaunchAgent**
   (`~/Library/LaunchAgents/dev.bedrock.daemon.plist`, RunAtLoad/KeepAlive) or Linux
-  **systemd user** unit (`~/.config/systemd/user/bedrock.service`, Restart=always).
+  **systemd user** unit (`~/.config/systemd/user/bedrock.service`, Restart=always, OOMPolicy=continue).
+  A pebble OOM kill therefore leaves the daemon and other pebbles serving.
+  Install writes the current unit; Linux daemon CLI startup and local/remote
+  self-update refresh an existing matching-home unit's OOM policy idempotently
+  and run `systemctl --user daemon-reload` when it changes.
   Units use absolute Bun/CLI paths and BEDROCK_HOME. `install --dry-run` prints the
   file without writing it or invoking the service manager. Linux users can run
   `loginctl enable-linger "$USER"` for startup without login; macOS runs at user login.

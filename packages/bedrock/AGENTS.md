@@ -733,7 +733,8 @@ Deploy, rollback and restart results report
 `SERVICE_START_FAILED`. Failed exclusive startup
 unwinds the exclusive services already started, then the child gracefully stops
 and exits non-zero; normal crash backoff retries it, marking it `crashed` after
-five rapid failures. The replacement is already selected. CLI warnings point
+five failures, then retrying indefinitely every 4.5–5 minutes. The replacement
+is already selected. CLI warnings point
 to `bedrock logs <name>` (stderr, including with `--json`). Failed startup before
 activation still leaves the previous release serving. Secrets `--restart`
 also returns the exclusive-service result.
@@ -931,7 +932,14 @@ bedrock logout
 ```
 
 The daemon runs all pebbles on private localhost ports, proxies hostnames, enforces
-access/Origin and supervises crashes. `$BEDROCK_HOME` defaults to `~/.bedrock`.
+access/Origin and supervises crashes. Crash recovery uses jittered exponential
+backoff for the first four failures, then retries indefinitely every 4.5–5 minutes
+with status `crashed`; a healthy retry becomes `running`. Ten minutes of uptime
+resets the failure streak. Explicit stop/deletion/shutdown cancel retries;
+replacement activation supersedes them. Boot restores crashed pebbles too.
+Status/list API and CLI JSON include `next_retry_at` (Unix milliseconds or null).
+Linux children get a best-effort `oom_score_adj` increase of 500 over the daemon,
+capped at 1000, to prefer killing a pebble under memory pressure. `$BEDROCK_HOME` defaults to `~/.bedrock`.
 To keep code on a fast disk and pebble data on a large one, set `dataDir` in
 config.json (`bedrock setup identity --data-dir /data/bedrock` on a fresh
 install): each pebble's `data/` (BEDROCK_DATA, ctx.dataDir) and `logs/` then live
@@ -954,7 +962,11 @@ R2 uses --r2-bucket, --r2-access-key-id, --r2-secret-access-key and --r2-account
 verify opens the dashboard and polls creator sign-in. Public pebbles need no Google. Google
 redirect URI: `https://auth.<domain>/callback`. Restart the daemon after tunnel
 setup. Services use launchd on macOS (user login) and systemd user on Linux
-(`loginctl enable-linger "$USER"` for boot without login). Windows 11 uses a
+(`loginctl enable-linger "$USER"` for boot without login). Linux units use
+`OOMPolicy=continue` so one child OOM kill does not stop the whole cloud. Service
+install writes the current unit; daemon CLI startup and local/remote self-update
+refresh an installed matching-home unit's OOM policy and reload systemd when
+changed. Windows 11 uses a
 per-user Scheduled Task that starts at login and runs while the user is logged in.
 Install with install.ps1; --install-cloudflared uses WinGet. Windows private files
 use owner/SYSTEM NTFS ACLs. Device names such as con, nul, com1, and lpt1 cannot
