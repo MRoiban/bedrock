@@ -55,10 +55,11 @@ test("Linux upgrade refreshes an installed unit once and reloads without touchin
   const commands: string[][] = [];
   const options = { home: temp.dir, target: join(temp.dir, "unit"), platform: "linux", run: async (args: string[]) => { commands.push(args); } };
   try {
-    const old = serviceFile(options).content.replace("OOMPolicy=continue\n", "OOMPolicy=stop\n");
+    const old = serviceFile(options).content.replace("OOMPolicy=continue\n", "OOMPolicy=stop\n").replace("Delegate=yes\n", "").replace("DelegateSubgroup=supervisor\n", "");
     await Bun.write(options.target, old);
     await refreshLinuxService(options);
-    expect(await Bun.file(options.target).text()).toContain("OOMPolicy=continue\n");
+    const refreshed = await Bun.file(options.target).text();
+    for (const setting of ["OOMPolicy=continue", "Delegate=yes", "DelegateSubgroup=supervisor"]) expect(refreshed).toContain(setting + "\n");
     await refreshLinuxService(options);
     expect(commands).toEqual([["systemctl", "--user", "daemon-reload"]]);
     await Bun.write(options.target, old.replace("OOMPolicy=stop\n", ""));

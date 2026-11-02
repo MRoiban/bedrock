@@ -27,7 +27,7 @@ export function serviceFile(options: ServiceOptions) {
       content: `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>dev.bedrock.daemon</string>\n<key>ProgramArguments</key><array><string>${xml(bun)}</string><string>${xml(cli)}</string><string>daemon</string></array>\n<key>EnvironmentVariables</key><dict><key>BEDROCK_HOME</key><string>${xml(options.home)}</string><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>\n<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>\n</dict></plist>\n` };
   }
   if (platform === "linux") return { path: options.target ?? join(homedir(), ".config/systemd/user/bedrock.service"), platform,
-    content: `[Unit]\nDescription=Bedrock personal cloud\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=${systemd(bun)} ${systemd(cli)} daemon\nEnvironment="BEDROCK_HOME=${options.home.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"\nEnvironment="PATH=/usr/local/bin:/usr/bin:/bin"\nOOMPolicy=continue\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n` };
+    content: `[Unit]\nDescription=Bedrock personal cloud\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=${systemd(bun)} ${systemd(cli)} daemon\nEnvironment="BEDROCK_HOME=${options.home.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"\nEnvironment="PATH=/usr/local/bin:/usr/bin:/bin"\nOOMPolicy=continue\nDelegate=yes\nDelegateSubgroup=supervisor\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n` };
   throw new BedrockError("UNSUPPORTED_PLATFORM", "Services support Windows 11, macOS and Linux.", "Run bedrock daemon directly on this operating system.");
 }
 async function run(args: string[]) {
@@ -83,9 +83,11 @@ export async function refreshLinuxService(options: ServiceOptions) {
   // A manual daemon for another home must not rewrite the login user's service.
   const environment = file.content.split("\n").find(line => line.startsWith('Environment="BEDROCK_HOME='))!;
   if (!content.includes(environment)) return;
-  const updated = /^OOMPolicy=/m.test(content)
-    ? content.replace(/^OOMPolicy=.*$/gm, "OOMPolicy=continue")
-    : content.replace("[Service]\n", "[Service]\nOOMPolicy=continue\n");
+  let updated = content;
+  for (const setting of ["OOMPolicy=continue", "Delegate=yes", "DelegateSubgroup=supervisor"]) {
+    const pattern = new RegExp(`^${setting.split("=")[0]}=.*$`, "gm");
+    updated = pattern.test(updated) ? updated.replace(pattern, setting) : updated.replace("[Service]\n", `[Service]\n${setting}\n`);
+  }
   if (updated === content) return;
   await atomicWrite(file.path, updated);
   await (options.run ?? run)(["systemctl", "--user", "daemon-reload"]);

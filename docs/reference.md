@@ -785,6 +785,39 @@ $BEDROCK_HOME (default ~/.bedrock)
   access to runtime APIs. No new author option is added. In-memory caches/state
   may be lost; persist durable state in SQLite/files and declare autonomous work
   as a job or service rather than hiding loops at module scope.
+- **Quiet running pebbles hibernate in place on supported Linux hosts.** The
+  production daemon detects a writable, delegated cgroup v2 memory controller
+  at startup; missing support (including development mode) logs one disable line
+  and leaves supervision unchanged. Each child launch gets a separate cgroup,
+  including overlapping deploy candidates. A tiny shell joins that cgroup before
+  execing Bun, so runtime/module allocations are charged there from startup.
+  The daemon and cloudflared stay in a `supervisor` leaf; older running units move
+  processes out of the delegation root before enabling `+memory`. Empty stale
+  child cgroups are removed at boot and child exit. No io controller is needed.
+- After 15 quiet minutes (the same conservative delay as idle sleep), the daemon
+  first attempts eligible idle stops, then reclaims anonymous memory of remaining
+  running children. Requests, full HTTP streams, open WebSockets and pending IPC
+  prevent reclaim. Jobs/services/timers keep running and live state survives;
+  pages fault back on demand. Reclaim runs once per child per quiet period and
+  only proxied activity re-arms it, so jobs pulling pages back cannot cause churn.
+  First requests after a long quiet period may take tens of milliseconds.
+- Reclaim writes the child's `memory.stat` anonymous byte count with
+  `swappiness=200` to `memory.reclaim`: file pages (including SQLite's page cache)
+  are never targeted. EAGAIN/partial reclaim is normal. The host must have free
+  swap for the uncompressed anonymous bytes plus `max(256 MiB, 25% of those
+  bytes)` reserved for other users. There is no fallback to file-page reclaim.
+  A short-lived Worker performs the blocking write, one child at a time, keeping
+  the daemon event loop free. Failures are best effort and leave the child running.
+- Each child has `memory.high = max(1 GiB, 25% of physical RAM)`, a generous
+  runaway throttle well above ordinary small pebble usage; `memory.max` is never
+  set. This is resource management for trusted processes, not isolation.
+  `/api/pebbles`, `/api/status` and `bedrock status --json` include a per-pebble
+  `memory: { resident, swapped, hibernated_at }`. Resident is cgroup
+  `memory.current` in bytes (including charged cache/kernel memory, not process
+  RSS); swapped is `memory.swap.current` in bytes. `hibernated_at` is the Unix
+  millisecond time of the completed reclaim attempt, cleared by proxied activity.
+  A partial reclaim still counts. All three are null without a supported live
+  child cgroup. Hibernation keeps status `running`; it adds no author option.
 - Reserved subdomains: `auth`, `bedrock` (daemon API/dashboard), `www`.
 - A deployed pebble that is not running (stopped, crashed, restarting) answers 503
   with `Retry-After: 5` and a `bedrock start <name>` hint; 404 means no such pebble.
@@ -815,11 +848,14 @@ $BEDROCK_HOME (default ~/.bedrock)
 
 - `bedrock service install|uninstall|status` manages a macOS **LaunchAgent**
   (`~/Library/LaunchAgents/dev.bedrock.daemon.plist`, RunAtLoad/KeepAlive) or Linux
-  **systemd user** unit (`~/.config/systemd/user/bedrock.service`, Restart=always, OOMPolicy=continue).
+  **systemd user** unit (`~/.config/systemd/user/bedrock.service`, Restart=always, OOMPolicy=continue,
+  Delegate=yes, DelegateSubgroup=supervisor).
   A pebble OOM kill therefore leaves the daemon and other pebbles serving.
   Install writes the current unit; Linux daemon CLI startup and local/remote
-  self-update refresh an existing matching-home unit's OOM policy idempotently
-  and run `systemctl --user daemon-reload` when it changes.
+  self-update refresh an existing matching-home unit's OOM and delegation settings idempotently
+  and run `systemctl --user daemon-reload` when it changes. `DelegateSubgroup`
+  is supported by systemd 257; startup also handles a populated delegation root
+  on managers that ignore it.
   Units use absolute Bun/CLI paths and BEDROCK_HOME. `install --dry-run` prints the
   file without writing it or invoking the service manager. Linux users can run
   `loginctl enable-linger "$USER"` for startup without login; macOS runs at user login.

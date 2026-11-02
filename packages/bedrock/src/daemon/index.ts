@@ -1,3 +1,4 @@
+import { detectCgroups } from "./cgroups";
 import { createSessionLinks } from "../auth/session-links";
 import { matchesPublicRoute } from "./public-routes";
 import { buildInfo } from "../version";
@@ -24,7 +25,7 @@ import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
 
-export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
+export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; hibernateTimeoutForTests?: number; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
   const home = resolve(options.home ?? bedrockHome());
@@ -37,7 +38,8 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const db = await openDaemonDatabase(home);
   const dev = options.dev === true;
   const master = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
-  const supervisor = new Supervisor(home, db, master, config.creators, dev, data, options.idleTimeoutForTests);
+  const cgroups = await detectCgroups({ dev });
+  const supervisor = new Supervisor(home, db, master, config.creators, dev, data, options.idleTimeoutForTests, undefined, cgroups, options.hibernateTimeoutForTests);
   const sessions = createSessions(db.db);
   const sockets = sessionSockets(sessions);
   const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);

@@ -1,3 +1,4 @@
+import { QUIET_MEMORY_MS, emptyMemory, type ChildCgroup, type PebbleCgroups } from "./cgroups";
 import { preferPebbleOom } from "./oom";
 import { assertConcurrentWalSafe } from "../db/sqlite-version";
 import { idleSourceSafe } from "./idle-source";
@@ -27,6 +28,7 @@ export interface Child {
   requests: number;
   lastActive: number;
   idleSafe: boolean;
+  cgroup?: ChildCgroup;
   stopTimeout?: number;
   devSource?: boolean;
   access: Access;
@@ -59,9 +61,9 @@ export class Supervisor {
   private stopping = false;
   private launches = new Set<Promise<unknown>>();
   private idleTimer?: ReturnType<typeof setInterval>;
-  constructor(readonly home: string, readonly db: DaemonDatabase, private readonly master: string, readonly creators: string[] = [], readonly dev = false, readonly dataRoot = home, private readonly idleMs = 15 * 60_000, private readonly timing = restartTiming) {
+  constructor(readonly home: string, readonly db: DaemonDatabase, private readonly master: string, readonly creators: string[] = [], readonly dev = false, readonly dataRoot = home, private readonly idleMs = QUIET_MEMORY_MS, private readonly timing = restartTiming, private readonly cgroups?: PebbleCgroups, private readonly hibernateMs = QUIET_MEMORY_MS) {
     if (!dev) {
-      this.idleTimer = setInterval(() => { void this.sweepIdle(); }, Math.min(60_000, Math.max(10, idleMs / 4)));
+      this.idleTimer = setInterval(() => { void this.sweepQuiet(); }, Math.min(60_000, Math.max(10, Math.min(idleMs, hibernateMs) / 4)));
       this.idleTimer.unref();
     }
   }
@@ -101,6 +103,7 @@ export class Supervisor {
   }
   // Callers reserve activity synchronously once ensure resolves, before any I/O.
   activity(child: Child) {
+    this.cgroups?.activity(child.cgroup);
     child.requests++;
     child.lastActive = Date.now();
     let completed = false;
@@ -140,6 +143,23 @@ export class Supervisor {
     try { return await work; }
     finally { if (state.waking === work) delete state.waking; this.launches.delete(work); }
   }
+  private sweeping = false;
+  private async sweepQuiet() {
+    if (this.sweeping || this.stopping) return;
+    this.sweeping = true;
+    try {
+      await this.sweepIdle();
+      for (const [name, state] of this.states) {
+        const child = state.child;
+        if (!child?.cgroup || !this.cgroups) continue;
+        const quiet = () => !this.stopping && !state.sleeping && this.child(name) === child && child.process.exitCode === null
+          && !child.devSource && !child.requests && Date.now() - child.lastActive >= this.hibernateMs
+          && ![...this.requests.values()].some(request => request.child === child);
+        await this.cgroups.hibernate(child.cgroup, quiet);
+      }
+    } finally { this.sweeping = false; }
+  }
+  async memory(name: string) { return this.cgroups ? this.cgroups.status(this.child(name)?.cgroup) : { ...emptyMemory }; }
   private async sweepIdle() {
     for (const [name, state] of this.states) {
       const child = state.child;
@@ -182,32 +202,41 @@ export class Supervisor {
     const secretEnv = await createSecrets(this.home).env(name);
     logs.protect(Object.values(secretEnv));
     const requests = this.requests;
-    const processChild = Bun.spawn([process.execPath, ...await bunConfigArgs(release), join(import.meta.dir, "../runtime/child.ts")], {
-      cwd: release, stdin: "ignore", stdout: "pipe", stderr: "pipe",
-      env: childEnvironment(process.env, secretEnv, devSource, { BEDROCK_API_URL: this.apiUrl, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
-        BEDROCK_RELEASE_ID: releaseId, BEDROCK_PREVIOUS_RELEASE: previous ? resolve(previous) : "",
-        BEDROCK_DEV: devSource ? "1" : "0",
-        BEDROCK_DATA: devSource ? join(release, ".bedrock") : pebbleDataDir(this.dataRoot, name), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) }),
-      ipc(message: unknown) {
-        const value = message as { requestId?: string; value?: unknown; op?: string; name: string; port: number; stopTimeout?: number; error?: { code: string; message: string; hint: string } };
-        if (value.op === "reply" && value.requestId) {
-          const pending = requests.get(value.requestId);
-          if (pending?.child !== child) return;
-          if (value.error) pending?.reject(new BedrockError(value.error.code, logs.redact(value.error.message), logs.redact(value.error.hint)));
-          else pending?.resolve(value.value);
-          return;
-        }
-        if (Number.isSafeInteger(value.stopTimeout) && value.stopTimeout! >= DEFAULT_SERVICE_STOP_TIMEOUT && value.stopTimeout! <= MAX_SERVICE_STOP_TIMEOUT) child.stopTimeout = value.stopTimeout!;
-        if (value.op === "stop-budget") return;
-        if (value.error) failed(new BedrockError(value.error.code, logs.redact(value.error.message), logs.redact(value.error.hint)));
-        else ready(value);
-      },
-    });
+    const command = [process.execPath, ...await bunConfigArgs(release), join(import.meta.dir, "../runtime/child.ts")];
+    const cgroup = !devSource ? await this.cgroups?.create(name) : undefined;
+    let processChild: Child["process"];
+    try {
+      processChild = Bun.spawn(this.cgroups?.command(cgroup, command) ?? command, {
+        cwd: release, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+        env: childEnvironment(process.env, secretEnv, devSource, { BEDROCK_API_URL: this.apiUrl, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
+          BEDROCK_RELEASE_ID: releaseId, BEDROCK_PREVIOUS_RELEASE: previous ? resolve(previous) : "",
+          BEDROCK_DEV: devSource ? "1" : "0",
+          BEDROCK_DATA: devSource ? join(release, ".bedrock") : pebbleDataDir(this.dataRoot, name), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) }),
+        ipc(message: unknown) {
+          const value = message as { requestId?: string; value?: unknown; op?: string; name: string; port: number; stopTimeout?: number; error?: { code: string; message: string; hint: string } };
+          if (value.op === "reply" && value.requestId) {
+            const pending = requests.get(value.requestId);
+            if (pending?.child !== child) return;
+            if (value.error) pending?.reject(new BedrockError(value.error.code, logs.redact(value.error.message), logs.redact(value.error.hint)));
+            else pending?.resolve(value.value);
+            return;
+          }
+          if (Number.isSafeInteger(value.stopTimeout) && value.stopTimeout! >= DEFAULT_SERVICE_STOP_TIMEOUT && value.stopTimeout! <= MAX_SERVICE_STOP_TIMEOUT) child.stopTimeout = value.stopTimeout!;
+          if (value.op === "stop-budget") return;
+          if (value.error) failed(new BedrockError(value.error.code, logs.redact(value.error.message), logs.redact(value.error.hint)));
+          else ready(value);
+        },
+      });
+    } catch (error) {
+      if (cgroup) await this.cgroups?.remove(cgroup);
+      throw asBedrockError(error, "PEBBLE_START_FAILED", `Check bedrock logs ${name} and retry.`);
+    }
     const reading = Promise.all([logs.pump(processChild.stdout), logs.pump(processChild.stderr)]);
     // Observe pipe failures immediately; the child is also reaped on every failure path.
     void reading.catch(() => {});
-    const child: Child = { process: processChild, port: 0, release, releaseId, devSource, started, reading, requests: 0, lastActive: started, idleSafe: false, access: "users", publicRoutes: [], exclusiveServices: [] };
+    const child: Child = { process: processChild, port: 0, release, releaseId, devSource, started, reading, requests: 0, lastActive: started, idleSafe: false, access: "users", publicRoutes: [], exclusiveServices: [], ...(cgroup ? { cgroup } : {}) };
     void processChild.exited.then(() => {
+      if (cgroup) void this.cgroups?.remove(cgroup);
       for (const [requestId, pending] of requests) {
         if (pending.child !== child) continue;
         requests.delete(requestId);

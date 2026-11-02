@@ -79,6 +79,13 @@ restarts. Explicitly stopped pebbles stay stopped until started. Deploy/rollback
 and secrets changes with `--restart` still start a replacement normally. Backups
 work without waking the pebble. `bedrock dev` never sleeps.
 
+On Linux with delegated cgroup v2 memory support and enough free swap, a quiet
+running pebble may instead be hibernated after 15 minutes: anonymous memory moves
+to swap (compressed when the host provides compressed swap). The process, jobs,
+services and timers keep running, and live state survives. The first request
+after a long quiet period can take tens of milliseconds as pages fault back.
+There is nothing to configure. Development mode never hibernates.
+
 **In-memory state and caches disappear on sleep.** Keep durable state in SQLite
 or files. Any declared `job` or `service`, including an exclusive service, keeps
 the process awake: use a job for scheduled work and a service for continuous
@@ -976,7 +983,13 @@ backoff for the first four failures, then retries indefinitely every 4.5–5 min
 with status `crashed`; a healthy retry becomes `running`. Ten minutes of uptime
 resets the failure streak. Explicit stop/deletion/shutdown cancel retries;
 replacement activation supersedes them. Boot restores crashed pebbles too.
-Status/list API and CLI JSON include `next_retry_at` (Unix milliseconds or null).
+Status/list API and CLI JSON include `next_retry_at` (Unix milliseconds or null)
+and `memory: { resident, swapped, hibernated_at }`. The byte counts come from
+cgroup `memory.current` (including cache/kernel memory) and `memory.swap.current`;
+`hibernated_at` is Unix milliseconds, cleared by proxied activity. All three are
+null without a supported live child cgroup. Hibernated pebbles stay `running`.
+Linux gives each child a generous `memory.high` runaway throttle of at least
+1 GiB or one quarter of host RAM, whichever is larger, with no hard memory limit.
 Linux children get a best-effort `oom_score_adj` increase of 500 over the daemon,
 capped at 1000, to prefer killing a pebble under memory pressure. `$BEDROCK_HOME` defaults to `~/.bedrock`.
 To keep code on a fast disk and pebble data on a large one, set `dataDir` in
@@ -1002,9 +1015,10 @@ verify opens the dashboard and polls creator sign-in. Public pebbles need no Goo
 redirect URI: `https://auth.<domain>/callback`. Restart the daemon after tunnel
 setup. Services use launchd on macOS (user login) and systemd user on Linux
 (`loginctl enable-linger "$USER"` for boot without login). Linux units use
-`OOMPolicy=continue` so one child OOM kill does not stop the whole cloud. Service
+`OOMPolicy=continue` so one child OOM kill does not stop the whole cloud, plus
+`Delegate=yes` and `DelegateSubgroup=supervisor` for per-child memory accounting. Service
 install writes the current unit; daemon CLI startup and local/remote self-update
-refresh an installed matching-home unit's OOM policy and reload systemd when
+refresh an installed matching-home unit's OOM and delegation settings and reload systemd when
 changed. Windows 11 uses a
 per-user Scheduled Task that starts at login and runs while the user is logged in.
 Install with install.ps1; --install-cloudflared uses WinGet. Windows private files
