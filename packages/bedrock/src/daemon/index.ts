@@ -24,7 +24,7 @@ import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
 
-export interface StartDaemonOptions { home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
+export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
   const home = resolve(options.home ?? bedrockHome());
@@ -37,7 +37,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const db = await openDaemonDatabase(home);
   const dev = options.dev === true;
   const master = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
-  const supervisor = new Supervisor(home, db, master, config.creators, dev, data);
+  const supervisor = new Supervisor(home, db, master, config.creators, dev, data, options.idleTimeoutForTests);
   const sessions = createSessions(db.db);
   const sockets = sessionSockets(sessions);
   const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);
@@ -85,7 +85,10 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
           if (!target || ["auth", "www"].includes(target)) return notFound(request);
           if (url.pathname === "/_bedrock/session" && db.get(target)) return await links.handle(request, origin, target);
-          const child = supervisor.child(target);
+          // Cold starts may exceed Bun's default request timeout on a slow disk.
+          server.timeout(request, 0);
+          let child;
+          try { child = await supervisor.ensure(target); } catch { /* Normal crash supervision retries failed wakes. */ }
           // A deployed but stopped pebble is a temporary condition, not a missing site.
           if (!child) {
             if (!db.get(target)) return notFound(request);
@@ -100,8 +103,8 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             request.headers.delete("authorization");
             for (const name of [...request.headers.keys()]) if (name.startsWith("x-bedrock-")) request.headers.delete(name);
             server.timeout(request, 0);
-            child.requests++;
-            return await proxyHttp(request, child.port, child.releaseId, () => { child.requests--; }, { "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) });
+            const complete = supervisor.activity(child);
+            return await proxyHttp(request, child.port, child.releaseId, complete, { "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) });
           }
           const hasSessionCookie = (request.headers.get("cookie") ?? "").split(";").some(part => part.trim().split("=", 1)[0] === "bedrock_session");
           const bearer = !hasSessionCookie && request.headers.get("authorization")?.startsWith("Bearer brk_") === true;
@@ -131,16 +134,18 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           if (hasSessionCookie) request.headers.delete("authorization");
           const identity = { ...(session ? signIdentity(session.user, deriveIdentitySecret(master, target)) : {}), "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) };
           if (websocket) {
-            const response = await proxyWebSocket(request, server, child.port, identity, session ? relay => {
-              const remove = sockets.register(relay, token!, session.hash);
-              sockets.revalidate();
-              return remove;
-            } : undefined);
-            return response;
+            const complete = supervisor.activity(child);
+            try {
+              return await proxyWebSocket(request, server, child.port, identity, relay => {
+                const remove = session ? sockets.register(relay, token!, session.hash) : undefined;
+                if (session) sockets.revalidate();
+                return () => { remove?.(); complete(); };
+              });
+            } catch (error) { complete(); throw error; }
           }
           server.timeout(request, 0);
-          child.requests++;
-          const response = await proxyHttp(request, child.port, child.releaseId, () => { child.requests--; }, identity);
+          const complete = supervisor.activity(child);
+          const response = await proxyHttp(request, child.port, child.releaseId, complete, identity);
           if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));
           return response;
         } catch (error) { return daemonError(error, request); }

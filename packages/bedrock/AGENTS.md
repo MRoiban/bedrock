@@ -69,6 +69,31 @@ The default `bedrock new notes` React template includes a complete frontend, ins
 dependencies, generates migrations and commits. `new --template minimal` is public
 HTML; `init <name> [--template react]` scaffolds in the current empty directory.
 
+## Idle lifecycle
+
+Production pebbles without background work may sleep after 15 quiet minutes.
+`bedrock status`, the API and dashboard show `idle`, with no child process. The
+next HTTP request, WebSocket upgrade or daemon operation needing the child waits
+for a shared, health-checked start. Idle pebbles remain asleep across daemon
+restarts. Explicitly stopped pebbles stay stopped until started. Deploy/rollback
+and secrets changes with `--restart` still start a replacement normally. Backups
+work without waking the pebble. `bedrock dev` never sleeps.
+
+**In-memory state and caches disappear on sleep.** Keep durable state in SQLite
+or files. Any declared `job` or `service`, including an exclusive service, keeps
+the process awake: use a job for scheduled work and a service for continuous
+background resources. Do not use a dummy service just to retain a cache or hide
+background loops at module scope. No keep-awake option is needed.
+
+Open sync/application WebSockets, active HTTP uploads/response streams, queued
+and detached work, IPC calls and unexpired resumable uploads prevent sleep.
+Because Bun cannot reliably enumerate live timers/handles, the daemon also
+conservatively scans server source and local imports. Timer/network/process or
+dynamic APIs and unknown dependencies keep it running, including uses inside
+handlers or comments; only `bedrock` and `node:path`/`path` external imports are
+trusted. This heuristic favors leaving uncertain code awake. Do not rely on the
+heuristic to declare background work: model it as a job or service.
+
 ## Configuration and functions
 
 `definePebble` fields:
@@ -1079,7 +1104,7 @@ schedules a restart after a two-second response-flush delay. Concurrent requests
 are refused until restart. Windows launches the delayed PowerShell restart via CIM
 Win32_Process.Create, outside the Scheduled Task tree reaped by taskkill /T;
 macOS/Linux use a detached Bun helper. Startup restores running/restarting pebbles,
-leaving stopped ones stopped. A failed install/restart may leave an advanced Git
+leaving idle ones asleep and stopped ones stopped. A failed install/restart may leave an advanced Git
 checkout. Older daemons need one server-local update before this endpoint exists.
 
 Daemon API (Bearer creator deploy token): GET `/api/pebbles`, GET `/api/status`,

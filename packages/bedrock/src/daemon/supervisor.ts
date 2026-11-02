@@ -1,5 +1,6 @@
 import { preferPebbleOom } from "./oom";
 import { assertConcurrentWalSafe } from "../db/sqlite-version";
+import { idleSourceSafe } from "./idle-source";
 import { validatePublicRouteKey } from "../config/public-route";
 import { childEnvironment } from "./child-env";
 import { createSecrets } from "./secrets";
@@ -24,13 +25,15 @@ export interface Child {
   started: number;
   reading: Promise<unknown>;
   requests: number;
+  lastActive: number;
+  idleSafe: boolean;
   stopTimeout?: number;
   devSource?: boolean;
   access: Access;
   publicRoutes: string[];
   exclusiveServices: string[];
 }
-interface State { nextRetryAt?: number; child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number; retired: Promise<void> }
+interface State { nextRetryAt?: number; waking?: Promise<Child | undefined>; sleeping?: Promise<void>; child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number; retired: Promise<void> }
 
 export async function stopChild(child: Child) {
   if (child.process.exitCode === null) {
@@ -55,7 +58,13 @@ export class Supervisor {
   private loggers = new Map<string, PebbleLogs>();
   private stopping = false;
   private launches = new Set<Promise<unknown>>();
-  constructor(readonly home: string, readonly db: DaemonDatabase, private readonly master: string, readonly creators: string[] = [], readonly dev = false, readonly dataRoot = home, private readonly timing = restartTiming) {}
+  private idleTimer?: ReturnType<typeof setInterval>;
+  constructor(readonly home: string, readonly db: DaemonDatabase, private readonly master: string, readonly creators: string[] = [], readonly dev = false, readonly dataRoot = home, private readonly idleMs = 15 * 60_000, private readonly timing = restartTiming) {
+    if (!dev) {
+      this.idleTimer = setInterval(() => { void this.sweepIdle(); }, Math.min(60_000, Math.max(10, idleMs / 4)));
+      this.idleTimer.unref();
+    }
+  }
   logs(name: string) {
     let logs = this.loggers.get(name);
     if (!logs) { logs = new PebbleLogs(this.dataRoot, name); this.loggers.set(name, logs); }
@@ -71,8 +80,9 @@ export class Supervisor {
     });
   }
   private async request(name: string, op: string, payload: Record<string, unknown>, options: { stoppedHint: string; child?: Child; timeout?: { ms: number; error: () => BedrockError } }) {
-    const child = options.child ?? this.child(name);
+    const child = options.child ?? await this.ensure(name);
     if (!child || child.process.exitCode !== null) throw new BedrockError("PEBBLE_STOPPED", `${name} is not running.`, options.stoppedHint);
+    if (op !== "idle.check") child.lastActive = Date.now();
     const requestId = crypto.randomUUID();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const response = new Promise<unknown>((resolve, reject) => {
@@ -84,7 +94,72 @@ export class Supervisor {
       try { child.process.send({ op, requestId, ...payload }); }
       catch { throw new BedrockError("PEBBLE_STOPPED", `${name} could not receive the control request.`, "Start the pebble and retry."); }
       return await response;
-    } finally { clearTimeout(timer); this.requests.delete(requestId); }
+    } finally {
+      clearTimeout(timer); this.requests.delete(requestId);
+      if (op !== "idle.check") child.lastActive = Date.now();
+    }
+  }
+  // Callers reserve activity synchronously once ensure resolves, before any I/O.
+  activity(child: Child) {
+    child.requests++;
+    child.lastActive = Date.now();
+    let completed = false;
+    return () => {
+      if (completed) return;
+      completed = true;
+      child.requests--;
+      child.lastActive = Date.now();
+    };
+  }
+  async ensure(name: string): Promise<Child | undefined> {
+    const state = this.states.get(name) ?? (this.db.get(name)?.status === "idle" ? this.state(name) : undefined);
+    if (!state) return;
+    if (state.sleeping) await state.sleeping;
+    if (state.waking) return state.waking;
+    const current = this.child(name);
+    if (current) { current.lastActive = Date.now(); return current; }
+    const record = this.db.get(name);
+    if (this.stopping || record?.status !== "idle") return;
+    const generation = state.generation;
+    const work = this.launch(name, record.release, false, child => {
+      if (this.stopping || state.generation !== generation) return;
+      state.child = child;
+      this.crashed(name, child);
+    }).then(async child => {
+      if (this.stopping || state.generation !== generation || this.db.get(name)?.release !== record.release || this.db.get(name)?.status !== "idle") {
+        await stopChild(child);
+        return this.child(name);
+      }
+      this.activate(name, child);
+      this.db.status(name, "running");
+      await this.startExclusive(name, child);
+      return child;
+    });
+    state.waking = work;
+    this.launches.add(work);
+    try { return await work; }
+    finally { if (state.waking === work) delete state.waking; this.launches.delete(work); }
+  }
+  private async sweepIdle() {
+    for (const [name, state] of this.states) {
+      const child = state.child;
+      if (this.stopping || state.sleeping || !child?.idleSafe || child.devSource || child.requests || Date.now() - child.lastActive < this.idleMs) continue;
+      if ([...this.requests.values()].some(request => request.child === child)) continue;
+      const generation = state.generation;
+      try {
+        const quiet = await this.request(name, "idle.check", {}, { child, stoppedHint: "Restart the pebble.", timeout: { ms: 2000, error: () => new BedrockError("IDLE_CHECK_TIMEOUT", "Idle check timed out.", "The pebble will stay running; check its logs if it is unresponsive.") } });
+        if (!quiet || this.stopping || state.generation !== generation || state.child !== child || child.requests || Date.now() - child.lastActive < this.idleMs) continue;
+        if ([...this.requests.values()].some(request => request.child === child)) continue;
+        this.db.status(name, "idle");
+        state.generation++;
+        delete state.child;
+        const sleeping = stopChild(child);
+        state.sleeping = sleeping;
+        try { await sleeping; } finally { if (state.sleeping === sleeping) delete state.sleeping; }
+      } catch {
+        // An uncertain child stays awake. Future sweeps retry without log spam.
+      }
+    }
   }
   nextRetryAt(name: string) { return this.states.get(name)?.nextRetryAt ?? null; }
   child(name: string) { return this.states.get(name)?.child; }
@@ -93,7 +168,7 @@ export class Supervisor {
     if (!state) { state = { failures: 0, generation: 0, retired: Promise.resolve() }; this.states.set(name, state); }
     return state;
   }
-  async launch(name: string, release: string, devSource = false): Promise<Child> {
+  async launch(name: string, release: string, devSource = false, onFailure?: (child: Child) => void): Promise<Child> {
     const current = this.child(name);
     if (current && current.process.exitCode === null) assertConcurrentWalSafe(this.db.db);
     const started = this.timing.now();
@@ -131,7 +206,7 @@ export class Supervisor {
     const reading = Promise.all([logs.pump(processChild.stdout), logs.pump(processChild.stderr)]);
     // Observe pipe failures immediately; the child is also reaped on every failure path.
     void reading.catch(() => {});
-    const child: Child = { process: processChild, port: 0, release, releaseId, devSource, started, reading, requests: 0, access: "users", publicRoutes: [], exclusiveServices: [] };
+    const child: Child = { process: processChild, port: 0, release, releaseId, devSource, started, reading, requests: 0, lastActive: started, idleSafe: false, access: "users", publicRoutes: [], exclusiveServices: [] };
     void processChild.exited.then(() => {
       for (const [requestId, pending] of requests) {
         if (pending.child !== child) continue;
@@ -161,7 +236,10 @@ export class Supervisor {
       if (!Array.isArray(exclusiveServices) || exclusiveServices.some((name: unknown) => typeof name !== "string")) throw new BedrockError("HEALTH_FAILED", "Invalid exclusive service list.", "Return exclusive service names in the health check.");
       child.exclusiveServices = exclusiveServices;
       child.publicRoutes = publicRoutes;
+      const declarations = { jobs: info.jobs, services: info.services };
+      child.idleSafe = !this.dev && Object.values(declarations).every(names => Array.isArray(names) && names.length === 0) && await idleSourceSafe(release);
       if (!devSource) {
+        await Bun.write(join(release, ".bedrock-idle.json"), JSON.stringify({ ...declarations, safe: child.idleSafe, access }));
         await Bun.write(join(release, ".bedrock-public-routes.json"), JSON.stringify(publicRoutes));
         // Backups read this instead of importing pebble code into the daemon.
         await Bun.write(join(release, ".bedrock-backup.json"), JSON.stringify(info.backup ?? null));
@@ -170,6 +248,7 @@ export class Supervisor {
       return child;
     } catch (error) {
       await stopChild(child).catch(() => {});
+      onFailure?.(child);
       throw asBedrockError(error, "PEBBLE_START_FAILED", `Check bedrock logs ${name} and retry.`);
     } finally { clearTimeout(timer); }
   }
@@ -196,6 +275,7 @@ export class Supervisor {
   activate(name: string, child: Child, resetFailures = true) {
     if (this.stopping) throw new BedrockError("DAEMON_STOPPING", "The daemon is stopping.", "Restart the daemon and retry.");
     const state = this.state(name);
+    child.lastActive = Date.now();
     clearTimeout(state.timer);
     delete state.timer;
     delete state.nextRetryAt;
@@ -242,6 +322,7 @@ export class Supervisor {
   }
   async start(record: PebbleRecord) {
     if (this.child(record.name)) return;
+    if (record.status === "idle") { await this.ensure(record.name); return; }
     await this.stop(record.name, false);
     const child = await this.launch(record.name, record.release);
     this.state(record.name).failures = 0;
@@ -259,6 +340,8 @@ export class Supervisor {
     delete state.child;
     if (persist) this.db.status(name, "stopped");
     if (child) await stopChild(child);
+    await state.sleeping;
+    await state.waking?.catch(() => {});
   }
   forget(name: string) { this.loggers.get(name)?.close(); this.states.delete(name); this.loggers.delete(name); }
   private reportFailure(name: string, error: unknown) {
@@ -279,6 +362,7 @@ export class Supervisor {
   }
   async shutdown() {
     this.stopping = true;
+    clearInterval(this.idleTimer);
     await Promise.all([...this.states.keys()].map(name => this.stop(name, false)));
     await Promise.allSettled(this.launches);
     for (const logs of this.loggers.values()) logs.close();

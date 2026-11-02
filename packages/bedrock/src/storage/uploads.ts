@@ -43,6 +43,15 @@ export function createUploads(root: string) {
   }
   return {
     cleanup,
+    async active() {
+      if (tails.size) return true;
+      for (const id of await readdir(root)) {
+        if (!/^[0-9a-f-]{36}$/.test(id)) continue;
+        const upload = await Bun.file(join(path(id), "manifest.json")).json().catch(() => null);
+        if (upload && Date.now() - upload.createdAt < 86400000) return true;
+      }
+      return false;
+    },
     serial,
     load,
     async start(bucket: string, config: BucketConfig, ctx: FunctionContext, input: any) {

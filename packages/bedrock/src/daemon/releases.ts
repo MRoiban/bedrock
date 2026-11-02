@@ -28,7 +28,7 @@ export class Releases {
   private async switch(name: string, child: Child, previous: PebbleRecord | null) {
     const root = join(this.home, "pebbles", name);
     const temporary = join(root, `current.${crypto.randomUUID()}`);
-    const old = this.supervisor.child(name);
+    let old: Child | undefined;
     await this.link(child.release, temporary);
     try {
       if (child.process.exitCode !== null) throw new BedrockError("HEALTH_FAILED", "Candidate exited before activation.", `Check bedrock logs ${name} and retry.`);
@@ -39,6 +39,7 @@ export class Releases {
         else await rm(join(root, "current"), { force: true });
         throw error;
       }
+      old = this.supervisor.child(name);
       this.supervisor.activate(name, child);
     } finally { await rm(temporary, { force: true }); }
     if (old) await retireChild(old).catch(error => this.warn(name, error));
@@ -106,8 +107,8 @@ export class Releases {
   // Same code, new environment: retain routing to the old child until health succeeds.
   async restart(name: string) {
     const record = this.record(name);
+    const child = await this.supervisor.launch(name, record.release, this.supervisor.child(name)?.devSource);
     const old = this.supervisor.child(name);
-    const child = await this.supervisor.launch(name, record.release, old?.devSource);
     try { this.supervisor.activate(name, child); this.db.status(name, "running"); }
     catch (error) { await stopChild(child); throw error; }
     if (old) await retireChild(old).catch(error => this.warn(name, error));

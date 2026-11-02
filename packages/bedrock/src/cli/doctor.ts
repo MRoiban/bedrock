@@ -85,8 +85,8 @@ export async function doctor(home: string, options: { fetch?: typeof fetch; apiT
       add("data-dir", space.warning ? "warn" : "pass", `Pebble data in ${root}: ${space.free} bytes free of ${space.total} bytes.`, "Free space when below 1 GiB or 5% on the data disk.");
     } catch (error) { add("data-dir", "fail", `Pebble data directory ${config.dataDir} is unavailable.`, error instanceof BedrockError ? error.hint : "Mount the data disk."); }
   }
-  // A pebble someone stopped on purpose is not a fault.
-  if (status) for (const pebble of status.pebbles) add(`pebble:${pebble.name}`, pebble.healthy || pebble.status === "stopped" ? "pass" : "fail", `${pebble.name}: ${pebble.status}${pebble.status === "stopped" ? "" : pebble.healthy ? ", healthy" : ", unhealthy"}`, pebble.status === "stopped" ? `Start it with bedrock start ${pebble.name}.` : `Inspect bedrock logs ${pebble.name}; restart or redeploy it.`);
+  // Sleeping and intentionally stopped pebbles need no live health check.
+  if (status) for (const pebble of status.pebbles) add(`pebble:${pebble.name}`, pebble.healthy || ["stopped", "idle"].includes(pebble.status) ? "pass" : "fail", `${pebble.name}: ${pebble.status}${["stopped", "idle"].includes(pebble.status) ? "" : pebble.healthy ? ", healthy" : ", unhealthy"}`, pebble.status === "idle" ? "It wakes on the next request." : pebble.status === "stopped" ? `Start it with bedrock start ${pebble.name}.` : `Inspect bedrock logs ${pebble.name}; restart or redeploy it.`);
   else add("pebbles", "warn", "Skipped: daemon unavailable.", "Start the daemon and retry doctor.", true);
   return checks;
 }

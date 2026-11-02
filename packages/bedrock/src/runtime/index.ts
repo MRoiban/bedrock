@@ -74,7 +74,7 @@ export async function startPebble(options: StartPebbleOptions) {
     }
     if (web.html && !Object.hasOwn(routes, "/*")) routes["/*"] = web.html;
     routes["/_bedrock/files/*"] = files.handle;
-    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, exclusive_services: services.exclusiveNames, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes), backup: pebble.backup ?? null }) };
+    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, exclusive_services: services.exclusiveNames, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes), backup: pebble.backup ?? null, jobs: Object.keys(pebble.jobs ?? {}), services: Object.keys(pebble.services ?? {}) }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };
     routes["/_bedrock/*"] = () => Response.json({ ok: false, error: new BedrockError("NOT_FOUND", "Unknown Bedrock endpoint.", "Use POST /_bedrock/q/<name> or /_bedrock/m/<name>.").toJSON() }, { status: 404 });
@@ -127,6 +127,10 @@ export async function startPebble(options: StartPebbleOptions) {
     let stopping: Promise<void> | undefined;
     return {
       server, pebble, startExclusive, stopTimeout: services.stopTimeout, db: database.db, execute, jobs,
+      async canIdle() {
+        return !Object.keys(pebble.jobs ?? {}).length && !Object.keys(pebble.services ?? {}).length
+          && !server.pendingRequests && !server.pendingWebSockets && !execute.pending() && !await files.active();
+      },
       stop() {
         return stopping ??= (async () => {
           const checkpointDeadline = Date.now() + services.stopTimeout + 500;

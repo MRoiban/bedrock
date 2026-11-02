@@ -743,6 +743,48 @@ $BEDROCK_HOME (default ~/.bedrock)
 - On Linux, child `oom_score_adj` is raised to the daemon's value plus 500,
   capped at 1000, so the kernel prefers a pebble over the daemon under memory
   pressure. This is best effort on restricted procfs; macOS/Windows skip it.
+- **Idle pebbles scale to zero by default.** After 15 minutes without proxied
+  HTTP activity, open WebSockets (anonymous, bearer, session, sync or application),
+  or child IPC work, an eligible production child is gracefully stopped and its
+  persisted status becomes `idle`. The daemon sweeps once a minute, so sleep can
+  take up to one extra minute. HTTP activity lasts through request uploads and the
+  full response stream; the quiet period starts again when work finishes.
+  `idle` is distinct from user-selected `stopped`, `restarting` and `crashed` in
+  CLI status, the API and dashboard. Its PID/port are null and `healthy` is false
+  because there is no child to probe; doctor treats idle as healthy operation.
+  Development daemons and `bedrock dev` never idle-stop.
+- The next HTTP request, WebSocket upgrade or daemon IPC operation that needs
+  the child wakes an idle pebble using the existing health-gated launch. Concurrent
+  arrivals share one launch and wait for it, including while the old child is
+  finishing its graceful shutdown. Failed wakes return the usual styled/plain
+  503 with `Retry-After: 5` to proxy callers and enter normal crash supervision.
+  Explicit stop still requires explicit start; traffic never starts a stopped
+  or crashed pebble. Deploy, rollback, restart and secrets `--restart` health-gate
+  a replacement even from idle, and that replacement may later sleep again.
+  Daemon restart preserves idle pebbles asleep; running/restarting pebbles still
+  start at boot. Data moves preserve the registry state. Backups read SQLite
+  directly and use release backup metadata, so do not wake sleeping pebbles.
+- **Sleep safety is conservative.** Any declared job or service (including an
+  exclusive service) keeps a pebble awake. Immediately before sleep the daemon
+  asks the child over IPC to check pending HTTP requests, WebSockets, queued and
+  detached execution, and unexpired resumable uploads (24-hour expiry). Failure
+  or timeout keeps the child awake. Health info supplies job/service names and
+  access policy; `.bedrock-idle.json` beside the release persists these and its
+  source eligibility, alongside public-route and backup metadata.
+  Bun currently omits live timers from resource/handle introspection. Therefore
+  eligibility also requires a conservative scan of `pebble.ts` and its static
+  local imports: unknown imports, dynamic imports, timers, outbound fetch/sockets,
+  workers, process/global access, dynamic execution and Bun APIs other than
+  `Bun.file` keep it awake, even when only used inside a request handler or comment.
+  Only `bedrock` and `node:path`/`path` imports are trusted without scanning;
+  unresolvable imports and non-JavaScript imports keep it awake too. Custom
+  Bun configuration (other than the standard static bundler plugin), inherited
+  TypeScript configuration, import aliases and unreadable configurations also
+  keep it awake, so preloads/plugins cannot silently introduce background work. This is a
+  heuristic for trusted source, not a sandbox or proof against computed/obfuscated
+  access to runtime APIs. No new author option is added. In-memory caches/state
+  may be lost; persist durable state in SQLite/files and declare autonomous work
+  as a job or service rather than hiding loops at module scope.
 - Reserved subdomains: `auth`, `bedrock` (daemon API/dashboard), `www`.
 - A deployed pebble that is not running (stopped, crashed, restarting) answers 503
   with `Retry-After: 5` and a `bedrock start <name>` hint; 404 means no such pebble.
@@ -811,7 +853,7 @@ $BEDROCK_HOME (default ~/.bedrock)
 - `bedrock doctor` checks Bun, local daemon/configuration, domain/creators, OAuth,
   cloudflared installation/process, tunnel ingress/DNS via the API when a transient
   API token is available, wildcard resolution via Cloudflare DoH, available disk,
-  each pebble's live health (a pebble stopped on purpose passes), and backup age (warn when > 2× interval). From a
+  each pebble's live health (idle and intentionally stopped pebbles pass), and backup age (warn when > 2× interval). From a
   source checkout it warns when `bedrock` or `@bedrock/ui` is not `bun link`ed
   to that checkout (`link:<name>`); run in a pebble directory, it warns when the
   pebble still uses `file:` dependencies (`pebble-deps`, hint: the `bun add
@@ -826,7 +868,7 @@ $BEDROCK_HOME (default ~/.bedrock)
 The daemon controls pebble children over parent/child IPC, separately from HTTP
 identity forwarding. Requests are `{ op, requestId, ...payload }`: `jobs.list`,
 `jobs.run` (payload `{ name }`), `service-token` (payload `{ user, input?, id? }`),
-and `services.exclusive.start` (no payload; returns `{ started: string[] }`).
+`idle.check` (no payload; returns a boolean), and `services.exclusive.start` (no payload; returns `{ started: string[] }`).
 Replies are `{ op: "reply", requestId, value }` or
 `{ op: "reply", requestId, error: { code, message, hint } }`. The daemon sends
 `{ op: "stop" }` without a reply; the child performs cleanup and exits. Startup

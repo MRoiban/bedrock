@@ -25,10 +25,10 @@ async function fixture(capMs = 20) {
       if (this.fail-- > 0) throw new Error("fake startup failure");
       const crash = this.crashes-- > 0;
       const child = Bun.spawn([process.execPath, "-e", `setInterval(() => {}, 1000); process.on("message", () => process.exit(0)); ${crash ? 'setTimeout(() => process.exit(1), 40);' : ''}`], { stdin: "ignore", stdout: "pipe", stderr: "pipe", ipc() {} });
-      return { process: child, started: now, release: temp.dir, releaseId: "fake", port: 0, reading: Promise.resolve(), requests: 0, access: "public", publicRoutes: [], exclusiveServices: [] };
+      return { process: child, started: now, release: temp.dir, releaseId: "fake", port: 0, reading: Promise.resolve(), requests: 0, lastActive: now, idleSafe: false, access: "public", publicRoutes: [], exclusiveServices: [] };
     }
   }
-  const supervisor = new FakeSupervisor(temp.dir, db, "test", [], false, temp.dir, timing);
+  const supervisor = new FakeSupervisor(temp.dir, db, "test", [], false, temp.dir, 15 * 60_000, timing);
   db.save({ name: "fake", release: temp.dir, previous_release: null, status: "running" });
   return { db, supervisor, timing, advance: (ms: number) => { now += ms; }, async cleanup() { await supervisor.shutdown(); db.close(); temp.cleanup(); } };
 }
