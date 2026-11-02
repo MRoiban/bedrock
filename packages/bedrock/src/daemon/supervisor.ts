@@ -35,7 +35,7 @@ export interface Child {
   publicRoutes: string[];
   exclusiveServices: string[];
 }
-interface State { nextRetryAt?: number; waking?: Promise<Child | undefined>; sleeping?: Promise<void>; child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number; retired: Promise<void> }
+interface State { launching?: number; relaunch?: Promise<unknown>; nextRetryAt?: number; waking?: Promise<Child | undefined>; sleeping?: Promise<void>; child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number; retired: Promise<void> }
 
 export async function stopChild(child: Child) {
   if (child.process.exitCode === null) {
@@ -118,9 +118,9 @@ export class Supervisor {
     const state = this.states.get(name) ?? (this.db.get(name)?.status === "idle" ? this.state(name) : undefined);
     if (!state) return;
     if (state.sleeping) await state.sleeping;
-    if (state.waking) return state.waking;
     const current = this.child(name);
     if (current) { current.lastActive = Date.now(); return current; }
+    if (state.waking) return state.waking;
     const record = this.db.get(name);
     if (this.stopping || record?.status !== "idle") return;
     const generation = state.generation;
@@ -189,8 +189,15 @@ export class Supervisor {
     return state;
   }
   async launch(name: string, release: string, devSource = false, onFailure?: (child: Child) => void): Promise<Child> {
+    const state = this.state(name);
     const current = this.child(name);
-    if (current && current.process.exitCode === null) assertConcurrentWalSafe(this.db.db);
+    // A wake and a deploy can both be starting; each would open a writer.
+    if (current && current.process.exitCode === null || state.launching) assertConcurrentWalSafe(this.db.db);
+    state.launching = (state.launching ?? 0) + 1;
+    try { return await this.spawnChild(name, release, devSource, onFailure); }
+    finally { state.launching!--; }
+  }
+  private async spawnChild(name: string, release: string, devSource: boolean, onFailure?: (child: Child) => void): Promise<Child> {
     const started = this.timing.now();
     const releaseId = basename(release) + (this.dev ? `-${started}` : "");
     const record = this.db.get(name);
@@ -345,15 +352,21 @@ export class Supervisor {
         state.failures++;
         this.retry(name, release, devSource);
       });
+      state.relaunch = work;
       this.launches.add(work);
-      void work.finally(() => this.launches.delete(work));
+      void work.finally(() => { this.launches.delete(work); if (state.relaunch === work) delete state.relaunch; });
     }, wait);
   }
   async start(record: PebbleRecord) {
     if (this.child(record.name)) return;
-    if (record.status === "idle") { await this.ensure(record.name); return; }
     await this.stop(record.name, false);
-    const child = await this.launch(record.name, record.release);
+    let child: Child;
+    try { child = await this.launch(record.name, record.release); }
+    catch (error) {
+      // Stop cancelled any pending retry; a supervised pebble must keep recovering.
+      if (["restarting", "crashed"].includes(record.status) && !this.stopping) { this.state(record.name).failures++; this.retry(record.name, record.release); }
+      throw error;
+    }
     this.state(record.name).failures = 0;
     this.activate(record.name, child);
     this.db.status(record.name, "running");
@@ -371,6 +384,8 @@ export class Supervisor {
     if (child) await stopChild(child);
     await state.sleeping;
     await state.waking?.catch(() => {});
+    // A retry child still starting would otherwise outlive delete and recreate its data.
+    await state.relaunch?.catch(() => {});
   }
   forget(name: string) { this.loggers.get(name)?.close(); this.states.delete(name); this.loggers.delete(name); }
   private reportFailure(name: string, error: unknown) {
@@ -382,8 +397,8 @@ export class Supervisor {
       if (["running", "restarting", "crashed"].includes(record.status)) {
         try { await this.start(record); }
         catch (error) {
-          this.state(record.name).failures++;
-          this.retry(record.name, record.release);
+          const state = this.state(record.name);
+          if (!state.timer) { state.failures++; this.retry(record.name, record.release); }
           this.reportFailure(record.name, error);
         }
       }

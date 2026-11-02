@@ -20,12 +20,15 @@ async function fixture(capMs = 20) {
     attempts = 0;
     fail = 0;
     crashes = 0;
+    delayMs = 0;
+    last?: Child;
     override async launch(): Promise<Child> {
       this.attempts++;
+      if (this.delayMs) await Bun.sleep(this.delayMs);
       if (this.fail-- > 0) throw new Error("fake startup failure");
       const crash = this.crashes-- > 0;
       const child = Bun.spawn([process.execPath, "-e", `setInterval(() => {}, 1000); process.on("message", () => process.exit(0)); ${crash ? 'setTimeout(() => process.exit(1), 40);' : ''}`], { stdin: "ignore", stdout: "pipe", stderr: "pipe", ipc() {} });
-      return { process: child, started: now, release: temp.dir, releaseId: "fake", port: 0, reading: Promise.resolve(), requests: 0, lastActive: now, idleSafe: false, access: "public", publicRoutes: [], exclusiveServices: [] };
+      return this.last = { process: child, started: now, release: temp.dir, releaseId: "fake", port: 0, reading: Promise.resolve(), requests: 0, lastActive: now, idleSafe: false, access: "public", publicRoutes: [], exclusiveServices: [] };
     }
   }
   const supervisor = new FakeSupervisor(temp.dir, db, "test", [], false, temp.dir, 15 * 60_000, timing);
@@ -96,5 +99,34 @@ test("failed crash logging cannot stop boot recovery", async () => {
     h.supervisor.logs("fake").write = () => { throw new Error("disk full"); };
     await h.supervisor.restore();
     await until(() => h.supervisor.attempts === 7 && h.db.get("fake")?.status === "running");
+  } finally { await h.cleanup(); }
+});
+
+test("a failed explicit start during crash backoff keeps retrying", async () => {
+  const h = await fixture(50);
+  try {
+    h.db.status("fake", "crashed");
+    h.supervisor.fail = 10;
+    await h.supervisor.restore();
+    await until(() => h.supervisor.nextRetryAt("fake") !== null);
+    h.supervisor.fail = 1;
+    await expect(h.supervisor.start(h.db.get("fake")!)).rejects.toThrow("fake startup failure");
+    expect(h.supervisor.nextRetryAt("fake")).not.toBeNull();
+    h.supervisor.fail = 0;
+    await until(() => h.db.get("fake")?.status === "running");
+  } finally { await h.cleanup(); }
+});
+
+test("stop waits for an in-flight crash retry so its child cannot outlive deletion", async () => {
+  const h = await fixture();
+  try {
+    await h.supervisor.start(h.db.get("fake")!);
+    const attempts = h.supervisor.attempts;
+    h.supervisor.delayMs = 200;
+    h.supervisor.child("fake")!.process.kill();
+    await until(() => h.supervisor.attempts === attempts + 1);
+    await h.supervisor.stop("fake");
+    expect(h.supervisor.last!.process.exitCode).not.toBeNull();
+    expect(h.supervisor.child("fake")).toBeUndefined();
   } finally { await h.cleanup(); }
 });
