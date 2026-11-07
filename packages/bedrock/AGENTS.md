@@ -1407,8 +1407,8 @@ merge, error transition history, events/resources/lifecycle history, job control
 secrets, tokens, service tokens, backups, self-update and sessions. Actions combine
 additively. Fleet status/list filter matching pebbles and omit tunnel/session
 presence just like `status`. Alert reads expose only matching pebble incidents,
-their silences and matching checks; global incidents and outbox/pending metadata
-are omitted even for `*`. Silence requires an exact visible incident fingerprint
+their silences and matching checks; a token scoped to `*` sees the whole host,
+including tunnel/backup incidents and alert delivery state. Silence requires an exact visible incident fingerprint
 (403 otherwise); there is no removal endpoint. Alert test sends a global test
 notification without disclosing global monitoring data.
 Status rows include read-only `backup: { last_success_at, interval_ms }` (Unix ms
@@ -1640,7 +1640,7 @@ cursor are never evicted by retention or byte pressure. Active evidence may
 outlive history age/count limits until its consumers advance. Disposable histories
 expire after at most 365 days; alert state/credentials
 are excluded from existing daemon DB backups. Alert and job history APIs accept unscoped creator tokens or scoped **monitor**
-with the filtering above. Global outbox metadata requires an unscoped token;
+with the filtering above. Outbox metadata requires an unscoped or `*`-scoped token;
 scoped status only reveals matching readiness.
 
 Unauthenticated https://bedrock.<domain>/healthz returns exactly 200 and

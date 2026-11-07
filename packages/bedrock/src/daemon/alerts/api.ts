@@ -32,7 +32,9 @@ interface AlertView {
   checks: { name: string }[];
 }
 function scopedView(view: AlertView, scope: TokenScope | null): AlertView {
-  if (!scope) return view;
+  // A token scoped to every pebble watches the whole host: the tunnel, daemon backups and
+  // alert delivery decide whether anything works, so a fleet-wide monitor must see them.
+  if (!scope || scope.pebbles.includes("*")) return view;
   const incidents = view.incidents.filter(incident => !!incident.pebble && matchesPebble(scope, incident.pebble));
   const fingerprints = new Set(incidents.map(incident => incident.fingerprint));
   return { incidents, silences: view.silences.filter(silence => fingerprints.has(silence.fingerprint)), checks: view.checks.filter(check => matchesPebble(scope, check.name)) };

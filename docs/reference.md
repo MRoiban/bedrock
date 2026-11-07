@@ -1346,10 +1346,11 @@ and `?` (one character), lowercase letters, digits and hyphens only. Actions are
   error transition history, resources/events/lifecycle history, job control, and backup listing are excluded.
   Per-pebble routes enforce the token's globs. Status/list filter matching pebbles
   with the same daemon metadata restrictions as `status`. Alerts return only
-  matching pebble incidents, their active silences, and matching checks; host-wide
-  incidents (including tunnel and daemon backup) and global outbox/pending metadata
-  are omitted even with `*`. Silence requires an exact fingerprint from a visible
-  incident; unknown, host-wide and nonmatching fingerprints return 403 `FORBIDDEN`.
+  matching pebble incidents, their active silences, and matching checks. A token
+  scoped to every pebble (`*`) watches the whole host and gets the full view:
+  host-wide incidents (tunnel, daemon backup) and outbox/pending delivery state;
+  narrower globs omit them. Silence requires an exact fingerprint from a visible
+  incident; unknown, hidden and nonmatching fingerprints return 403 `FORBIDDEN`.
   No silence-removal endpoint exists. Alert test explicitly sends a global test
   notification; it reveals no global monitoring data.
 
