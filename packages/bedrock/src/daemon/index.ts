@@ -189,6 +189,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       },
       error: error => daemonError(error),
     });
+    alerts.setProxyPort(server.port!);
     supervisor.apiUrl = `http://127.0.0.1:${server.port}`;
     if (options.devPebble) {
       if (!dev) throw new BedrockError("INVALID_DEV_DOMAIN", "A dev pebble requires development mode.", "Use bedrock dev.");

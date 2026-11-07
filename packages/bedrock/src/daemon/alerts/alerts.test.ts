@@ -102,7 +102,7 @@ test("backup age uses per-target success and persistent initial grace, recovers 
     expect(h.store.pending().map(r => r.transition)).toEqual(["opened", "resolved"]);
   } finally { h.close(); }
 });
-test("quiet hours defer non-critical push, escalation at 15m and reminders at most every 6h", async () => {
+test("critical escalation at 15m and reminders at most every 6h bypass quiet hours", async () => {
   const h = harness(), calls: any[] = [];
   const fetcher = (async (_: any, init: any) => { calls.push(JSON.parse(init.body)); return new Response(null, { status: 202 }); }) as typeof fetch;
   await Bun.write(join(h.temp.dir, "alerts-secret"), "test");
@@ -118,12 +118,12 @@ test("quiet hours defer non-critical push, escalation at 15m and reminders at mo
     expect(isQuiet(Date.parse("2026-11-04T06:29:00Z"))).toBe(true);
     expect(isQuiet(Date.parse("2026-11-04T06:30:00Z"))).toBe(false);
     h.advance(Date.parse("2026-11-03T22:30:00Z") - h.now());
-    h.evaluator.evaluate({ pebbles: [], tunnel: false });
+    h.evaluator.evaluate({ pebbles: [], tunnel: false }); h.advance(30000);
     await deliver(h.evaluator, h.temp.dir, "http://127.0.0.1/messages", fetcher);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     h.advance(9 * 3600000); h.evaluator.evaluate({ pebbles: [], tunnel: false }); h.advance(30000);
     await deliver(h.evaluator, h.temp.dir, "http://127.0.0.1/messages", fetcher);
-    expect(calls.filter(c => c.metadata.rule === "tunnel")).toHaveLength(3);
+    expect(calls.filter(c => c.metadata.rule === "tunnel")).toHaveLength(4);
   } finally { h.close(); }
 });
 test("weekly digest and unhealthy daily digest are durable and ordinary job failures never page", () => {

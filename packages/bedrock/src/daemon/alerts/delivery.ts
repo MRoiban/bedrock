@@ -1,9 +1,14 @@
+import { hostTarget } from "../proxy";
 import { join } from "node:path";
 import { isQuiet, type Incident } from "./model";
 import type { AlertEvaluator } from "./evaluator";
-export async function deliver(evaluator: AlertEvaluator, home: string, webhook: string | undefined, fetcher: typeof fetch = fetch) {
+export async function deliver(evaluator: AlertEvaluator, home: string, webhook: string | undefined, fetcher: typeof fetch = fetch, proxyPort?: number) {
   if (!webhook) return;
   const store = evaluator.store, db = store.db;
+  store.prune();
+  const url = new URL(webhook), target = hostTarget(url.host, store.host);
+  const local = proxyPort && url.hostname.endsWith(`.${store.host}`) && target && !["auth", "bedrock"].includes(target);
+  const destination = local ? `http://127.0.0.1:${proxyPort}${url.pathname}` : webhook;
   const secret = (await Bun.file(join(home, "alerts-secret")).text().catch(() => "")).trim();
   let attempts = 0;
   for (const row of store.pending()) {
@@ -19,12 +24,13 @@ export async function deliver(evaluator: AlertEvaluator, home: string, webhook: 
       }
       if (incident.resolved !== null && row.transition !== "resolved" && row.transition !== "opened") { db.query("UPDATE outbox SET state='suppressed' WHERE id=?").run(row.id); continue; }
     }
-    // Email digests do not interrupt; every page/escalation respects the owner's push quiet hours.
-    if (row.transition !== "digest" && isQuiet(store.clock())) continue;
+    if (row.transition !== "digest" && !incident?.page && isQuiet(store.clock())) continue;
+    // A later transition cannot overtake an earlier retry, even after reopening the store.
+    if (incident && db.query("SELECT 1 FROM outbox WHERE incident=? AND state='pending' AND rowid<(SELECT rowid FROM outbox WHERE id=?) LIMIT 1").get(incident.id, row.id)) continue;
     if (attempts++ >= 16) break;
     let status = "WEBHOOK_SECRET_MISSING", retry = 0;
     if (secret) try {
-      const response = await fetcher(webhook, { method: "POST", redirect: "error", signal: AbortSignal.timeout(2000), headers: { authorization: `Bearer ${secret}`, "content-type": "application/json", "idempotency-key": row.id }, body: row.payload });
+      const response = await fetcher(destination, { method: "POST", redirect: "error", signal: AbortSignal.timeout(2000), headers: { ...(local ? { host: url.host } : {}), authorization: `Bearer ${secret}`, "content-type": "application/json", "idempotency-key": row.id }, body: row.payload });
       status = `HTTP_${response.status}`;
       retry = Number(response.headers.get("retry-after")) * 1000;
       // Acceptance is the webhook contract; downstream provider delivery belongs to the receiver.

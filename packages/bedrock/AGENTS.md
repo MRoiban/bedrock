@@ -1545,14 +1545,17 @@ contention, restoring the application timeout afterwards. States are starting/re
 stopped. Three failed probes open a check; two successes recover it. Readiness
 in `bedrock status --json` carries observation time; stale observations are
 unknown/starting. Idle means available on demand: probes never wake it or reset
-idle timers. Hibernated children remain running. This checks local resources,
-not external dependencies or application correctness.
+idle timers. A child swap during a probe keeps the registered pebble as
+starting/unknown; deletion cleanup requires registry removal. Hibernated children
+remain running. This checks local resources, not external dependencies or
+application correctness.
 
 Jobs emit scheduled/started/succeeded/failed/skipped/interrupted events; the
 daemon keeps next expected occurrences even if the child scheduler dies. Five
 minutes start grace, ten minutes runtime budget (including queue wait), no
-killing/catch-up. A restart gap is one incident per job; unfinished starts become
-interrupted. History is newest 1,000 events via `bedrock jobs history <pebble>
+killing/catch-up. Each overdue occurrence is checked from the previous deadline
+before advancing, so an earlier success cannot hide a subsequent miss. A restart
+gap is one incident per job; unfinished starts become interrupted. History is newest 1,000 events via `bedrock jobs history <pebble>
 --json`, with 30 days/100,000 events global retention. Success means commit or
 detached handler completion, not exactly-once external side effects.
 
@@ -1560,19 +1563,27 @@ Critical job selection is host administration, not a new pebble option:
 `alerts.criticalJobs: { notes: ["prune"] }` in daemon config (none by default).
 Four page rules: configured cloudflared process absent, desired-running pebble
 unready for 2 min/crash loop, critical job failure/deadline, configured backup age
->2 intervals. Ordinary job errors/skips and other noise enter digests. A webhook
-submission outage >10 min creates a local incident/stderr notice; independent
+>2 intervals. Backup config is reloaded each sweep; setup/interval edits/removal
+apply without restart. Ordinary job errors/skips and other noise enter digests.
+A webhook submission outage >10 min creates a local incident/stderr notice; independent
 external monitoring is needed because delivery cannot page through itself.
 
 Use `bedrock alerts [ls] --json`, `alerts silence <fingerprint> --for 2h --json`,
 and `alerts test --json`. `alerts setup [--webhook <url>] --json` reads the
 bearer secret from stdin/hidden prompt into BEDROCK_HOME/alerts-secret (0600);
-default URL is https://comms.<domain>/api/v1/messages. Restart after config edits.
+default URL is https://comms.<domain>/api/v1/messages. Restart after alert config edits.
+Webhook hosts in this daemon's <pebble>.<domain> namespace use its loopback proxy,
+retaining Host/path, normal access rules and idle wake-up without cloudflared.
+External webhook URLs remain generic.
 The durable generic webhook uses comms-shaped JSON, Authorization Bearer,
 Idempotency-Key and payload idempotency_key. Receivers must dedupe; 2xx means
 accepted, not provider delivered. Initial Poke, ntfy+email after 15 min unresolved,
-then reminders at most every 6 h. Pages/escalation wait during 23:00–07:30 Brussels;
+then reminders at most every 6 h. Critical incident transitions/escalations use
+high urgency and bypass quiet hours in Bedrock and comms. Non-critical push
+(including normal-urgency tests) waits during 23:00–07:30 Brussels; low-urgency
 weekly Monday 08:00 server-local email digest, daily only while unresolved.
+Already-stored payloads keep their original urgency. Transitions submit in stored
+order per incident across retries/restarts; recovery waits for opening acceptance.
 
 Incidents use stable [host,pebble,rule,job] fingerprints, 30 s grouping, one outbox
 row per opening/resolution, expiring silences, and tunnel inhibition of child
@@ -1580,8 +1591,13 @@ readiness messages. Unrelated backup/job alerts remain eligible. The Worker keep
 alerts.sqlite separate from disposable telemetry; 64 MiB page budget, 1,000
 pending transitions, retries to 6 h, no pending eviction. Storage failure leaves
 serving independent. A full outbox rolls back the new transition until a later
-sweep. Histories expire after 365 days; alert state/credentials are excluded from
-existing daemon DB backups. Global alerts/silences/outbox and job history APIs
+sweep. Terminal job events retain a durable pending-evaluation marker until
+incident/outbox evaluation commits, retried in order across saturation/restart.
+Retention runs before admission and independently during delivery; byte pressure
+reclaims accepted/suppressed history, unreferenced resolved incidents and evaluated
+job history to reserve 4 MiB for pending work. Pending transitions/evaluations are
+never evicted. Histories expire after at most 365 days; alert state/credentials
+are excluded from existing daemon DB backups. Global alerts/silences/outbox and job history APIs
 require unscoped creator tokens; scoped status only reveals matching readiness.
 
 Unauthenticated https://bedrock.<domain>/healthz returns exactly 200 and

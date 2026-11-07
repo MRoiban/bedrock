@@ -1,3 +1,4 @@
+import { BedrockError } from "../../error";
 import { parseCron } from "../../jobs/cron";
 import type { JobEvent, PebbleCheck } from "./model";
 import type { AlertStore } from "./store";
@@ -26,9 +27,25 @@ export class JobDeadlines {
   }
   event(pebble: string, event: JobEvent) {
     const db = this.store.db;
-    db.query("INSERT INTO runs(pebble,job,run,state,at,scheduled) VALUES(?,?,?,?,?,?)").run(pebble, event.name, event.run, event.state, event.at, event.scheduled);
-    if (event.state === "failed" || event.state === "interrupted") this.store.condition(pebble, "critical-job", true, event.name, this.isCritical(pebble, event.name));
-    if (event.state === "succeeded") this.store.condition(pebble, "critical-job", false, event.name);
+    this.store.prune();
+    const pending = ["failed", "interrupted", "succeeded"].includes(event.state);
+    db.query("INSERT INTO runs(pebble,job,run,state,at,scheduled,pending) VALUES(?,?,?,?,?,?,?)").run(pebble, event.name, event.run, event.state, event.at, event.scheduled, Number(pending));
+    this.reconcile();
+  }
+  reconcile() {
+    const db = this.store.db;
+    const rows = db.query<{ id: number; pebble: string; job: string; state: string }, []>("SELECT id,pebble,job,state FROM runs WHERE pending=1 ORDER BY id").all();
+    for (const row of rows) {
+      try {
+        db.transaction(() => {
+          this.store.condition(row.pebble, "critical-job", row.state !== "succeeded", row.job, this.isCritical(row.pebble, row.job));
+          db.query("UPDATE runs SET pending=0 WHERE id=?").run(row.id);
+        })();
+      } catch (error) {
+        if (error instanceof BedrockError && error.code === "ALERT_OUTBOX_FULL") return;
+        throw error;
+      }
+    }
   }
   interrupt(pebble: string) {
     const rows = this.store.db.query<{ job: string; run: string; scheduled: number | null }, [string]>(`SELECT job,run,scheduled FROM runs r WHERE pebble=? AND state='started' AND NOT EXISTS(SELECT 1 FROM runs x WHERE x.run=r.run AND x.state IN ('succeeded','failed','interrupted'))`).all(pebble);
@@ -41,11 +58,14 @@ export class JobDeadlines {
       if (!pebble || ["idle", "stopped"].includes(pebble.status)) continue;
       const overdue = db.query("SELECT 1 FROM runs r WHERE pebble=? AND job=? AND state='started' AND at<? AND NOT EXISTS(SELECT 1 FROM runs x WHERE x.run=r.run AND x.state IN ('succeeded','failed','interrupted')) LIMIT 1").get(job.pebble, job.name, now - 600000);
       if (overdue) this.store.condition(job.pebble, "critical-job", true, job.name, this.isCritical(job.pebble, job.name));
-      if (now <= job.due + 300000) continue;
-      // One observation covers every missed occurrence during a daemon gap; jobs are never replayed.
-      const started = db.query("SELECT 1 FROM runs WHERE pebble=? AND job=? AND scheduled=? AND state IN ('started','succeeded') LIMIT 1").get(job.pebble, job.name, job.due);
-      if (!started) this.store.condition(job.pebble, "critical-job", true, job.name, this.isCritical(job.pebble, job.name));
-      db.query("UPDATE jobs SET due=? WHERE pebble=? AND name=?").run(nextRun(job.cron, now), job.pebble, job.name);
+      let due = job.due, missed = false;
+      while (now > due + 300000) {
+        const started = db.query("SELECT 1 FROM runs WHERE pebble=? AND job=? AND scheduled=? AND state IN ('started','succeeded') LIMIT 1").get(job.pebble, job.name, due);
+        if (!started) missed = true;
+        due = nextRun(job.cron, due);
+      }
+      if (missed) this.store.condition(job.pebble, "critical-job", true, job.name, this.isCritical(job.pebble, job.name));
+      if (due !== job.due) db.query("UPDATE jobs SET due=? WHERE pebble=? AND name=?").run(due, job.pebble, job.name);
     }
   }
   private isCritical(pebble: string, job: string) { return this.critical[pebble]?.includes(job) === true; }

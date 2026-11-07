@@ -1376,8 +1376,9 @@ The daemon probes existing running children every 30 s, with two concurrent IPC
 requests, a 2 s deadline and no overlapping sweep. Three failures open the check;
 two successes recover it. A readiness page requires two minutes unhealthy or the
 supervisor's `crashed` state. Probes never call `ensure`, extend inactivity, or
-count as application traffic. Idle means **available on demand**, never probed
-awake; hibernation still means running. `bedrock status --json` includes
+count as application traffic. A child replaced during a probe remains registered
+with starting/unknown readiness; only registry removal triggers deletion cleanup.
+Idle means **available on demand**, never probed awake; hibernation still means running. `bedrock status --json` includes
 `readiness: { state, observed_at }` (idle also `available_on_demand:true`). No
 recent observation (>65 s) is `starting`/unknown, never a fabricated green.
 
@@ -1400,6 +1401,8 @@ scheduled occurrence. Start grace is 5 min; runtime budget is 10 min (includes
 queue wait). Exceeding the budget records an incident and never kills/replays a
 job. On child death or daemon restart, unfinished starts become interrupted.
 Missed occurrences during a restart/gap become one episode per job; no catch-up.
+Deadlines advance from the previous expected occurrence, checking each overdue
+occurrence before advancing; a successful earlier run cannot hide a later miss.
 Intentionally idle/stopped pebbles have no expected-run pages. Removed jobs and
 pebbles resolve their obsolete incidents on the next sweep.
 
@@ -1421,7 +1424,9 @@ supervisor enters a crash loop; an explicitly critical job fails/is interrupted
 or misses its deadline; a configured backup target has no successful backup for
 more than twice its interval. Backup age is per pebble and daemon, including
 stopped/idle data. A never-backed-up target gets a persistent initial 2-interval
-grace; partial successes do not hide another target's stale backup.
+grace; partial successes do not hide another target's stale backup. Probe sweeps
+reload backup configuration, so backup setup, interval edits and removal apply
+without restarting the daemon.
 
 Delivery failure >10 min creates a **local-only** `alert-delivery` incident and
 one stderr repair notice per episode. It cannot page through itself; the owner
@@ -1434,16 +1439,22 @@ Incident fingerprints are JSON `[host, pebble, rule, job]`, stable across releas
 and restart, with one incident per episode. Each page opening/resolution commits
 with exactly one immutable outbox row/key in the same transaction. A 30 s group
 window batches eligible transitions in each delivery sweep; it does not combine
-several transitions into one payload. Child-readiness messages wait beneath an
-open tunnel incident. A child recovering while inhibited produces no delayed
+several transitions into one payload. Transitions for an incident submit in
+stored order: recovery waits for acceptance of its opening, including across
+Retry-After delays and restarts. Other incidents can still submit. Child-readiness
+messages wait beneath an open tunnel incident. A child recovering while inhibited produces no delayed
 page. Unrelated job/backup incidents remain eligible. Exact-fingerprint silences
 have an expiry; unresolved pages become eligible after expiry. Silences and
 inhibition retain the incident evidence. There is no acknowledgment API yet.
 
 Webhook URL uses HTTPS (HTTP only for loopback), no URL credentials, query or
 fragment. `alerts-secret` is an atomic 0600 file in BEDROCK_HOME, like backup
-credentials. It never enters a child environment or API response. Configure it
-on the daemon host, then restart; URL defaults to comms on this domain:
+credentials. It never enters a child environment or API response. Destinations
+in this daemon's `<pebble>.<domain>` namespace use its actual loopback proxy port,
+preserving Host/path and normal access checks, including waking idle pebbles.
+They never traverse cloudflared; external webhooks keep their configured URL.
+Configure it on the daemon host, then restart; URL defaults to comms on this
+domain:
 
 ```sh
 # Dedicated bedrock-monitor client token, from stdin or a hidden terminal prompt:
@@ -1455,15 +1466,17 @@ bedrock alerts silence '["example.test","notes","readiness",""]' --for 2h --json
 bedrock jobs history notes --json
 ```
 
-`test` durably queues a test message; inspect its outbox state for acceptance. All
-alert notifications, including tests and escalation, use normal urgency and
-respect 23:00–07:30 **Europe/Brussels** quiet hours in Bedrock before submission.
+`test` durably queues a non-critical test message; inspect its outbox state for
+acceptance. Only non-critical push notifications (including tests) wait during
+23:00–07:30 **Europe/Brussels**. Critical incident openings, resolutions,
+escalations and reminders bypass both Bedrock's and comms' quiet hours using
+`urgency:"high"`. Tests use normal urgency; email digests use low urgency.
 The comms-compatible JSON payload has `to:["me"]`, subject/text, urgency,
 explicit channels, `idempotency_key`, and metadata (incident, rule, target,
 fingerprint). Initial/resolution messages use Poke. Unresolved incidents escalate
 after 15 min to ntfy + email, then remind at most once per 6 h, all with separate
-durable transition keys. Comms owns provider routing/retries and applies its own
-quiet-hour policy too. No automatic high-urgency wake-up override is enabled.
+durable transition keys. Comms owns provider routing/retries. Existing immutable
+outbox payloads retain their original urgency across upgrades.
 
 The generic receiver gets `Authorization: Bearer …` and `Idempotency-Key`, plus
 the same key in the payload. It must accept the comms-shaped payload and dedupe
@@ -1480,7 +1493,7 @@ a low-urgency email digest includes unresolved incidents, job failure/skip count
 latest probe observations and outbox counts. A daily digest is enabled only while
 incidents remain unresolved; one per local date, persisted across restarts. No
 missed digests are replayed. Text is bounded to 24,000 characters. Quiet-hour
-email bypass applies only to digests; escalation waits with its push channel.
+email bypass applies to digests; critical escalations also bypass quiet hours.
 
 `GET /api/alerts`, `POST /api/alerts/silence` (`{fingerprint,for:"2h"}`),
 `POST /api/alerts/test`, and `GET /api/jobs/:pebble/history` require an **unscoped
@@ -1498,9 +1511,18 @@ operations, 5 s response deadline. Probes have constant-size current-state rows;
 job history is 30 days/100,000 events globally. Accepted/suppressed transitions
 and resolved incidents expire after 365 days. At most 1,000 pending outbox rows;
 a full outbox rejects/rolls back a new transition (the condition is evaluated
-again next sweep), never evicts pending delivery. SQLite has a 64 MiB page budget;
-WAL autocheckpoints every 256 pages. These are bounded diagnostic histories, not
-an audit archive. Alert state/credentials are not included in existing daemon DB
+again next sweep), never evicts pending delivery. Terminal job events persist a
+pending-evaluation marker with their history row; the marker clears only when
+incident/outbox evaluation commits, and is retried in event order after saturation
+or restart. Retention excludes these pending events. SQLite has a 64 MiB page
+budget;
+WAL autocheckpoints every 256 pages. Retention runs before evaluation/job-event
+admission and independently during delivery, so a failed evaluation cannot block
+cleanup. Under byte pressure, accepted/suppressed outbox history, unreferenced
+resolved incidents, then evaluated job history are reclaimed early to reserve
+4 MiB for pending work (one quarter of the page budget if smaller). Pending
+transitions/evaluations are never evicted. These are bounded diagnostic histories,
+not an audit archive. Alert state/credentials are not included in existing daemon DB
 backups; retain BEDROCK_HOME for outbox durability.
 
 ### One-time creator session links

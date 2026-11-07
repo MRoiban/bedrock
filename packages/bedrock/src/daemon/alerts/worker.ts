@@ -6,11 +6,12 @@ import { AlertEvaluator } from "./evaluator";
 import { deliver } from "./delivery";
 declare const self: Worker;
 let evaluator: AlertEvaluator | undefined, home = "", webhook: string | undefined;
+let proxyPort: number | undefined;
 let timer: ReturnType<typeof setInterval> | undefined, busy = false;
 async function delivery() {
   if (!evaluator || busy) return;
   busy = true;
-  try { await deliver(evaluator, home, webhook); }
+  try { await deliver(evaluator, home, webhook, fetch, proxyPort); }
   catch { console.error("Alert outbox unavailable; inspect bedrock alerts and free disk space."); }
   finally { busy = false; }
 }
@@ -20,16 +21,19 @@ const handle = async ({ data }: MessageEvent) => {
   try {
     if (data.op === "init") {
       home = data.home;
+      proxyPort = data.proxyPort;
       const config = data.config ?? await readConfig(home);
       testClock = data.testClock === true;
       evaluator = new AlertEvaluator(new AlertStore(join(home, "alerts.sqlite"), config.domain, () => testClock ? now : Date.now()), config.alerts?.criticalJobs);
       webhook = config.alerts?.webhook;
+      evaluator.store.prune();
       for (const row of evaluator.store.db.query<{ pebble: string }, []>("SELECT DISTINCT pebble FROM runs WHERE state='started'").all()) evaluator.jobs.interrupt(row.pebble);
       if (!testClock) { timer = setInterval(() => void delivery(), 1000); timer.unref(); }
     } else {
       if (!evaluator) throw new BedrockError("ALERTS_UNAVAILABLE", "Alert store is unavailable.", "Restart the daemon and inspect its logs.");
       let value: unknown;
-      if (data.op === "dispatchForTests" && testClock) await delivery();
+      if (data.op === "proxy") proxyPort = data.port;
+      else if (data.op === "dispatchForTests" && testClock) await delivery();
       else if (data.op === "snapshot") evaluator.evaluate(data.snapshot);
       else if (data.op === "job") evaluator.jobs.event(data.pebble, data.event);
       else if (data.op === "exit") evaluator.jobs.interrupt(data.pebble);

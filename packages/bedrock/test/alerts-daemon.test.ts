@@ -72,13 +72,17 @@ test("temp-home daemon injects all page rules, keeps one transition key across r
     const transitions = (await view()).outbox.filter((r: any) => r.incident);
     expect(transitions.filter((r: any) => r.transition === "resolved")).toHaveLength(4);
     expect(new Set(transitions.map((r: any) => r.id)).size).toBe(8);
-    // A new outage at night remains in the outbox until 07:30 Brussels.
+    // Critical outage pages interrupt at night; non-critical tests wait until 07:30 Brussels.
     now = Date.parse("2026-11-03T22:10:00Z");
     await daemon.alerts.snapshotForTests({ ...snapshot, tunnel: false });
+    await daemon.alerts.test();
     now += 30000;
-    const count = calls.length; await daemon.alerts.dispatchForTests(); expect(calls).toHaveLength(count);
+    const count = calls.length; await daemon.alerts.dispatchForTests();
+    expect(calls.length).toBeGreaterThan(count);
+    expect(calls.slice(count).every(c => c.payload.urgency === "high")).toBe(true);
+    expect(calls.some(c => c.payload.metadata.rule === "test")).toBe(false);
     now = Date.parse("2026-11-04T06:30:00Z");
-    await daemon.alerts.dispatchForTests(); expect(calls.length).toBeGreaterThan(count);
+    await daemon.alerts.dispatchForTests(); expect(calls.some(c => c.payload.metadata.rule === "test")).toBe(true);
     const canary = await fetch(new URL("healthz", daemon.server.url), { headers: { host: "bedrock.example.test" }, redirect: "manual" });
     expect(canary.status).toBe(200); expect(canary.headers.get("cache-control")).toContain("no-store");
     expect(await canary.text()).toBe("bedrock-health-v1\n");

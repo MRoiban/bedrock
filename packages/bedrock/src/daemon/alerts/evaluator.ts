@@ -1,4 +1,4 @@
-import { fingerprint, isQuiet, type Incident, type Snapshot } from "./model";
+import { fingerprint, type Incident, type Snapshot } from "./model";
 import { JobDeadlines } from "./jobs";
 import { AlertStore } from "./store";
 interface Check { open: number; failures: number; successes: number; unhealthy: number | null }
@@ -7,6 +7,8 @@ export class AlertEvaluator {
   constructor(readonly store: AlertStore, critical: { [pebble: string]: string[] } = {}) { this.jobs = new JobDeadlines(store, critical); }
   evaluate(snapshot: Snapshot) {
     const store = this.store, db = store.db, now = store.clock();
+    store.prune();
+    this.jobs.reconcile();
     db.transaction(() => {
       store.condition("", "tunnel", snapshot.tunnel === false);
       for (const pebble of snapshot.pebbles) {
@@ -40,12 +42,10 @@ export class AlertEvaluator {
       this.reminders();
       this.digest();
     })();
-    store.prune();
   }
   inhibited(incident: Incident) { return incident.rule === "readiness" && this.store.open().some(i => i.rule === "tunnel"); }
   private reminders() {
     const now = this.store.clock();
-    if (isQuiet(now)) return;
     for (const incident of this.store.open()) {
       if (!incident.page || !incident.notified || this.inhibited(incident) || this.store.silenced(incident.fingerprint)) continue;
       if (now - incident.opened >= 900000 && incident.reminder === null) {

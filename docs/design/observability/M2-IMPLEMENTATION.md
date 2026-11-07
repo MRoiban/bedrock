@@ -49,10 +49,11 @@ normal/high/low urgency, and explicit Poke/ntfy/email channels.
   payload/key across restart. Any 2xx is receiver acceptance, not proof of
   downstream provider delivery/acknowledgment. Redirects fail and response bodies
   are cancelled unread. Retries back off 1 s to 6 h, with numeric Retry-After.
-- Comms owns provider channels. Normal Poke first, explicit ntfy+email after
-  15 min unresolved, then reminders at least 6 h apart. All page/escalation
-  submissions wait during 23:00–07:30 Brussels, matching the design's default
-  home-outage policy; no automatic high-urgency night override. Weekly Monday
+- Comms owns provider channels. Poke first, explicit ntfy+email after
+  15 min unresolved, then reminders at least 6 h apart. Critical incident
+  transitions use high urgency and bypass 23:00–07:30 Brussels quiet hours; only
+  non-critical push waits. (The initial normal-urgency/all-pages quiet-hour policy
+  was a design mismatch corrected by the R2 fixes below.) Weekly Monday
   08:00 server-local email digest, daily only while unresolved, persisted once
   per date. Test messages use the same durable/quiet-hours path.
 - CLI/API: alerts listing/silences/outbox/test/setup, job history, readiness in
@@ -78,7 +79,8 @@ Worker against a loopback fake receiver with injected observations/events:
 - Receiver 503, >10 min clock advance, daemon shutdown/restart and receiver
   repair prove immutable payload/key reuse, pending-row durability and acceptance
   after retry. A local delivery-broken incident adds no recursive page.
-- Night outage remains pending at 23:10 Brussels and submits at 07:30.
+- Night critical outage submits at 23:10 Brussels with high urgency; a
+  non-critical test remains pending until 07:30 (corrected and rerun for R2).
 - Public canary returns exact 200/body/no-store without credentials. Unscoped
   alert/history requests succeed; matching scoped-status tokens get 403 for
   those global/private endpoints. A dev daemon also works without config.json.
@@ -172,3 +174,96 @@ Final focused M2 run: **19 pass, 0 fail**, 143 assertions, 7 files, 800 ms.
 `git diff --check` passed. `getconf CLK_TCK` returned 100; `findmnt -T . -no
 SOURCE,FSTYPE` returned `/dev/nvme0n1p6 ext4`, confirming the benchmark's tick
 conversion and scratch-store location. Kernel: 6.12.113+deb13-amd64.
+
+## R2 fixes and regression evidence
+
+R2 base: `8b12602`, branch `t3/fix-alerts-review-findings`. No new dependencies,
+pebble-facing concepts, deployed changes, live comms calls, secrets-file reads,
+WORKLOG edits or subagents. Comms API/OpenAPI and its quiet-hour implementation
+were inspected read-only at the release path above: `urgency:"high"` bypasses
+push quiet hours.
+
+Each of the nine regression cases failed against the original M2 runtime, then
+passed with the fixes. Baseline command (after `bun install`):
+
+```sh
+export TMPDIR=$(mktemp -d /dev/shm/bedrock-test-XXXX)
+bun test packages/bedrock/src/daemon/alerts/regressions.test.ts packages/bedrock/src/daemon/alerts/probes.test.ts packages/bedrock/test/alerts-local.test.ts --timeout 30000
+```
+
+Baseline: **1 pass / 9 fail**, 41 assertions, 10 tests across 3 files, 373 ms
+(`/dev/shm/bedrock-r2-before.log`). The existing concurrency test passed; every
+R2 case failed at the defect assertion below. The first attempt needed an install
+(missing arctic/drizzle-orm). An initial unindexed reconciliation run was stopped
+after >50 s in synchronous SQLite; the regression now checks the query plan
+before timing reconciliation, so the unfixed test fails promptly on `SCAN runs`.
+The timing assertion was relaxed from 1 s to 2 s for full-suite load; the query
+plan assertion is unchanged.
+
+| Finding | Exact regression test name | Before → after / focused change |
+| --- | --- | --- |
+| R2-1 | `R2-1 critical opening, escalation and recovery bypass both quiet-hour gates with high urgency` | No opening submitted at night → all three critical transitions submit with high urgency; normal test stays queued. Both delivery and escalation gates exempt critical incidents. |
+| R2-2 | `R2-2 default webhook wakes a local pebble through the daemon proxy without a tunnel` | Opening stays pending → accepted by a real idle scratch pebble through the daemon's actual loopback port, Host/path/bearer retained; normal Origin checks still reject an unauthenticated cross-origin POST. External URLs remain generic (separate passing regression). |
+| R2-3 | `R2-3 99,999-event reconciliation for 24 pebbles uses an indexed terminal lookup below 2s` | `SCAN runs` → indexed search; 211.65 ms reconciliation in the focused evidence run. Added `(run,state)` and occurrence lookup indexes. |
+| R2-4 | `R2-4 recovery waits for opening Retry-After across a store restart` | Recovery submitted before the opening retry → held across reopen until opening acceptance. Stored insertion order gates pending transitions per incident, independently of retry due times. |
+| R2-5 | `R2-5 saturated outbox replays durable failure and success evaluation after restart` | Both transitions lost with 1,000 pending rows → one opening and one recovery replay after capacity returns/reopen. Terminal history insert carries a durable pending flag; condition/outbox commit and flag clearing are atomic. |
+| R2-6 | `R2-6 full page budget reclaims accepted history before admitting a pending transition` | `SQLITE_FULL` → cleanup runs before evaluation and admission succeeds. Retention also runs before job events and independently during delivery; pressure reclaims non-pending history to reserve 4 MiB, protecting pending outbox/evaluation rows. Fixture deliberately fills a reduced 256-page SQLite budget, not the filesystem. |
+| R2-7 | `R2-7 a successful prior occurrence cannot skip the next overdue minute` | No incident at 12:07:30 after a 12:01 success/12:02 miss → one incident, still one opening across subsequent misses. Advance/check each overdue occurrence from the old deadline instead of skipping to now. |
+| R2-8 | `R2-8 a child swap during readiness preserves registered incidents and deadlines` | Swap falsely resolves readiness → starting/unknown snapshot preserves open incident/check/deadline; actual registry removal resolves it. |
+| R2-10 | `R2-10 backup setup, interval changes and removal apply on the next probe sweep` | Backup setup unseen until restart → next sweep sees setup and current interval/removal. Read backup config per sweep as the backup scheduler does. |
+
+Reference and author guide describe the corrected behavior. Existing immutable
+payloads retain their original urgency when upgrading; rewriting a previously
+attempted payload would violate receiver idempotency. Historical job transitions
+already lost before this change have no pending marker to replay. New markers
+are protected from retention and replayed in event order.
+
+Focused M2/evidence command:
+
+```sh
+export TMPDIR=$(mktemp -d /dev/shm/bedrock-test-XXXX)
+bun test packages/bedrock/src/daemon/alerts packages/bedrock/test/alerts-local.test.ts packages/bedrock/test/alerts-daemon.test.ts packages/bedrock/src/runtime/readiness.test.ts packages/bedrock/src/db/readable.test.ts packages/bedrock/src/jobs/events.test.ts packages/bedrock/src/cli/alerts.test.ts --timeout 30000
+bun packages/bedrock/test/probe-benchmark.ts
+```
+
+Focused result: **29 pass / 0 fail**, 177 assertions, 9 files, 1.475 s
+(`/dev/shm/bedrock-r2-m2-evidence.log`). The real-daemon scenario again verifies
+four opening/four resolution rows with eight unique transition keys, no pages
+for idle/single-probe/ordinary-job noise, child inhibition beneath a tunnel
+outage with unrelated job/backup delivery eligible, and immutable retries across
+daemon restart. At night critical pages submit immediately after grouping;
+non-critical tests still wait until 07:30 Brussels.
+
+Probe benchmark result (`/dev/shm/bedrock-r2-probe.json`):
+
+```json
+{"pebbles":24,"concurrency":2,"cycles":100,"probes":2400,"elapsed_ms":179.33852899999988,"parent_cpu_ms":91.256,"children_cpu_ms_at_100Hz":310,"parent_rss_before":45965312,"parent_rss_after":53043200,"worker_rss_delta":9281536,"evaluator_100_cycles_ms":326.30174599999987,"evaluator_100_cycles_cpu_ms":100.104,"rss_with_alerts":68583424}
+```
+
+About **5.01 ms CPU/sweep** including evaluation; warm IPC wall 1.79 ms/sweep,
+evaluation wall 3.26 ms/sweep, Worker RSS delta 8.85 MiB. The earlier recorded M2
+run above measured 8.94 ms CPU/sweep and 8.48 MiB Worker RSS. No observed timing
+regression; these are noisy host measurements under different load, not a
+controlled speed comparison. The benchmark asserts probes do not reset activity.
+No full-filesystem, pinned-reader WAL, cold-HDD or Windows validation was run.
+
+Required verification on the final runtime source:
+
+```sh
+export TMPDIR=$(mktemp -d /dev/shm/bedrock-test-XXXX)
+bun install && bun run typecheck && bun test --timeout 30000
+```
+
+Install: checked 120 installs across 190 packages, no changes, exit 0.
+Typecheck: exit 0. Full suite: **614 pass / 5 skip / 2 fail**, 6,313 assertions,
+621 tests across 161 files, 261.85 s (`/dev/shm/bedrock-r2-full.log`). The test
+command exits 1 solely for the two explicitly permitted pre-existing failures:
+
+- `real daemon keeps an unconfigured application burst alive for a paused consumer`
+- `real daemon closes application sockets only when their configured output bound is exceeded`
+
+`standalone react installs, typechecks and deploys daemon-owned packages` passed
+in 11.82 s at the requested timeout; no isolated rerun was needed. The large job
+reconciliation regression passed in the full suite at **177.14 ms**. All nine R2
+regressions passed. `git diff --check` passed; WORKLOG.md and
+`src/runtime/web-static-build.ts` remain untouched. No push.

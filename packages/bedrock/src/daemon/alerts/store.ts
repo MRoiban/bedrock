@@ -14,8 +14,13 @@ export class AlertStore {
       CREATE TABLE IF NOT EXISTS jobs(pebble TEXT, name TEXT, cron TEXT, release TEXT, due INTEGER, PRIMARY KEY(pebble,name));
       CREATE TABLE IF NOT EXISTS runs(id INTEGER PRIMARY KEY, pebble TEXT, job TEXT, run TEXT, state TEXT, at INTEGER, scheduled INTEGER);
       CREATE INDEX IF NOT EXISTS run_history ON runs(pebble,at);
+      CREATE INDEX IF NOT EXISTS run_terminal ON runs(run,state);
+      CREATE INDEX IF NOT EXISTS run_occurrence ON runs(pebble,job,scheduled,state);
+      CREATE INDEX IF NOT EXISTS incident_delivery ON outbox(incident,state);
       CREATE TABLE IF NOT EXISTS checks(name TEXT PRIMARY KEY, failures INTEGER, successes INTEGER, unhealthy INTEGER, observed INTEGER, open INTEGER);
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);`);
+    if (!db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().some(column => column.name === "pending")) db.exec("ALTER TABLE runs ADD COLUMN pending INTEGER NOT NULL DEFAULT 0");
+    db.exec("CREATE INDEX IF NOT EXISTS run_pending ON runs(id) WHERE pending=1");
   }
   open() { return this.db.query<Incident, []>("SELECT * FROM incidents WHERE resolved IS NULL").all(); }
   condition(pebble: string, rule: string, bad: boolean, job = "", page = true) {
@@ -39,7 +44,7 @@ export class AlertStore {
     if (pending >= 1000) throw new BedrockError("ALERT_OUTBOX_FULL", "Alert outbox reached 1,000 pending transitions.", "Repair webhook delivery and inspect bedrock alerts; incident state is retained on the next evaluation.");
     const email = transition === "digest";
     const escalated = transition === "escalated" || transition.startsWith("reminder:");
-    const payload = { to: ["me"], subject: `Bedrock ${transition}: ${incident?.rule ?? "digest"}`, text: text?.slice(0, 24000) ?? `${incident?.fingerprint}\nObserved since ${new Date(incident!.opened).toISOString()}. Run bedrock alerts --json and bedrock doctor --json.`, urgency: email ? "low" : "normal", channels: email ? ["email"] : escalated ? ["ntfy", "email"] : ["poke"], idempotency_key: id, metadata: { incident_id: incident?.id ?? null, rule: incident?.rule ?? transition, target: incident?.pebble ?? "", fingerprint: incident?.fingerprint ?? null } };
+    const payload = { to: ["me"], subject: `Bedrock ${transition}: ${incident?.rule ?? "digest"}`, text: text?.slice(0, 24000) ?? `${incident?.fingerprint}\nObserved since ${new Date(incident!.opened).toISOString()}. Run bedrock alerts --json and bedrock doctor --json.`, urgency: email ? "low" : incident?.page ? "high" : "normal", channels: email ? ["email"] : escalated ? ["ntfy", "email"] : ["poke"], idempotency_key: id, metadata: { incident_id: incident?.id ?? null, rule: incident?.rule ?? transition, target: incident?.pebble ?? "", fingerprint: incident?.fingerprint ?? null } };
     this.db.query("INSERT INTO outbox(id,incident,transition,payload,created,due) VALUES(?,?,?,?,?,?)").run(id, incident?.id ?? null, transition, JSON.stringify(payload), this.clock(), this.clock() + (transition === "test" ? 0 : 30000));
     if (incident?.rule === "readiness" && this.open().some(i => i.rule === "tunnel")) this.db.query("UPDATE outbox SET error='INHIBITED' WHERE id=?").run(id);
     return id;
@@ -53,13 +58,25 @@ export class AlertStore {
   view() {
     return { incidents: this.db.query("SELECT * FROM incidents ORDER BY resolved IS NULL DESC, opened DESC LIMIT 1000").all(), silences: this.db.query("SELECT * FROM silences WHERE until>?").all(this.clock()), outbox: this.db.query("SELECT id,incident,transition,created,due,attempts,state,error FROM outbox ORDER BY state='pending' DESC, created DESC LIMIT 1000").all(), checks: this.db.query("SELECT * FROM checks").all(), pending: this.db.query("SELECT count(*) count, min(created) oldest FROM outbox WHERE state='pending'").get() };
   }
-  pending() { return this.db.query<Outbox, [number]>("SELECT * FROM outbox WHERE state='pending' AND due<=? ORDER BY created LIMIT 1000").all(this.clock()); }
+  pending() { return this.db.query<Outbox, [number]>("SELECT * FROM outbox WHERE state='pending' AND due<=? ORDER BY rowid LIMIT 1000").all(this.clock()); }
   prune() {
     const before = this.clock() - 365 * 86400000;
     this.db.query("DELETE FROM outbox WHERE state!='pending' AND created<?").run(before);
     this.db.query("DELETE FROM incidents WHERE resolved<? AND id NOT IN (SELECT incident FROM outbox WHERE incident IS NOT NULL)").run(before);
-    this.db.query("DELETE FROM runs WHERE at<? OR id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT 100000)").run(this.clock() - 30 * 86400000);
+    this.db.query("DELETE FROM runs WHERE pending=0 AND (at<? OR id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT 100000))").run(this.clock() - 30 * 86400000);
     this.db.query("DELETE FROM silences WHERE until<=?").run(this.clock());
+    const pages = (pragma: string) => (this.db.query(`PRAGMA ${pragma}`).get() as Record<string, number>)[pragma]!;
+    const limit = pages("max_page_count"), reserve = Math.min(1024, Math.floor(limit / 4));
+    const pressure = () => pages("page_count") - pages("freelist_count") > limit - reserve;
+    // Reuse history pages before a write can hit SQLITE_FULL; pending evidence is never reclaimed.
+    for (const sql of [
+      "DELETE FROM outbox WHERE rowid IN (SELECT rowid FROM outbox WHERE state!='pending' ORDER BY rowid LIMIT 256)",
+      "DELETE FROM incidents WHERE rowid IN (SELECT rowid FROM incidents WHERE resolved IS NOT NULL AND id NOT IN (SELECT incident FROM outbox WHERE incident IS NOT NULL) LIMIT 256)",
+      "DELETE FROM runs WHERE id IN (SELECT id FROM runs WHERE pending=0 ORDER BY id LIMIT 1000)",
+    ]) {
+      while (pressure() && this.db.query(sql).run().changes) {}
+      if (!pressure()) break;
+    }
   }
   close() { this.db.close(); }
 }
