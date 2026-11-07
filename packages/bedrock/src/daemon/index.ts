@@ -200,9 +200,15 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       const child = await supervisor.launch(options.devPebble.name, options.devPebble.dir, true);
       supervisor.activate(options.devPebble.name, child);
       await supervisor.startExclusive(options.devPebble.name, child);
-    } else await supervisor.restore();
+    } else {
+      // Serve the public hostname as soon as the daemon listens: requests for pebbles still restoring
+      // wait on their own health gates, while waiting for restore() would take every site offline
+      // for as long as the slowest pebble needs to start (minutes on a busy disk).
+      tunnel?.start();
+      await supervisor.restore();
+    }
     await atomicWrite(join(home, "daemon.json"), JSON.stringify({ port: server.port, domain: config.domain }) + "\n");
-    tunnel?.start();
+    if (options.devPebble) tunnel?.start();
     if (!dev) backups.start();
     if (!options.alertsClockForTests) alerts.start(db, supervisor, config, () => config.cloudflare ? tunnel?.status().running ?? false : null);
     let stopping: Promise<void> | undefined;
