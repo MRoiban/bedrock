@@ -53,16 +53,23 @@ export class JobDeadlines {
   }
   tick(pebbles: PebbleCheck[]) {
     const db = this.store.db, now = this.store.clock();
-    for (const job of db.query<Deadline, []>("SELECT * FROM jobs").all()) {
+    let remaining = 256;
+    const evidence = db.query<{ scheduled: number }, [string, string, number, number]>("SELECT scheduled FROM runs WHERE pebble=? AND job=? AND scheduled>=? AND scheduled<? AND state IN ('started','succeeded') ORDER BY scheduled LIMIT 1");
+    for (const job of db.query<Deadline, []>("SELECT * FROM jobs ORDER BY due").all()) {
       const pebble = pebbles.find(p => p.name === job.pebble);
       if (!pebble || ["idle", "stopped"].includes(pebble.status)) continue;
       const overdue = db.query("SELECT 1 FROM runs r WHERE pebble=? AND job=? AND state='started' AND at<? AND NOT EXISTS(SELECT 1 FROM runs x WHERE x.run=r.run AND x.state IN ('succeeded','failed','interrupted')) LIMIT 1").get(job.pebble, job.name, now - 600000);
       if (overdue) this.store.condition(job.pebble, "critical-job", true, job.name, this.isCritical(job.pebble, job.name));
       let due = job.due, missed = false;
-      while (now > due + 300000) {
-        const started = db.query("SELECT 1 FROM runs WHERE pebble=? AND job=? AND scheduled=? AND state IN ('started','succeeded') LIMIT 1").get(job.pebble, job.name, due);
-        if (!started) missed = true;
-        due = nextRun(job.cron, due);
+      while (now > due + 300000 && remaining > 0) {
+        remaining--;
+        const next = evidence.get(job.pebble, job.name, due, now - 300000);
+        if (next?.scheduled === due) due = nextRun(job.cron, due);
+        else {
+          // The indexed range proves every occurrence before the next evidence is missing.
+          missed = true;
+          due = nextRun(job.cron, (next?.scheduled ?? now - 300000) - 1);
+        }
       }
       if (missed) this.store.condition(job.pebble, "critical-job", true, job.name, this.isCritical(job.pebble, job.name));
       if (due !== job.due) db.query("UPDATE jobs SET due=? WHERE pebble=? AND name=?").run(due, job.pebble, job.name);

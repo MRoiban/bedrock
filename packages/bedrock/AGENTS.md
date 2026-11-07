@@ -1573,8 +1573,12 @@ Jobs emit scheduled/started/succeeded/failed/skipped/interrupted events; the
 daemon keeps next expected occurrences even if the child scheduler dies. Five
 minutes start grace, ten minutes runtime budget (including queue wait), no
 killing/catch-up. Each overdue occurrence is checked from the previous deadline
-before advancing, so an earlier success cannot hide a subsequent miss. A restart
-gap is one incident per job; unfinished starts become interrupted. History is newest 1,000 events via `bedrock jobs history <pebble>
+before advancing, so an earlier success cannot hide a subsequent miss. Each sweep
+commits at most 256 evidence/gap steps globally, oldest deadline first. Indexed
+range lookups identify missing spans without walking every minute of an empty
+backlog; dense evidence continues in later sweeps/restarts with persisted cursors.
+No old window is discarded. A restart gap is one incident per job; unfinished
+starts become interrupted. History is newest 1,000 events via `bedrock jobs history <pebble>
 --json`, with 30 days/100,000 events global retention. Success means commit or
 detached handler completion, not exactly-once external side effects.
 
@@ -1614,8 +1618,11 @@ sweep. Terminal job events retain a durable pending-evaluation marker until
 incident/outbox evaluation commits, retried in order across saturation/restart.
 Retention runs before admission and independently during delivery; byte pressure
 reclaims accepted/suppressed history, unreferenced resolved incidents and evaluated
-job history to reserve 4 MiB for pending work. Pending transitions/evaluations are
-never evicted. Histories expire after at most 365 days; alert state/credentials
+job history to reserve 4 MiB for pending work. Pending transitions/evaluations,
+unfinished starts, and events scheduled at or beyond the current job deadline
+cursor are never evicted by retention or byte pressure. Active evidence may
+outlive history age/count limits until its consumers advance. Disposable histories
+expire after at most 365 days; alert state/credentials
 are excluded from existing daemon DB backups. Global alerts/silences/outbox and job history APIs
 require unscoped creator tokens; scoped status only reveals matching readiness.
 

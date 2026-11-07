@@ -1422,6 +1422,12 @@ job. On child death or daemon restart, unfinished starts become interrupted.
 Missed occurrences during a restart/gap become one episode per job; no catch-up.
 Deadlines advance from the previous expected occurrence, checking each overdue
 occurrence before advancing; a successful earlier run cannot hide a later miss.
+Each sweep handles at most 256 evidence/gap steps globally, oldest cursor first,
+and commits the advanced cursors with incident state. Indexed range lookups check
+spans with no start/success evidence as missing without walking every minute;
+even a long empty backlog therefore needs only one step per job. Dense evidence
+continues over subsequent sweeps/restarts, keeping one incident for the gap;
+no old backlog window is discarded and no executions are replayed.
 Intentionally idle/stopped pebbles have no expected-run pages. Removed jobs and
 pebbles resolve their obsolete incidents on the next sweep.
 
@@ -1533,14 +1539,17 @@ a full outbox rejects/rolls back a new transition (the condition is evaluated
 again next sweep), never evicts pending delivery. Terminal job events persist a
 pending-evaluation marker with their history row; the marker clears only when
 incident/outbox evaluation commits, and is retried in event order after saturation
-or restart. Retention excludes these pending events. SQLite has a 64 MiB page
+or restart. Retention excludes these pending events, unfinished starts, and all
+events whose scheduled occurrence is at or beyond their job's current deadline
+cursor. The same protection applies under byte pressure; this evidence can
+outlive the history age/count limits until its consumers advance. SQLite has a 64 MiB page
 budget;
 WAL autocheckpoints every 256 pages. Retention runs before evaluation/job-event
 admission and independently during delivery, so a failed evaluation cannot block
 cleanup. Under byte pressure, accepted/suppressed outbox history, unreferenced
 resolved incidents, then evaluated job history are reclaimed early to reserve
 4 MiB for pending work (one quarter of the page budget if smaller). Pending
-transitions/evaluations are never evicted. These are bounded diagnostic histories,
+transitions/evaluations and active deadline/run evidence are never evicted. These are bounded diagnostic histories,
 not an audit archive. Alert state/credentials are not included in existing daemon DB
 backups; retain BEDROCK_HOME for outbox durability.
 

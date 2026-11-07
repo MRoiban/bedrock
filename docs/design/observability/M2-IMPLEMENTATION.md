@@ -267,3 +267,155 @@ in 11.82 s at the requested timeout; no isolated rerun was needed. The large job
 reconciliation regression passed in the full suite at **177.14 ms**. All nine R2
 regressions passed. `git diff --check` passed; WORKLOG.md and
 `src/runtime/web-static-build.ts` remain untouched. No push.
+
+## R3 deadline evidence and bounded catch-up
+
+Base: `f880768`, branch `t3/alerts-pressure-deadline-catchup`. Scope is R3-5 and
+R3-6 only; no dependencies, pebble-facing concepts, WORKLOG edits, subagents,
+errors-module changes, deployed calls or pushes.
+
+- **R3-5:** both age/count retention and byte-pressure reclaim now require that
+  all consumers have finished with a run row. Pending terminal evaluation,
+  occurrences at or beyond the persisted deadline cursor, and unfinished starts
+  remain protected. Once the cursor/terminal consumer advances, ordinary history
+  becomes disposable again. R2-6 still reclaims accepted history before admitting
+  a pending transition; the pressure fixture fills SQLite's reduced 256-page cap,
+  not the filesystem.
+- **R3-6:** a sweep performs at most 256 evidence/gap steps globally, oldest
+  deadline first. The occurrence index finds the next start/success; its absence
+  before that point proves the entire intervening span missing. Empty 90-day
+  backlogs take one lookup per job instead of millions of synchronous minute
+  checks. Dense evidence takes multiple sweeps, with cursor changes committed
+  atomically with incident state. The same open incident coalesces misses across
+  chunks/restart. No old window is discarded, no job executions are replayed, and
+  an earlier success still cannot hide a subsequent miss (R2-7).
+
+Fail-before command, with the new tests present and the original runtime intact:
+
+```sh
+export TMPDIR=$(mktemp -d /dev/shm/bedrock-test-XXXX)
+bun install
+bun test packages/bedrock/src/daemon/alerts/deadlines.test.ts packages/bedrock/test/alerts-catchup.test.ts --timeout 30000
+```
+
+Before: **0 pass / 4 fail**, 5 assertions, 2 files, 6.46 s
+(`/dev/shm/bedrock-r3-before.log`). After the fixes: **4 pass / 0 fail**,
+33 assertions, 2 files, 2.69 s. Each test failed before and passed after:
+
+| Regression test | Before → after |
+| --- | --- |
+| `R3-5 pressure reclaim preserves unchecked successes and unfinished runs until their consumers advance` | Reclaim deletes the already-evaluated success → success and manual unfinished start survive pressure; the deadline sweep emits no false page, later consumed success expires, unfinished start remains available for interruption. |
+| `R3-5 time retention preserves evidence at and beyond the deadline cursor` | 90-day-old unchecked successes both deleted → both retained for deadline evaluation. |
+| `R3-6 dense evidence catch-up commits bounded cursor chunks and one gap incident across restart` | One synchronous sweep consumes the whole backlog → intermediate cursor commits/reopens correctly, 699 success rows and missing spans finish across chunks with one opening/incident. |
+| `R3-6 real Alerts Worker catches up 24 minutely jobs after 90 days below the watchdog` | Worker terminated with `ALERTS_UNAVAILABLE` by the 5 s watchdog (test wall 5.20 s) → all 24 cursors caught up in sweep one, 24 openings total, no replay; restart and two further sweeps retain exactly those incidents. |
+
+The final focused M2 command was:
+
+```sh
+export TMPDIR=$(mktemp -d /dev/shm/bedrock-test-XXXX)
+bun test packages/bedrock/src/daemon/alerts packages/bedrock/test/alerts-catchup.test.ts packages/bedrock/test/alerts-local.test.ts packages/bedrock/test/alerts-daemon.test.ts packages/bedrock/src/runtime/readiness.test.ts packages/bedrock/src/db/readable.test.ts packages/bedrock/src/jobs/events.test.ts packages/bedrock/src/cli/alerts.test.ts --timeout 30000
+```
+
+**33 pass / 0 fail**, 210 assertions, 11 files, 8.29 s
+(`/dev/shm/bedrock-r3-m2-evidence.log`). The real-daemon evidence again verifies
+four opening/four resolution rows and eight unique keys, no noise pages,
+readiness inhibition beneath a tunnel outage with unrelated data alerts eligible,
+and immutable retries accepted across restart. All R2 regressions pass, including
+byte-pressure reclamation and successive overdue-minute checks. The 90-day
+Worker sweeps measured **80.34 ms / 37.91 ms / 13.33 ms**; catch-up completed in
+the first sweep, the latter two check stable state/restart, each well below 5 s.
+
+An initial focused run was 32 pass / 1 fail: the R2-3 99,999-row reconciliation
+took 2,474.56 ms. Evaluating the new consumer-protection predicate only after the
+age/count eligibility check removed the extra per-row lookups for recent history;
+R2-3 then passed alone at 758.07 ms and in the final focused run at 863.20 ms.
+
+Probe benchmark (24 real children, 100 sweeps/2,400 IPC probes, 100 SQLite
+snapshot evaluations), run with `bun packages/bedrock/test/probe-benchmark.ts`:
+
+```json
+{"pebbles":24,"concurrency":2,"cycles":100,"probes":2400,"elapsed_ms":1763.686796,"parent_cpu_ms":212.097,"children_cpu_ms_at_100Hz":850,"parent_rss_before":43741184,"parent_rss_after":48009216,"worker_rss_delta":8228864,"evaluator_100_cycles_ms":672.1806640000013,"evaluator_100_cycles_cpu_ms":235.505,"rss_with_alerts":66461696}
+```
+
+The inactivity-reset assertion passed. This run overlapped the full suite and
+substantial unrelated host load: 17.64 ms IPC wall/sweep, 6.72 ms evaluation
+wall/sweep, 12.98 ms total CPU/sweep, 7.85 MiB Worker RSS delta. These raw numbers
+are not a controlled speed comparison with the R2 run above.
+
+Required verification command:
+
+```sh
+export TMPDIR=$(mktemp -d /dev/shm/bedrock-test-XXXX)
+bun install && bun run typecheck && bun test --timeout 30000
+```
+
+Install checked 120 installs across 190 packages, no changes, exit 0; typecheck
+passed. First full run: **616 pass / 5 skip / 4 fail**, 6,333 assertions,
+625 tests across 163 files, 542.90 s (`/dev/shm/bedrock-r3-full.log`). Failures
+were the two permitted pre-existing socket tests, the 90 MB SDK upload timing
+out at 30 s, and the daemon crash/restart test seeing a transient not-running
+state after its polling predicate returned. The new R3 tests all passed in this
+run; 90-day sweeps were 50.23 / 15.44 / 20.07 ms and R2-3 was 431.26 ms.
+
+Isolated rerun:
+
+```sh
+export TMPDIR=$(mktemp -d /dev/shm/bedrock-test-XXXX)
+bun test packages/bedrock/test/storage.test.ts packages/bedrock/test/daemon.test.ts -t 'SDK chooses chunking above 90 MB|daemon routes, strips headers' --timeout 90000
+```
+
+**2 pass / 0 fail**, 12 filtered, 51 assertions, 26.51 s
+(`/dev/shm/bedrock-r3-isolated.log`). SDK upload: 20.24 s; daemon lifecycle:
+5.83 s. Standalone React had already passed the full run in 20.17 s; the React
+starter passed in 21.46 s. Neither needed an isolated rerun.
+
+The standard probe benchmark was also rerun after the full suite ended
+(`/dev/shm/bedrock-r3-probe-final.json`):
+
+```json
+{"pebbles":24,"concurrency":2,"cycles":100,"probes":2400,"elapsed_ms":1570.6029950000002,"parent_cpu_ms":222.095,"children_cpu_ms_at_100Hz":860,"parent_rss_before":44576768,"parent_rss_after":49209344,"worker_rss_delta":7880704,"evaluator_100_cycles_ms":429.8096089999999,"evaluator_100_cycles_cpu_ms":229.857,"rss_with_alerts":68177920}
+```
+
+That is 15.71 ms IPC wall/sweep, 4.30 ms evaluation wall/sweep, 13.12 ms total
+CPU/sweep and 7.52 MiB Worker RSS delta; inactivity assertions passed again.
+For a same-host check, a disposable source copy with `jobs.ts`/`store.ts` restored
+from `f880768` ran the identical benchmark (same checkout-disk home location,
+no concurrent full suite). Its results were 10.36 ms IPC wall/sweep, 3.54 ms
+evaluation wall/sweep, 11.72 ms CPU/sweep, 8.69 MiB Worker RSS
+(`/dev/shm/bedrock-r3-probe-baseline.json`). Baseline setup initially failed to
+resolve drizzle-orm with root node_modules; using the package's node_modules
+resolved it. These single runs vary under unrelated host load; they establish
+functional probe invariants and similar cost, not a controlled speed guarantee.
+
+The exact required install/typecheck/full-suite command above was repeated:
+install again checked 120 installs across 190 packages with no changes;
+typecheck passed. Final full run: **617 pass / 5 skip / 3 fail**, 6,349 assertions,
+625 tests across 163 files, 428.69 s (`/dev/shm/bedrock-r3-final-full.log`).
+The two permitted socket failures remained; the only additional failure was
+`eight clock-driven days of sparse traffic keep seven-day minutes and the status tier`
+exceeding the command's 30 s timeout (36.21 s). The SDK upload (12.04 s), daemon
+lifecycle (2.74 s) and standalone React (26.21 s) all passed in this repeated full
+run. The new R3 regressions and all R2 regressions passed; R2-3 was 607.29 ms.
+Final 90-day Worker sweeps: **15.61 ms / 8.94 ms / 6.59 ms**, all cursors caught
+up after sweep one, stable through restart and the two subsequent sweeps.
+
+The telemetry stress timeout was rerun alone:
+
+```sh
+export TMPDIR=$(mktemp -d /dev/shm/bedrock-test-XXXX)
+bun test packages/bedrock/src/daemon/telemetry/store.test.ts -t 'eight clock-driven days' --timeout 90000
+```
+
+**1 pass / 0 fail**, 11 filtered, 1,203 assertions, 26.91 s (test 26.47 s),
+`/dev/shm/bedrock-r3-telemetry-isolated.log`. Neither full-suite invocation exits
+zero; all failures beyond the two permitted socket cases passed their isolated
+reruns. No unrelated runtime/tests were changed to suppress them.
+
+Limits: already-reclaimed evidence from an older version cannot be recovered.
+Protected evidence can exceed diagnostic history age/count targets until its
+consumers advance; the 64 MiB SQLite cap still applies and writes may reject
+rather than delete active evidence. The 256-step limit bounds deadline catch-up
+work, not wall time on arbitrary storage/cron inputs; watchdog margin is measured
+for the requested 24-job/90-day scenario. No full-filesystem, pinned-reader,
+cold-HDD or Windows exercise was run. Reference and author guide are updated;
+`git diff --check` passes, WORKLOG.md and the errors module are untouched.

@@ -2,6 +2,10 @@ import { Database } from "bun:sqlite";
 import { BedrockError } from "../../error";
 import { fingerprint, type Incident, type Outbox } from "./model";
 
+const disposableRun = `pending=0
+  AND NOT EXISTS(SELECT 1 FROM jobs WHERE jobs.pebble=runs.pebble AND jobs.name=runs.job AND runs.scheduled>=jobs.due)
+  AND NOT (state='started' AND NOT EXISTS(SELECT 1 FROM runs terminal WHERE terminal.run=runs.run AND terminal.state IN ('succeeded','failed','interrupted')))`;
+
 export class AlertStore {
   readonly db: Database;
   constructor(path: string, readonly host: string, readonly clock = Date.now) {
@@ -63,16 +67,16 @@ export class AlertStore {
     const before = this.clock() - 365 * 86400000;
     this.db.query("DELETE FROM outbox WHERE state!='pending' AND created<?").run(before);
     this.db.query("DELETE FROM incidents WHERE resolved<? AND id NOT IN (SELECT incident FROM outbox WHERE incident IS NOT NULL)").run(before);
-    this.db.query("DELETE FROM runs WHERE pending=0 AND (at<? OR id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT 100000))").run(this.clock() - 30 * 86400000);
+    this.db.query(`DELETE FROM runs WHERE (at<? OR id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT 100000)) AND ${disposableRun}`).run(this.clock() - 30 * 86400000);
     this.db.query("DELETE FROM silences WHERE until<=?").run(this.clock());
     const pages = (pragma: string) => (this.db.query(`PRAGMA ${pragma}`).get() as Record<string, number>)[pragma]!;
     const limit = pages("max_page_count"), reserve = Math.min(1024, Math.floor(limit / 4));
     const pressure = () => pages("page_count") - pages("freelist_count") > limit - reserve;
-    // Reuse history pages before a write can hit SQLITE_FULL; pending evidence is never reclaimed.
+    // Evaluation, deadline and unfinished-run consumers must all finish before evidence is disposable.
     for (const sql of [
       "DELETE FROM outbox WHERE rowid IN (SELECT rowid FROM outbox WHERE state!='pending' ORDER BY rowid LIMIT 256)",
       "DELETE FROM incidents WHERE rowid IN (SELECT rowid FROM incidents WHERE resolved IS NOT NULL AND id NOT IN (SELECT incident FROM outbox WHERE incident IS NOT NULL) LIMIT 256)",
-      "DELETE FROM runs WHERE id IN (SELECT id FROM runs WHERE pending=0 ORDER BY id LIMIT 1000)",
+      `DELETE FROM runs WHERE id IN (SELECT id FROM runs WHERE ${disposableRun} ORDER BY id LIMIT 1000)`,
     ]) {
       while (pressure() && this.db.query(sql).run().changes) {}
       if (!pressure()) break;
