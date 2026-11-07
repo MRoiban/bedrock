@@ -96,6 +96,9 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             if (request.method === "POST" && url.pathname === "/sign-out") return signOut(auth.logout(request, origin));
             if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
             if (url.pathname === "/cli-login") return await cliLogin(request, origin);
+            // Lifecycle calls wait for health gates (up to 15 s on a slow disk), deploys and logs follow longer;
+            // Bun's 10 s idle default would reset the CLI's connection mid-operation.
+            if (url.pathname.startsWith("/api/")) server.timeout(request, 0);
             return await api(request);
           }
           if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
