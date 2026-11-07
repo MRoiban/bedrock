@@ -1286,8 +1286,8 @@ These commands accept --url/--token; list accepts --cursor. API equivalents are
 GET `/api/pebbles/:name/errors[/:issue]?cursor=<number>` and POST
 `/api/pebbles/:name/errors/:issue/resolve|ignore`; merge uses
 `/api/pebbles/:name/errors/:issue/merge?confirm=true&target=<id>`.
-Reads require scoped **logs**; changes require **lifecycle**, both restricted by
-pebble globs. Detail and changes return `NOT_FOUND` when the issue does not
+Reads require scoped **logs** or **monitor**; changes require **lifecycle**
+(or **monitor** for resolve/ignore), all restricted by pebble globs. Detail and changes return `NOT_FOUND` when the issue does not
 belong to that pebble; merge requires both issues in the same pebble.
 Browser collection grants no issue-read permission. Resolve and
 ignore are idempotent; merge keeps fingerprint aliases and daily counts and
@@ -1394,10 +1394,26 @@ and certificate settings, matched case-insensitively. Supply credentials through
 Restart checks replacement health before retiring the old child; a failed restart leaves the secret update saved.
 
 POST `/api/tokens` optionally accepts `{ name, scope: { pebbles: ["upty", "bot-*"],
-actions: ["deploy", "lifecycle", "logs", "secrets", "status", "service-tokens"] } }`.
-Scoped tokens cannot manage tokens, self-update, backups, jobs, host/config, or
+actions: ["deploy", "lifecycle", "logs", "secrets", "status", "service-tokens", "monitor"] } }`.
+Scoped tokens cannot manage tokens, self-update, backups, job control, host/config, or
 unmatched pebbles (403 `FORBIDDEN`). Status/list endpoints filter matching pebbles.
 `token ls` shows scope; unscoped tokens retain full access.
+
+Use `bedrock token create --name monitor --pebbles "bot-*" --actions monitor --json`
+for monitoring only. `monitor` permits GET status/list, matching pebble metrics,
+logs (including follow), errors/issue detail, and job history;
+POST alert silence/test and matching issue resolve/ignore. It excludes error
+merge, error transition history, events/resources/lifecycle history, job control, deploy/lifecycle changes,
+secrets, tokens, service tokens, backups, self-update and sessions. Actions combine
+additively. Fleet status/list filter matching pebbles and omit tunnel/session
+presence just like `status`. Alert reads expose only matching pebble incidents,
+their silences and matching checks; global incidents and outbox/pending metadata
+are omitted even for `*`. Silence requires an exact visible incident fingerprint
+(403 otherwise); there is no removal endpoint. Alert test sends a global test
+notification without disclosing global monitoring data.
+Status rows include read-only `backup: { last_success_at, interval_ms }` (Unix ms
+of the last successful backup, null if unknown; configured interval ms, null if
+unconfigured), without granting backup operations or revealing other backup state.
 
 POST `/api/pebbles/:name/service-tokens` with `{ name, permissions: string[] }`
 returns `{ ok: true, value: { id, token } }`; DELETE the same path plus `/:id`
@@ -1623,8 +1639,9 @@ unfinished starts, and events scheduled at or beyond the current job deadline
 cursor are never evicted by retention or byte pressure. Active evidence may
 outlive history age/count limits until its consumers advance. Disposable histories
 expire after at most 365 days; alert state/credentials
-are excluded from existing daemon DB backups. Global alerts/silences/outbox and job history APIs
-require unscoped creator tokens; scoped status only reveals matching readiness.
+are excluded from existing daemon DB backups. Alert and job history APIs accept unscoped creator tokens or scoped **monitor**
+with the filtering above. Global outbox metadata requires an unscoped token;
+scoped status only reveals matching readiness.
 
 Unauthenticated https://bedrock.<domain>/healthz returns exactly 200 and
 bedrock-health-v1 plus newline, or 503, fixed text <32 bytes, no-store, no names.

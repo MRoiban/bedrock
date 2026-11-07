@@ -32,7 +32,7 @@ const commandHelp: Record<string, [usage: string, description: string]> = {
   secrets: ["ls <pebble> | set <pebble> <NAME> | unset <pebble> <NAME>... [--restart] [--url <url>] [--token <token>]", "List secret names or set and remove pebble secrets."],
   "pebble-token": [creatorUsage["pebble-token"], "Create or revoke a creator-owned pebble token; creation prints the secret once."],
   session: [creatorUsage.session, "Create a one-time creator sign-in URL with a fixed expiry."],
-  token: ["create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id> [--url <url>] [--token <token>]", "Create, list, or revoke deploy tokens."],
+  token: ["create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id> [--url <url>] [--token <token>]", "Create, list, or revoke deploy tokens. Actions: deploy,lifecycle,logs,secrets,status,service-tokens,monitor."],
   backup: ["setup --dir <path> | setup --r2-account <id> --r2-bucket <bucket> --r2-access-key-id <key> [--r2-secret-access-key <secret>] | run [pebble] | ls <pebble> | restore <pebble> [--at <ts>] --yes", "Configure backups, create or list snapshots, or restore pebble data."],
   errors: ["<pebble> | show|resolve|ignore|merge <pebble> <issue> [target] [--yes]", "Inspect or change grouped browser/server error issues."],
   metrics: ["<pebble> [--since 1h] [--step 1m|1h|1d] [--cursor <cursor>]", "Read daemon RED rollups and bucket-range percentiles."],

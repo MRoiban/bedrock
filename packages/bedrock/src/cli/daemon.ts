@@ -1,3 +1,4 @@
+import { deployActions, validateTokenScope } from "../daemon/token-scope";
 import { refreshLinuxService } from "../service";
 import { deployWarnings } from "./deploy-warnings";
 import { formatBuild, formatProvenance, gitProvenance } from "../version";
@@ -74,7 +75,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
   const usage: Record<string, string> = {
     daemon: "[--port <port>]", deploy: "[dir] [--no-open]", ls: "", logs: "<name> [-f|--follow] [--search <fts>] [--since 1h] [--cursor <cursor>]",
     start: "<name>", stop: "<name>", restart: "<name>", rollback: "<name> [--force]",
-    rm: "<name> --yes", token: "create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id>", whoami: "", status: "", metrics: "<name> [--since 1h] [--step 1m] [--cursor <cursor>]",
+    rm: "<name> --yes", token: `create [--name <name>] [--pebbles <globs> --actions <${deployActions.join(",")}>] | ls | revoke <id>`, whoami: "", status: "", metrics: "<name> [--since 1h] [--step 1m] [--cursor <cursor>]",
   };
   const hint = `Use bedrock ${command}${usage[command] ? ` ${usage[command]}` : ""}${command === "daemon" ? "" : " [--url <url>] [--token <token>]"} [--json].`;
   const { positionals, flags } = parse(args, hint);
@@ -144,6 +145,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
     if (!name || !["create", "ls", "revoke"].includes(name) || positionals.length !== (name === "revoke" ? 2 : 1)) invalid();
     if (name !== "create" && ["--name", "--pebbles", "--actions"].some(key => flags[key])) invalid();
     if (!!flags["--pebbles"] !== !!flags["--actions"]) invalid();
+    if (flags["--actions"]) validateTokenScope({ pebbles: flags["--pebbles"]!.split(","), actions: flags["--actions"].split(",") });
     const input = { ...(flags["--name"] ? { name: flags["--name"] } : {}), ...(flags["--pebbles"] ? { scope: { pebbles: flags["--pebbles"].split(","), actions: flags["--actions"]!.split(",") } } : {}) };
     const id = positionals[1];
     if (name === "revoke" && !/^[a-f0-9]{64}$/.test(id ?? "")) invalid();

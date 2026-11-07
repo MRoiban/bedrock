@@ -1136,8 +1136,8 @@ These commands accept --url/--token; list accepts --cursor. API equivalents are
 GET `/api/pebbles/:name/errors[/:issue]?cursor=<number>` and POST
 `/api/pebbles/:name/errors/:issue/resolve|ignore`; merge uses
 `/api/pebbles/:name/errors/:issue/merge?confirm=true&target=<id>`.
-Reads require scoped **logs**; changes require **lifecycle**, both restricted by
-pebble globs. Detail and changes return `NOT_FOUND` when the issue does not
+Reads require scoped **logs** or **monitor**; changes require **lifecycle**
+(or **monitor** for resolve/ignore), all restricted by pebble globs. Detail and changes return `NOT_FOUND` when the issue does not
 belong to that pebble; merge requires both issues in the same pebble.
 Browser collection grants no issue-read permission. Resolve and
 ignore are idempotent; merge keeps fingerprint aliases and daily counts and
@@ -1282,7 +1282,8 @@ metric `--step` is `1m|1h|1d`. `--follow` (`-f`) cannot combine with search,
 since or cursor. JSON follow preserves the single JSON string stream and appends coverage/drop metadata when it closes.
 
 Creator-authenticated GET `/api/pebbles/:name/metrics|resources|lifecycle` uses
-scoped deploy action `status`; `/events|logs` uses `logs`. Pebble glob scope
+scoped deploy action `status`; `/events|logs` uses `logs`. `monitor` also grants
+metrics and logs, including follow. Pebble glob scope
 applies to every endpoint. Parameters: `since`, `from`/`to` (epoch ms), `step`,
 `limit`, `cursor`; logs also `q` (FTS5, at most 1,024 characters) and
 `format=json`. Plain `/logs` remains text; `follow=true` streams text.
@@ -1338,9 +1339,34 @@ and `?` (one character), lowercase letters, digits and hyphens only. Actions are
   Status retains daemon version/features/domain needed by deploy clients; it
   omits tunnel information and does not disclose creator session presence.
 - `service-tokens`: create and revoke target pebble tokens.
+- `monitor`: read `/api/status`, `/api/pebbles`, per-pebble `metrics`, `logs`
+  (including follow), `errors` (including issue detail), and
+  `/api/jobs/:pebble/history`; read `/api/alerts`, POST `/api/alerts/silence`
+  and `/api/alerts/test`, and POST error issue `resolve`/`ignore`. Error merge,
+  error transition history, resources/events/lifecycle history, job control, and backup listing are excluded.
+  Per-pebble routes enforce the token's globs. Status/list filter matching pebbles
+  with the same daemon metadata restrictions as `status`. Alerts return only
+  matching pebble incidents, their active silences, and matching checks; host-wide
+  incidents (including tunnel and daemon backup) and global outbox/pending metadata
+  are omitted even with `*`. Silence requires an exact fingerprint from a visible
+  incident; unknown, host-wide and nonmatching fingerprints return 403 `FORBIDDEN`.
+  No silence-removal endpoint exists. Alert test explicitly sends a global test
+  notification; it reveals no global monitoring data.
+
+For example, create a monitoring-only token (actions are additive when combined):
+
+```sh
+bedrock token create --name monitor --pebbles "bot-*" --actions monitor --json
+```
+
+Status pebble rows include read-only `backup: { last_success_at, interval_ms }`:
+last successful local backup time in Unix milliseconds (null when unknown), and
+configured backup interval in milliseconds (null when backups are unconfigured).
+These fields grant no backup operations and expose no other pebble or daemon
+backup state.
 
 Scoped tokens receive 403 `FORBIDDEN` with a repair hint for missing actions,
-unmatched pebbles, token management, self-update, backups, jobs, host/config and
+unmatched pebbles, token management, self-update, backups, job control, host/config and
 all other ungranted endpoints. There is no scoped route granting global admin.
 `GET /api/tokens` / `token ls` return scope as an object or null.
 
@@ -1521,10 +1547,11 @@ missed digests are replayed. Text is bounded to 24,000 characters. Quiet-hour
 email bypass applies to digests; critical escalations also bypass quiet hours.
 
 `GET /api/alerts`, `POST /api/alerts/silence` (`{fingerprint,for:"2h"}`),
-`POST /api/alerts/test`, and `GET /api/jobs/:pebble/history` require an **unscoped
-creator token**, like existing job control and host configuration. Scoped status
-still includes only matching pebbles' readiness; it cannot read global incidents,
-job history, silences or the outbox. Alert APIs use Bedrock envelopes/no-store.
+`POST /api/alerts/test`, and `GET /api/jobs/:pebble/history` accept an unscoped
+creator token or scoped `monitor` action. Scoped results and silence targets are
+restricted as described in [Scoped deploy tokens](#pebble-secrets-and-delegated-administration).
+Job control and host configuration still require an unscoped creator token.
+Alert APIs use Bedrock envelopes/no-store.
 `alerts` returns open/recent incidents, active silences, checks, and outbox
 metadata/counts, not payloads or credentials; history returns newest 1,000 events.
 
