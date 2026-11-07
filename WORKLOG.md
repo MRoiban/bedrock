@@ -8,7 +8,7 @@ Waiting on owner: boot-herd grace proposal. Follow-ups (pre-existing, outside M5
 Don't: Use Opus sub-agents. Make anything else public without asking. Print or read secret values (pipe them). Touch `$HOME/.bedrock` in tests.
 
 ## Gotchas
-- Never `git add -A` here: untracked `reports/` and `research_notes/` at the repo root get committed — happened in the M4b merge, 2026-11-07.
+- Never `git add -A` here: untracked `reports/` and `research_notes/` at the repo root get committed — happened in the M4b merge, 2026-11-07. research_notes/ slipped through anyway and was stripped from unpushed history with filter-branch on 2026-11-08 (backup ref backup/observability-pre-filter); filter-branch checkout deletes such files from disk — restore them from the backup ref.
 - "standalone react installs, typechecks and deploys…" can time out at 30 s under full-suite load; it passes alone with `--timeout 90000` — 2026-11-07.
 - Run tests with `TMPDIR` on `/dev/shm`: `/tmp` is a small tmpfs and causes bogus ENOSPC — repeated test failures, 2026-11-02.
 - Two socket backpressure tests fail on `main` regardless of changes ("real daemon keeps an unconfigured application burst alive…", "real daemon closes application sockets only when…") — reproduced on several branches.
