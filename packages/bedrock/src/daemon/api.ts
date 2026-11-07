@@ -1,4 +1,5 @@
 import { alertsApi } from "./alerts/api";
+import { errorApi } from "./errors/api";
 import { telemetryQuery, telemetryStatus } from "./telemetry/api";
 import { tokenCreator } from "./creator";
 import type { SessionLinks } from "../auth/session-links";
@@ -67,6 +68,12 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
       const body = request.method === "POST" ? await request.json().catch(() => { throw new BedrockError("INVALID_ARGS", "Invalid JSON body.", "Send { name, permissions: string[] }."); }) : undefined;
       const value = await releases.exclusive(name, () => supervisor.serviceTokens(name, user, body, serviceMatch[2]));
       return Response.json({ ok: true, value }, { headers: { "cache-control": "no-store" } });
+    }
+    const errorMatch = /^\/api\/pebbles\/([^/]+)\/errors(?:\/([^/]+))?(?:\/([^/]+))?$/.exec(url.pathname);
+    if (errorMatch) {
+      const name = errorMatch[1]!; validateName(name); releases.record(name);
+      if (!supervisor.telemetry) throw new BedrockError("ERRORS_UNAVAILABLE", "Error tracking is unavailable.", "Restart an updated daemon.");
+      return errorApi(request, supervisor.telemetry.errors, name, errorMatch[2], errorMatch[3]);
     }
     const telemetryMatch = /^\/api\/pebbles\/([^/]+)\/(metrics|events|lifecycle|resources)$/.exec(url.pathname);
     if (telemetryMatch && request.method === "GET") {

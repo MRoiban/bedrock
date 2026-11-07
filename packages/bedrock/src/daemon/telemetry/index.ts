@@ -1,3 +1,4 @@
+import { ErrorTracking } from "../errors";
 import { BedrockError } from "../../error";
 import { type Query, type Record as TelemetryRecord, type Traffic } from "./model";
 import { RequestMetrics, type RequestObservation } from "./requests";
@@ -26,6 +27,7 @@ export class Telemetry {
   private protections = new Map<string, string[]>();
   private rates = new Map<string, { second: number; lines: number; bytes: number }>();
   readonly started = Date.now();
+  readonly errors = new ErrorTracking((op, body) => this.rpc(op, body));
   constructor(readonly home: string, private readonly groups: () => ResourceGroup[], readonly enabled = true) {
     if (enabled) this.startWorker();
     this.timer = setInterval(() => this.flush(), 1000); this.timer.unref();
@@ -138,6 +140,7 @@ export class Telemetry {
     }
   }
   forget(pebble: string) {
+    this.errors.forget(pebble);
     this.queue = this.queue.filter(record => record.pebble !== pebble);
     this.queueBytes = this.queue.reduce((n, r) => n + (r.kind === "logs" ? Buffer.byteLength(r.text) + 1024 : 1024), 0);
     this.counters.delete(pebble);
@@ -146,6 +149,7 @@ export class Telemetry {
     this.rates.delete(pebble); this.protections.delete(pebble);
   }
   async close() {
+    await this.errors.close();
     clearInterval(this.timer); clearInterval(this.resourceTimer);
     this.flush();
     const deadline = Date.now() + 1500;

@@ -13,6 +13,7 @@ type Mutations<P extends PebbleConfig> = NonNullable<P["mutations"]>;
 export type Connection = { state: "idle" | "connecting" | "live" | "reconnecting" | "polling" | "offline"; since: number; attempt: number };
 
 export interface Client<P extends PebbleConfig = PebbleConfig> {
+  captureException(error: unknown): void;
   query<N extends QueryNames<P>>(name: N, args: FunctionArgs<Queries<P>[N]>): Promise<ClientResult<Queries<P>[N]>>;
   mutate<N extends MutationNames<P>>(name: N, args: FunctionArgs<Mutations<P>[N]>): Promise<ClientResult<Mutations<P>[N]>>;
   subscribe<N extends QueryNames<P>>(name: N, args: FunctionArgs<Queries<P>[N]>, onData: (data: ClientResult<Queries<P>[N]>) => void, onError?: (error: BedrockError) => void): () => void;
@@ -31,6 +32,7 @@ export interface Client<P extends PebbleConfig = PebbleConfig> {
   close(): void;
 }
 export interface ClientOptions {
+  errors?: false | import("./errors").ErrorCaptureOptions;
   autoReload?: boolean;
   beforeReload?: () => boolean | void;
   url?: string;

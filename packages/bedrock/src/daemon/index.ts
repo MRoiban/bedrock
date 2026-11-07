@@ -1,5 +1,6 @@
 import { databaseReadable } from "../db/readable";
 import { Alerts } from "./alerts";
+import { ingestErrors } from "./errors/ingest";
 import { Telemetry, type RequestObservation } from "./telemetry";
 import { detectCgroups } from "./cgroups";
 import { createSessionLinks } from "../auth/session-links";
@@ -100,6 +101,17 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
           if (!target || ["auth", "www"].includes(target)) return notFound(request);
           if (url.pathname === "/_bedrock/session" && db.get(target)) return await links.handle(request, origin, target);
+          if (url.pathname === "/_bedrock/errors") {
+            const record = db.get(target);
+            const attached = options.devPebble?.name === target;
+            if (!record && !attached) return notFound(request);
+            requireOrigin(request, origin);
+            // Access is read from the retained release rather than asking a sleeping child.
+            const access = supervisor.child(target)?.access ?? (record ? (await Bun.file(join(record.release, ".bedrock-idle.json")).json().catch(() => null))?.access ?? "creators" : "public");
+            enforceAccess(access, sessions.resolve(cookieToken(request))?.user ?? null, config.creators);
+            request.headers.delete("cookie"); request.headers.delete("authorization");
+            return await ingestErrors(request, target, telemetry.errors);
+          }
           if (telemetry.enabled && (supervisor.child(target) || db.get(target) || options.devPebble?.name === target)) observation = telemetry.begin(target, request.method, url.pathname, request.headers.get("upgrade")?.toLowerCase() === "websocket" ? "websocket" : url.pathname.startsWith("/_bedrock/") ? "control" : "ordinary");
           // Cold starts may exceed Bun's default request timeout on a slow disk.
           server.timeout(request, 0);

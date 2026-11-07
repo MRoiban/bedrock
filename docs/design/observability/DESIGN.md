@@ -21,12 +21,12 @@ Synthesised from four GPT-6.1-sol research reports (01–04 in this folder; ever
 
 ## 2. Errors (browser + server)
 - **Own tiny protocol, not Sentry's (yet):** `POST /_bedrock/errors` on each pebble origin, intercepted by the daemon without waking the pebble. Sentry-envelope compatibility is feasible later as an error-only adapter, but its framing, quotas and artefact APIs are real extra contracts (Bugsink's ingest shows the cost).
-- **Capture:** `error` + `unhandledrejection` listeners and a React boundary in `bedrock/client`; Bedrock client requests instrumented (not all fetches); `console.error` capture off in production, on in `bedrock test`. Server: unexpected throws at query/mutation/route/job/socket/service boundaries via IPC, before they become responses; expected validation/auth errors excluded.
+- **Capture:** `error` + `unhandledrejection` listeners in `bedrock/client` by default. Handled React errors (optional `bedrock/react` boundary), Bedrock HTTP 5xx instrumentation and console capture are explicit opt-ins; no automatic web-vitals instrumentation. Server: unexpected throws at query/mutation/route/job/socket/service boundaries via IPC, before they become responses; expected validation/auth errors excluded.
 - **Transport and backpressure:** batch ≤5 events/2 s, `sendBeacon` on hide; client 20/min; daemon 120/min/pebble with reserved capacity for server crashes; 429 + Retry-After.
 - **Grouping:** fingerprint = runtime + exception type + up to 5 nearest *mapped* app frames (path, function, normalised line); versioned, with aliases for manual merge. Never group by release or raw message (Rollbar/Sentry/Bugsink lessons; Microsoft WER bucketing).
-- **Source maps:** prerequisite work — Bun's runtime HTML bundler doesn't expose maps; need private per-release maps (deploy-time build or extraction). Missing maps stay visible.
+- **Source maps:** M4a supplies private per-release deploy-time maps; missing maps stay visible.
 - **Noise:** extension-only stacks quarantined, ResizeObserver loops counted not alerted, bots tagged.
-- **Storage:** 14 d payloads, 90 d counts, 100 MiB/pebble, 20 samples/issue/release/day. Regressions reopen resolved issues.
+- **Storage:** 1 GiB global error budget, separate `errors.sqlite` owned by the M1 Worker; 14 d payloads, 90 d counts, 20 samples/issue/release/day. All error data, including issue state, is excluded from backups. Regressions reopen resolved issues. See reference for conservative physical limits.
 - **No web-vitals by default.**
 - **CLI:** `bedrock errors <p>`, `errors show|resolve|ignore|merge`.
 

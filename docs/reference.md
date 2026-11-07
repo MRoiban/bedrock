@@ -694,6 +694,7 @@ $BEDROCK_HOME (default ~/.bedrock)
   observability.sqlite  daemon telemetry; disposable, excluded from backups
   alerts.sqlite         durable incidents, job deadlines/history and webhook outbox
   alerts-secret         webhook bearer credential (0600; never sent to children)
+  errors.sqlite         error payloads/counts/state; disposable, excluded from backups
   pebbles/<name>/
     releases/<ts>/   deployed code + .bedrock-web/{public,maps,manifest.json} (last 3)
     current -> releases/<ts>  (relative link; absolute directory junction on Windows)
@@ -1017,6 +1018,120 @@ restart, rollback, daemon restoration and crash recovery. Children also receive
 `BEDROCK_API_URL=http://127.0.0.1:<actual-daemon-port>`; loopback `/api/` requests
 reach the authenticated daemon API without a Host override. This URL conveys no
 credentials; a pebble must explicitly supply its own deploy bearer.
+### Error tracking
+
+Error capture is **on by default, minimal by default**. Browser `createClient()`
+adds `error` and `unhandledrejection` listeners, removed by `client.close()`.
+Resource-load failures without an exception/message are skipped. Node and bearer
+clients do not install browser listeners; cross-origin clients do not report the
+host page to another pebble. The page release comes from existing navigation
+Server-Timing / release headers, so a stale tab uses its own release's maps.
+
+`createClient({ errors: false })` disables capture. Opt in to console errors or
+Bedrock HTTP 5xx capture with `errors: { console: true, fetch: true }`; this does
+not patch global fetch. `errors.beforeSend(event)` can return a filtered event or
+null; its output is allowlisted and scrubbed again. `client.captureException(e)`
+is explicit opt-in capture. `bedrock/react` exports an optional `ErrorBoundary`
+with `{ client, fallback, children }`; wrapping a subtree opts in to handled
+React errors. No automatic component/DOM context or web-vitals instrumentation
+is installed. Vitals remain a pebble-level opt-in integration, not an error
+payload. The tiny native protocol is not Sentry-compatible.
+
+The client caps capture at **20 events per fixed UTC minute**, a 20-event memory
+queue, at most five events per batch, and a two-second timer. It deduplicates
+Error objects per client and global events across clients. Hidden/pagehide flush
+uses sendBeacon with keepalive fetch fallback. Normal sends use same-origin
+cookies for admission, no bearer/custom headers, and a five-second timeout.
+429 pauses until Retry-After (bounded to one hour); transport failures drop the
+batch. There is no persistent queue or durable-delivery promise.
+
+`POST /_bedrock/errors` is intercepted by the daemon **before any wake**, even
+for idle/stopped pebbles. Matching Origin and the retained release's access
+policy are required; anonymous public-pebble reports are untrusted. Cookies and
+authorization are discarded after admission and never enter storage. Missing
+retained policy fails closed to creators. Only JSON/text/plain versioned
+`{ v: 1, events: [...] }` is accepted: 1–5 events, 48 KiB per streamed body,
+16 KiB per event, 20 bounded frames, no compression. Body reads have a
+five-second deadline and 16 global admission slots. Browser-supplied runtime
+and mapped-frame flags are ignored. Oversized/malformed requests return 413/400;
+unsupported encodings/content types return 415. Capacity returns 429 with
+Retry-After. Per pebble/fixed minute the total is **120 events**, of which
+browsers can consume at most 90, reserving 30 for server crashes. The daemon's
+queue including its in-flight batch is 1 MiB/256 events; browser admissions
+stop at 768 KiB/192 events. Drops are exposed, never recursively reported.
+
+Unexpected query/mutation/route (including detached), job, application socket,
+service and startup throws are reported over child IPC before conversion to
+responses/wrapped errors. A BedrockError with status below 500 is an expected
+client failure and is excluded. Bun already provides original server TS stacks.
+The child deduplicates Error objects and caps IPC reports at 120/minute.
+Telemetry does not change transaction outcomes or process termination behavior.
+
+The M1 telemetry Worker also owns `$BEDROCK_HOME/errors.sqlite`, a separate
+physical file so error data cannot consume the 512 MiB telemetry budget. It stays
+on the home disk, not the pebble data disk. **All error data, including issue
+state, is disposable and excluded from backups.** No runtime dependency is added.
+The global logical payload ceiling is **1 GiB** with conservative JSON/row
+charges. A 480 MiB SQLite page ceiling, nonwaiting locks, disabled page spills,
+and truncate checkpoints before/after each event independently keep DB + WAL
+below 1 GiB. Physical exhaustion drops ingestion and retries after a minute;
+serving does not wait. Logical pressure evicts oldest samples in bounded passes.
+
+Payload visibility expires after **14 days**; daily issue/release counts and
+digest transitions after **90 days**. A bounded sweeper runs on writes, reads
+and every minute (physical deletion may lag a large expiry backlog). At most
+20 samples are admitted per issue/release/UTC day, even after eviction; noise
+keeps counts only. Issue/fingerprint metadata is capped at 10,000 fingerprints;
+new groups beyond that drop with a counter. Retry deduplication covers the most
+recent 20,000 event IDs. List pages contain at most 100 issues; detail returns
+20 newest retained samples; count results are capped at 1,000 rows. Missing
+history is not zero occurrences.
+
+Fingerprint v1 hashes runtime + exception type + up to five nearest mapped app
+frames (relative path, mapped function or anonymous, positive original line),
+excluding dependencies and Bedrock wrappers. Messages, columns and release IDs
+are not fingerprint inputs. No fuzzy line-shift merging is promised. With no
+mapped app evidence, same-type errors share an empty-frame group; `missing_maps`
+remains visible rather than inventing original frames. Extension-only stacks
+use a quarantine namespace; ResizeObserver loop errors use a count-only noise
+namespace. Neither emits digest transitions. Coarse browser family and a bot
+boolean are the only user-agent derivatives; bots remain tagged, not trusted.
+
+Both client and daemon scrub emails, IP literals, URLs' origins/credentials/query
+strings/fragments, bearer/JWT/token patterns and secret assignments. The Worker
+also scrubs known pebble secrets (at least four characters where available),
+including mapped frames. The Worker reads current secrets per batch/query even
+without a child, retains known values through rotations, and fails closed if
+secrets cannot be read; reads reapply known secrets to text fields. Bodies, request
+headers, cookies/auth, user/session IDs, raw user agents and arbitrary rejection
+objects are never collected. Free-form error text can still contain private
+application values: use beforeSend or avoid putting them in exceptions.
+
+```sh
+bedrock errors notes --json
+bedrock errors show notes <issue> --json
+bedrock errors resolve notes <issue> --json
+bedrock errors ignore notes <issue> --json
+bedrock errors merge notes <source-issue> <target-issue> --yes --json
+```
+
+These commands accept --url/--token; list accepts --cursor. API equivalents are
+GET `/api/pebbles/:name/errors[/:issue]?cursor=<number>` and POST
+`/api/pebbles/:name/errors/:issue/resolve|ignore`; merge uses
+`/api/pebbles/:name/errors/:issue/merge?confirm=true&target=<id>`.
+Reads require scoped **logs**; changes require **lifecycle**, both restricted by
+pebble globs. Browser collection grants no issue-read permission. Resolve and
+ignore are idempotent; merge keeps fingerprint aliases and daily counts and
+caps merged samples at 20/day/release. A recurrence reopens a resolved issue;
+ignored issues keep counting without reopening. Merge requires --yes; resolve/ignore need no confirmation.
+
+For M2, `telemetry.errors.onIssue(callback)` exposes committed new-issue and
+regression transitions with `{ id, pebble, issue, kind, time, delivery: "digest" }`.
+Durable catch-up is GET `/api/pebbles/:name/errors/transitions?after=<id>`
+(scoped logs, 100 rows/page, 90 days), using the last returned ID as the cursor.
+Callbacks are best effort; M2 should persist its cursor and use catch-up across
+restarts. Error transitions are digest inputs, never page requests.
+
 ### Daemon telemetry
 
 The daemon owns `$BEDROCK_HOME/observability.sqlite`, separately from identity

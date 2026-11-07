@@ -232,6 +232,7 @@ export class Supervisor {
     const readiness = new Promise<{ name: string; port: number; stopTimeout?: number }>((resolve, reject) => { ready = resolve; failed = reject; });
     const secretEnv = await createSecrets(this.home).env(name);
     logs.protect(Object.values(secretEnv));
+    const errors = this.telemetry?.errors;
     const requests = this.requests;
     const alerts = this.alerts;
     const activeJobs = new Map<string, JobEvent>();
@@ -247,6 +248,7 @@ export class Supervisor {
           BEDROCK_CRON: devSource && this.devOptions.cron === false ? "0" : "1",
           BEDROCK_DATA: devSource ? this.devOptions.dataDir ?? join(release, ".bedrock") : pebbleDataDir(this.dataRoot, name), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) }),
         ipc(message: unknown) {
+          if ((message as { op?: string })?.op === "error.capture") { errors?.server(name, (message as { event?: unknown }).event, releaseId); return; }
           const value = message as { requestId?: string; value?: unknown; op?: string; name: string; port: number; stopTimeout?: number; error?: { code: string; message: string; hint: string } };
           if (value.op === "job-event") {
             const event = (message as { event: JobEvent }).event;

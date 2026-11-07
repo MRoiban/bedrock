@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { alertsCommand } from "./alerts";
+import { errorsCommand } from "./errors";
 import { creatorCommand, creatorUsage } from "./creator";
 import { secretsCommand } from "./secrets";
 import { setupWizard } from "./setup";
@@ -33,6 +34,7 @@ const commandHelp: Record<string, [usage: string, description: string]> = {
   session: [creatorUsage.session, "Create a one-time creator sign-in URL with a fixed expiry."],
   token: ["create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id> [--url <url>] [--token <token>]", "Create, list, or revoke deploy tokens."],
   backup: ["setup --dir <path> | setup --r2-account <id> --r2-bucket <bucket> --r2-access-key-id <key> [--r2-secret-access-key <secret>] | run [pebble] | ls <pebble> | restore <pebble> [--at <ts>] --yes", "Configure backups, create or list snapshots, or restore pebble data."],
+  errors: ["<pebble> | show|resolve|ignore|merge <pebble> <issue> [target] [--yes]", "Inspect or change grouped browser/server error issues."],
   metrics: ["<pebble> [--since 1h] [--step 1m|1h|1d] [--cursor <cursor>]", "Read daemon RED rollups and bucket-range percentiles."],
   logs: ["<pebble> [--follow] [--search <fts>] [--since 1h] [--cursor <cursor>]", "Read or follow redacted logs; search retained SQLite history."],
   alerts: ["[ls] | silence <fingerprint> --for 2h | test | setup [--webhook <url>]", "Inspect incidents, silence pages or configure/test durable webhook delivery."],
@@ -74,6 +76,7 @@ async function main() {
   else if (command === "secrets") result = await secretsCommand(args);
   else if (command === "backup") result = await backupCommand(args);
   else if (command === "alerts") result = await alertsCommand(args);
+  else if (command === "errors") result = await errorsCommand(args);
   else if (command === "jobs") result = await jobsCommand(args);
   else if (command === "data" && args[0] === "move" && args.length === 2 && !args[1]!.startsWith("-")) result = { command: "data move", ...await moveData(bedrockHome(), args[1]!, json ? {} : { progress: line => console.error(line) }) };
   else if (command && opsCommands.includes(command)) {

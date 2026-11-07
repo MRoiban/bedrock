@@ -1,3 +1,4 @@
+import { ErrorWorker, type ErrorWork } from "../errors/worker";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { requireSpace } from "../../disk";
@@ -7,6 +8,7 @@ import type { Query, Record } from "./model";
 import { sampleResources, type ResourceGroup } from "./resources";
 
 declare const self: Worker;
+const errors = new ErrorWorker();
 let store: TelemetryStore | undefined, home = "", retryAt = 0;
 let fault: "full" | "crash" | null = null;
 let retryDelay = 60_000;
@@ -16,7 +18,7 @@ const redact = (pebble: string, text: string) => {
   for (const secret of secrets.get(pebble) ?? []) text = text.replaceAll(secret, "[REDACTED]");
   return text;
 };
-const handle = async ({ data }: MessageEvent<{ op: string; id: number; home: string; records: Record[]; query: Query; pebble: string; secrets: string[]; groups: ResourceGroup[]; fault: "full" | "crash" | null; retryMs: number; boot: string; drops: { [pebble: string]: object }; before?: number }>) => {
+const handle = async ({ data }: MessageEvent<{ op: string; id: number; home: string; records: Record[]; query: Query; pebble: string; secrets: string[]; groups: ResourceGroup[]; fault: "full" | "crash" | null; retryMs: number; boot: string; drops: { [pebble: string]: object }; before?: number } & ErrorWork>) => {
   if (data.op === "init") { home = data.home; self.postMessage({ op: "ready" }); return; }
   if (data.op === "forget" && data.before === undefined) secrets.delete(data.pebble);
   if (data.op === "protect") { secrets.set(data.pebble, data.secrets); return; }
@@ -27,6 +29,10 @@ const handle = async ({ data }: MessageEvent<{ op: string; id: number; home: str
     return;
   }
   try {
+    if (data.op.startsWith("errors.")) {
+      const value = await errors.handle(home, data, secrets);
+      self.postMessage({ id: data.id, value }); return;
+    }
     if (Date.now() < retryAt) throw lastError ?? new Error("Telemetry storage is waiting to retry");
     if (!store) {
       await requireSpace(home, 4 * 1024 ** 2);
@@ -42,7 +48,7 @@ const handle = async ({ data }: MessageEvent<{ op: string; id: number; home: str
       self.postMessage({ id: data.id, value: { before, remaining: removed > 0 } }); return;
     }
     if (data.op === "query") { self.postMessage({ id: data.id, value: { ...store.query(data.query), historical_drops: store.historicalDrops(data.query.pebble, data.boot) } }); return; }
-    if (data.op === "close") { store.close(); store = undefined; self.postMessage({ id: data.id, value: true }); return; }
+    if (data.op === "close") { errors.close(); store.close(); store = undefined; self.postMessage({ id: data.id, value: true }); return; }
     if (data.op === "batch" || data.op === "resources") {
       if (fault === "full") throw Object.assign(new Error("Injected full telemetry filesystem"), { code: "SQLITE_FULL" });
       await requireSpace(home, 4 * 1024 ** 2);
@@ -56,6 +62,7 @@ const handle = async ({ data }: MessageEvent<{ op: string; id: number; home: str
     }
   } catch (error) {
     const typed = asBedrockError(error, "TELEMETRY_UNAVAILABLE", "Free disk space or fix observability.sqlite permissions; telemetry retries once a minute.", join(home, "observability.sqlite"));
+    if (data.op.startsWith("errors.")) { self.postMessage({ id: data.id, error: typed.toJSON() }); return; }
     // A bad query is a caller error, not a storage outage.
     if (typed.code !== "INVALID_ARGS") {
       if (Date.now() >= retryAt) retryAt = Date.now() + retryDelay;

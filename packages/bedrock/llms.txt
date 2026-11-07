@@ -32,6 +32,7 @@ export default definePebble({
 - [Application sockets and long-lived services](AGENTS.md#application-sockets-and-long-lived-services): protocols and lifecycle.
 - [Browser client and React](AGENTS.md#browser-client-and-react): client, hooks, UI and release freshness.
 - [Host operations and backups](AGENTS.md#host-operations-and-backups): install, doctor, deploy, tunnel, service and recovery.
+- [Error tracking](AGENTS.md#error-tracking): default capture, private maps, issue commands and digest transitions.
 - [Daemon telemetry](AGENTS.md#daemon-telemetry): status, RED/resource rollups and searchable logs.
 - [Readiness and alerting](AGENTS.md#readiness-and-alerting).
 - [Secrets, scoped deploy tokens and service tokens](AGENTS.md#secrets-scoped-deploy-tokens-and-service-tokens): credentials and delegated administration.
@@ -53,6 +54,7 @@ bedrock login example.com
 bedrock deploy
 bedrock status
 bedrock logs hello
+bedrock errors hello
 bedrock jobs ls hello
 bedrock jobs run hello refresh
 bedrock secrets set hello API_TOKEN --restart

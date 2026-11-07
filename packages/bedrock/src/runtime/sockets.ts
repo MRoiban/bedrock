@@ -1,3 +1,4 @@
+import { reportServerError } from "./errors";
 import { BedrockError, asBedrockError } from "../error";
 import { socketSize, type ApplicationSocket, type DetachedContext, type PebbleConfig, type SocketDefinition } from "../config";
 import type { SocketData } from "../sync";
@@ -38,7 +39,7 @@ export function createApplicationSockets(pebble: PebbleConfig, execute: ReturnTy
   const sockets = new Set<Bun.ServerWebSocket<AppSocketData>>();
   function invoke(ws: Bun.ServerWebSocket<AppSocketData>, callback: (() => unknown) | undefined) {
     if (!callback) return;
-    void Promise.resolve().then(callback).catch(error => { console.error("Application socket handler failed", asBedrockError(error, "SOCKET_FAILED", "Check the application socket handler and its read/write callbacks.").toJSON()); ws.close(1011, "Handler failed"); });
+    void Promise.resolve().then(callback).catch(error => { reportServerError(error, "socket"); console.error("Application socket handler failed", asBedrockError(error, "SOCKET_FAILED", "Check the application socket handler and its read/write callbacks.").toJSON()); ws.close(1011, "Handler failed"); });
   }
   const websocket: Bun.WebSocketHandler<AppSocketData> = {
     open(ws) { if (!accepting) { ws.close(1012, "Service restart"); return; } sockets.add(ws); invoke(ws, () => ws.data.definition.open?.(application(ws), ws.data.context)); },

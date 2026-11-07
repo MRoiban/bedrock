@@ -1,3 +1,4 @@
+import { reportServerError } from "./errors";
 import { handleControl } from "./control";
 import { loadPebble } from "./load";
 import { serviceStopTimeout } from "../config/hosting";
@@ -33,6 +34,7 @@ try {
   });
   process.on("disconnect", () => void stop());
 } catch (error) {
+  reportServerError(error, "startup");
   const typed = asBedrockError(error).toJSON();
   console.error(JSON.stringify(typed));
   process.send?.({ error: typed });

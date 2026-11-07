@@ -1,3 +1,4 @@
+import { browserErrors } from "./errors";
 import { browserEnvironment } from "./browser";
 import { releaseTracker } from "./release";
 import { restorePlace } from "./restore";
@@ -30,6 +31,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
   let mutations = 0, uploads = 0;
   const browser = browserEnvironment();
   const release = releaseTracker(options, browser, () => transport.suspended() || pending.size() > 0 || mutations > 0 || uploads > 0);
+  const errors = browserErrors(options.token ? undefined : browser, base, () => release.release().page, options.errors);
   const restore = restorePlace(options.token ? undefined : browser);
   const pending = pendingMutations({ settled: () => transport.settled(), checkRelease: release.check });
   const subscriptions = subscriptionStore(browser, options.pollInterval ?? 5000, {
@@ -47,6 +49,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
   });
   function received(response: Response) {
     transport.received();
+    errors.response(response);
     release.observe(response.headers.get("x-bedrock-release"));
   }
   const http = httpClient(base, options, { closed: transport.closed, received, offline: transport.offline });
@@ -57,6 +60,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     finally { mutations--; transport.settled(); release.check(); }
   }
   return {
+    captureException: errors.capture,
     connection: transport.connection,
     onConnection: transport.onConnection,
     async fetch(path, init = {}) {
@@ -116,7 +120,7 @@ export function createClient<P extends PebbleConfig>(options: ClientOptions = {}
     close() {
       // Mark closed before any release or pending-work callbacks run.
       const ws = transport.close();
-      release.close(); restore.close();
+      errors.close(); release.close(); restore.close();
       subscriptions.entries.clear();
       pending.close();
       ws?.close(1000, "Client closed");

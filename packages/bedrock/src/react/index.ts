@@ -1,3 +1,4 @@
+export { ErrorBoundary } from "./error-boundary";
 import { createContext, createElement, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { browserEnvironment } from "../client/browser";
