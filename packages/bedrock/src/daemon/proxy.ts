@@ -1,3 +1,4 @@
+import type { RequestObservation } from "./telemetry";
 import { BedrockError } from "../error";
 
 export function hostTarget(host: string, domain: string) {
@@ -23,9 +24,11 @@ export function proxyHeaders(request: Request) {
   return headers;
 }
 
-export async function proxyHttp(request: Request, port: number, release: string, complete = () => {}, identity: HeadersInit = {}) {
+export async function proxyHttp(request: Request, port: number, release: string, complete = () => {}, identity: HeadersInit = {}, observation?: RequestObservation) {
   let completed = false;
-  const finish = () => { if (!completed) { completed = true; complete(); } };
+  const finish = (outcome?: "failure" | "abort") => { if (!completed) { completed = true; request.signal.removeEventListener("abort", abort); observation?.finish(outcome); complete(); } };
+  const abort = () => finish("abort");
+  request.signal.addEventListener("abort", abort, { once: true });
   try {
     const url = new URL(request.url);
     url.hostname = "127.0.0.1";
@@ -35,6 +38,7 @@ export async function proxyHttp(request: Request, port: number, release: string,
       body: ["GET", "HEAD"].includes(request.method) ? null : request.body,
       redirect: "manual", signal: request.signal, decompress: false,
     });
+    observation?.headers(response.status, /^(text\/event-stream|application\/(x-ndjson|stream))/i.test(response.headers.get("content-type") ?? ""));
     const headers = new Headers(response.headers);
     const connection = headers.get("connection")?.split(",").map(name => name.trim().toLowerCase()) ?? [];
     for (const name of [...connection, "connection", "keep-alive", "transfer-encoding", "upgrade", "trailer"]) headers.delete(name);
@@ -54,12 +58,12 @@ export async function proxyHttp(request: Request, port: number, release: string,
           const { done, value } = await reader.read();
           if (done) { finish(); controller.close(); }
           else controller.enqueue(value);
-        } catch (error) { finish(); controller.error(error); }
+        } catch (error) { finish(request.signal.aborted ? "abort" : "failure"); controller.error(error); }
       },
-      async cancel(reason) { finish(); await reader.cancel(reason); },
+      async cancel(reason) { finish("abort"); await reader.cancel(reason); },
     });
     return new Response(body, { status: response.status, statusText: response.statusText, headers });
-  } catch (error) { finish(); throw error; }
+  } catch (error) { finish(request.signal.aborted ? "abort" : "failure"); throw error; }
 }
 
 function timingEntries(value: string) {
@@ -84,7 +88,7 @@ function forwardHeaders(request: Request, identity: HeadersInit) {
 
 export interface Relay {
   upstream: WebSocket;
-  onClose?: (() => void) | undefined;
+  onClose?: ((code?: number) => void) | undefined;
   downstream?: Bun.ServerWebSocket<Relay>;
   pending: (string | ArrayBuffer)[];
   pendingBytes?: number;
@@ -115,7 +119,7 @@ function sendDownstream(relay: Relay, message: string | ArrayBuffer) {
 }
 const closeCode = (code: number) => code === 1005 || code === 1006 || code === 1015 ? 1011 : code;
 
-export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>, port: number, identity: HeadersInit = {}, register?: (relay: Relay) => (() => void)) {
+export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>, port: number, identity: HeadersInit = {}, register?: (relay: Relay) => ((code?: number) => void), observation?: RequestObservation) {
   const url = new URL(request.url);
   url.protocol = "ws:";
   url.hostname = "127.0.0.1";
@@ -128,7 +132,10 @@ export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>
   const upstream = new BunWebSocket(url, { headers: Object.fromEntries(headers), ...(protocols ? { protocols } : {}) });
   upstream.binaryType = "arraybuffer";
   const relay: Relay = { upstream, pending: [] };
-  relay.onClose = register?.(relay);
+  let ready = false;
+  const remove = register?.(relay);
+  const finished = (code?: number) => observation?.finish(code === 1006 || code === 1011 || code === 1013 ? "failure" : undefined);
+  relay.onClose = code => { remove?.(code); if (ready) finished(code); };
   upstream.onmessage = event => {
     if (relay.overloaded) return;
     if (relay.downstream) sendDownstream(relay, event.data);
@@ -140,7 +147,7 @@ export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>
     }
   };
   upstream.onclose = event => {
-    relay.onClose?.();
+    relay.onClose?.(event.code);
     relay.closed = { code: closeCode(event.code), reason: event.reason };
     relay.downstream?.close(relay.closed.code, relay.closed.reason);
   };
@@ -157,7 +164,9 @@ export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>
       data: relay,
       ...(upstream.protocol ? { headers: { "sec-websocket-protocol": upstream.protocol } } : {}),
     });
-    if (!upgraded) { upstream.close(); return new Response("WebSocket upgrade failed", { status: 400 }); }
+    if (!upgraded) { upstream.close(); observation?.headers(400); observation?.finish(); return new Response("WebSocket upgrade failed", { status: 400 }); }
+    ready = true; observation?.headers(101);
+    if (relay.closed) finished(relay.closed.code);
     return undefined;
   } catch (error) {
     upstream.close();
@@ -168,10 +177,11 @@ export async function proxyWebSocket(request: Request, server: Bun.Server<Relay>
       try {
         const check = new URL(url); check.protocol = "http:";
         const response = await fetch(check, { headers, signal: AbortSignal.timeout(2500), redirect: "manual" });
-        if (response.status === 401 || response.status === 403) return response;
+        if (response.status === 401 || response.status === 403) { observation?.headers(response.status); observation?.finish(); return response; }
         await response.body?.cancel();
       } catch { /* Preserve the original connection failure when admission is unavailable. */ }
     }
+    observation?.finish(request.signal.aborted ? "abort" : "failure");
     throw error;
   }
   finally { clearTimeout(timer); }
@@ -194,5 +204,5 @@ export const relayWebSocket: Bun.WebSocketHandler<Relay> = {
     if (relay.upstream.readyState === WebSocket.OPEN) relay.upstream.send(message);
   },
   drain(socket) { (socket.data.upstream as WebSocket & { resume?: () => boolean }).resume?.(); },
-  close(socket, code, reason) { socket.data.onClose?.(); socket.data.upstream.close(closeCode(code), reason); },
+  close(socket, code, reason) { socket.data.onClose?.(code); socket.data.upstream.close(closeCode(code), reason); },
 };

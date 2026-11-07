@@ -691,6 +691,7 @@ $BEDROCK_HOME (default ~/.bedrock)
   tunnel-token       Cloudflare tunnel run token (0600); API token is never persisted
   logs/cloudflared.log  rotated cloudflared output (run token redacted)
   bedrock.sqlite     users, sessions, pebbles registry (release paths relative to home), deploy tokens
+  observability.sqlite  daemon telemetry; disposable, excluded from backups
   pebbles/<name>/
     releases/<ts>/   deployed code + .bedrock-web/{public,maps,manifest.json} (last 3)
     current -> releases/<ts>  (relative link; absolute directory junction on Windows)
@@ -699,11 +700,11 @@ $BEDROCK_HOME (default ~/.bedrock)
 <data root> = config.dataDir, or $BEDROCK_HOME when unset
   pebbles/<name>/
     data/db.sqlite, data/files/   BEDROCK_DATA / ctx.dataDir
-    logs/            stdout/stderr, rotated
+    logs/            legacy rotated stdout/stderr only; new lines go to observability.sqlite
 ```
 
 - **Data directory.** `dataDir` (absolute) moves every pebble's `data/` and `logs/`
-  to another disk; code, secrets, the daemon database, configuration and
+  to another disk; new telemetry stays in BEDROCK_HOME. Code, secrets, daemon databases, configuration and
   `cloudflared/` stay in `$BEDROCK_HOME`. Unset, the layout is unchanged. When
   `dataDir` is set the daemon refuses to start (`DATA_DIR_MISSING`) unless
   `<dataDir>/pebbles` exists, so an unmounted disk never gets fresh, empty
@@ -1014,13 +1015,131 @@ restart, rollback, daemon restoration and crash recovery. Children also receive
 `BEDROCK_API_URL=http://127.0.0.1:<actual-daemon-port>`; loopback `/api/` requests
 reach the authenticated daemon API without a Host override. This URL conveys no
 credentials; a pebble must explicitly supply its own deploy bearer.
-Daemon-managed pebble logs prefix every line with an ISO timestamp and write
-whole lines only, so stdout and stderr never interleave mid-line (a line with no
-newline is held until 64 KiB). `logs/cloudflared.log` keeps cloudflared's own
-timestamps. They redact configured values of at least 8 characters, and their JSON-escaped variants,
-including values split across UTF-8 pipe chunks; rotated values remain protected
-for the logger's lifetime. Creators remain trusted and must not deliberately
-encode secrets into application responses or other files.
+### Daemon telemetry
+
+The daemon owns `$BEDROCK_HOME/observability.sqlite`, separately from identity
+and pebble data. It stays on the home filesystem when `dataDir` moves pebble
+storage. It is disposable and excluded from daemon/pebble backups. No pebble
+configuration, imports or runtime dependencies are needed.
+
+One Worker owns every SQLite connection, read, write, checkpoint and cgroup
+sample. The daemon batches at 1 s or 256 records; its ingestion queue (including
+the acknowledged batch) is capped at 4 MiB / 4,096 records. Text leaves room for
+metrics/lifecycle. RED is aggregated without sampling before enqueueing; losing a
+batch loses its aggregate counters and increments explicit drops. Serving never
+waits for this Worker. Telemetry API reads can wait for preceding batches (up to
+the 5 s Worker watchdog); they do not hold a reader open while streaming.
+SQLite uses WAL/NORMAL, an 8 MiB cache, nonwaiting locks, bounded deletion and
+incremental vacuum. A single connection avoids concurrent WAL reset/checkpoint
+races, including on older SQLite builds. The Worker checkpoints after batches.
+
+Logical budgets precede time retention: logs **256 MiB**, diagnostic events
+**64 MiB**, metrics including resources **160 MiB**, lifecycle **32 MiB**.
+Accounting conservatively charges text, FTS and row/index overhead. Budget
+pressure evicts oldest records in that category (finest metric tiers first) and counts evictions. If space
+cannot be reclaimed within a bounded pass, new records drop. Independently,
+the SQLite page limit caps the DB at 248 MiB. Dirty-page spills are disabled,
+and each batch must first truncate its WAL: even a transaction rewriting the
+whole DB fits with its WAL below the **512 MiB** physical budget. This conservative
+physical cap can shorten coverage before all logical budgets fill. Ingestion
+also stops at a 64 MiB WAL backstop, including externally pinned readers. Disk
+admission uses the normal 64 MiB free-space margin plus a batch reserve.
+`SQLITE_FULL`, ENOSPC and EDQUOT follow `DISK_FULL`: drop, one daemon stderr
+notice per outage, retry once a minute. Other storage failures drop as well.
+Worker crashes/watchdog failures lose acknowledged-in-progress data, count drops
+and restart after 1 s. Idle resource samples retry storage too. Counters are
+reported per daemon boot; successful batches snapshot them for historical drop
+reporting. Unsaved drops can be lost on a daemon crash.
+
+HTTP rollups use UTC **1 m / 7 d**, **1 h / 90 d**, **1 d / 365 d** intervals.
+An internal 1 s / 5 min tier supplies the rolling status window. Parents are
+updated atomically with children, never by merging percentiles. Resource samples
+retain 15 s / 24 h detail and the same minute/hour/day rollups. Events and
+lifecycle retain 90 d; logs retain 7 d. Byte limits may shorten any coverage.
+Maintenance deletes at most 1,000 expired rows per batch, so time expiry is
+incremental. Coverage includes retained record bounds and the latest 128 writer
+intervals (up to 4,096 stored); missing data and restarts are **unknown**, never
+zero traffic. Read responses include requested range, cursor and drop counts.
+
+RED and saturation have only pebble and traffic-class dimensions: `ordinary`,
+`stream` (SSE/NDJSON/stream content types), `websocket`, `control` (reserved HTTP
+paths and supervisor IPC). Unknown hosts never create series. Starts are counted
+at admission, including cold wake, then assigned to stream at headers-ready if
+appropriate. Completions follow proxied body consumption/cancellation, not proven
+last-byte delivery. Failures count once for 5xx, fetch/transport or body failure;
+client aborts and 4xx/429 have separate counters. Client aborts do not enter latency
+histograms. WebSockets count handshakes separately; completion/lifetime refer to
+connection close. Current in-flight/open sockets, peaks and gauge integrals are
+available separately from counters. Headers-ready and lifetime histograms are
+split success/failure, version 1, noncumulative seconds buckets:
+`.005,.01,.025,.05,.075,.1,.25,.5,.75,1,2.5,5,7.5,10,+Inf`.
+`p95` is `{lower,upper,unit:"s",count}`, with `upper:null` for overflow and
+`null` for no samples. Sums/maxima are also retained.
+
+Every failure and request over 1 s is eligible for a diagnostic event, plus 1%
+of successes. Events have a 10/s/pebble cap with drop counts; RED remains
+unsampled. Event fields are allowlisted: bounded method/status/outcome, duration
+and route shape. Known public-route keys up to 256 characters are preferred; **all** segments of
+unknown paths become `:segment` (at most eight). No query strings, bodies,
+headers, cookies, credentials, identities, IPs or user agents are captured.
+Route shapes are never metric dimensions.
+
+Every 15 s, the Worker reads existing live child cgroups, summing both children
+during deploy overlap: `memory.current`, `memory.swap.current`, `cpu.stat`
+`usage_usec` deltas, `memory.events` `oom_kill` deltas. A first/reset sample
+establishes a baseline; CPU 100% means one core. Resource rollups preserve CPU
+consumption, covered duration, memory/swap integrals, peaks and last values.
+Missing cgroups/non-Linux yield explicit nulls, never wake a pebble, and never
+infer OOM from SIGKILL alone. Lifecycle records include spawn, ready, exit/crash
+(code and signal), retry time, idle, wake, hibernate, stop, activation/deploy and
+retirement, with the child run/release identifier.
+
+New stdout/stderr lines are authoritative in SQLite with FTS5. They retain
+stream/run, use daemon ISO timestamps for text output and cap each line at
+16 KiB. Per-pebble limits are 50 lines/s and 128 KiB/s with drops/truncations
+counted. A line without a newline keeps at most 64 KiB while awaiting its end,
+then stores only the capped prefix. Pipe processing yields during floods.
+Configured secrets of at least eight characters and JSON-escaped variants are
+redacted before enqueueing and again in the Worker; logs read through the API
+are scrubbed again with current configured secrets. Applications must still
+avoid logging private data or deliberately encoded secrets. stderr is a stream,
+not an inferred error severity. `logs/cloudflared.log` retains its existing file
+rotation and own timestamps.
+
+Existing `pebbles/<name>/logs/pebble.log{,.1,.2,.3}` are left in place and never
+written again. Plain `bedrock logs <name>` / the text logs API includes their
+bounded tail before recent SQLite history; `--follow` adds live accepted lines
+with bounded subscriber buffering. Follow is best effort and can show an
+accepted line before its storage batch fails. JSON/search/paginated history
+covers SQLite only; old files are not indexed/imported and may be removed after
+inspection. Deleting a pebble purges its stored telemetry asynchronously.
+
+```sh
+bedrock status --json
+bedrock metrics notes --since 1h --step 1m --json
+bedrock logs notes --search '"connection reset" OR timeout' --since 1h --json
+bedrock logs notes --follow
+```
+
+`status` adds `telemetry` per pebble: now, last 5 min RED by class, latest
+resources/lifecycle, coverage and drops. Human output includes these fields;
+JSON preserves the existing status fields and Bedrock envelope. Idle pebbles
+remain asleep. `metrics` and JSON/search `logs` return `{ok:true,value:{rows,
+cursor,range,coverage,writer_coverage,drops,historical_drops,retained_losses,…}}`
+(with CLI command/name metadata). Cursors are opaque; pass `--cursor` unchanged.
+`--limit` is 1–1,000. `--since` is a positive integer `s|m|h|d`, at most 365 d;
+metric `--step` is `1m|1h|1d`. `--follow` (`-f`) cannot combine with search,
+since or cursor. JSON follow preserves the single JSON string stream and appends coverage/drop metadata when it closes.
+
+Creator-authenticated GET `/api/pebbles/:name/metrics|resources|lifecycle` uses
+scoped deploy action `status`; `/events|logs` uses `logs`. Pebble glob scope
+applies to every endpoint. Parameters: `since`, `from`/`to` (epoch ms), `step`,
+`limit`, `cursor`; logs also `q` (FTS5, at most 1,024 characters) and
+`format=json`. Plain `/logs` remains text; `follow=true` streams text.
+Malformed ranges/FTS/cursors return `INVALID_ARGS` with a hint; storage outages
+return `TELEMETRY_UNAVAILABLE`/`DISK_FULL`. Status stays available with explicit
+unknown coverage and `unavailable:true` if telemetry is down. No alerting,
+readiness probes, error ingestion or public monitoring page is added here.
 
 `restart: true` requires an existing deployed pebble. The normal restart now
 launches and health-checks a replacement before switching routing and retiring
@@ -1065,7 +1184,8 @@ and `?` (one character), lowercase letters, digits and hyphens only. Actions are
 - `lifecycle`: start, stop, restart, rollback and confirmed deletion.
 - `logs`: read and follow logs.
 - `secrets`: read and update secrets (including requested restart).
-- `status`: GET `/api/pebbles` and `/api/status`, filtered to matching pebbles.
+- `status`: GET `/api/pebbles` and `/api/status`, filtered to matching pebbles,
+  plus per-pebble metrics/resources/lifecycle (see [Daemon telemetry](#daemon-telemetry)).
   Status retains daemon version/features/domain needed by deploy clients; it
   omits tunnel information and does not disclose creator session presence.
 - `service-tokens`: create and revoke target pebble tokens.

@@ -27,6 +27,8 @@ export function authorizeScope(scope: TokenScope | null, request: Request) {
       const endpoint = match[2];
       if (endpoint === "secrets" && ["GET", "PUT"].includes(request.method)) action = "secrets";
       else if (endpoint === "service-tokens" && request.method === "POST" || endpoint?.startsWith("service-tokens/") && request.method === "DELETE") action = "service-tokens";
+      else if (endpoint && ["metrics", "resources", "lifecycle"].includes(endpoint) && request.method === "GET") action = "status";
+      else if (endpoint === "events" && request.method === "GET") action = "logs";
       else if (endpoint === "logs" && request.method === "GET") action = "logs";
       else if (endpoint && ["start", "stop", "restart", "rollback"].includes(endpoint) && request.method === "POST" || !endpoint && request.method === "DELETE") action = "lifecycle";
     }

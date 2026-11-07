@@ -1167,6 +1167,65 @@ Low-level tests can import `startPebble` from `bedrock/server`, call
 returns value/read/write sets. `startDaemon({ home: temporaryHome })` comes from
 `bedrock/daemon`. Always use temporary BEDROCK_HOME/dataDir/credential paths in tests.
 
+### Daemon telemetry
+
+No pebble instrumentation or configuration is required. `bedrock status --json`
+adds per-pebble current in-flight/open sockets, rolling 5 min RED, latest cgroup
+resources/lifecycle, coverage and drop counters. Idle pebbles stay asleep.
+
+```sh
+bedrock metrics notes --since 1h --step 1m --json
+bedrock logs notes --search 'timeout OR "connection reset"' --since 1h --json
+bedrock logs notes --follow
+```
+
+Metrics use UTC `1m|1h|1d` rollups (7/90/365 days). Headers-ready and body or
+WebSocket lifetime histograms separate success/failure; p95 is a bucket range
+in seconds, `upper:null` means above 10 s, and no samples means null. 5xx and
+transport/body failures count once; 4xx/429 and client aborts are separate.
+Traffic classes are ordinary, stream (SSE/NDJSON/stream responses), websocket
+and control. WebSockets also report handshakes; completion is connection close.
+Resource samples every 15 s reuse Linux cgroups (memory/swap, CPU and OOM deltas),
+including deploy overlap; unsupported/idle values are explicit nulls. CPU 100%
+means one core. Lifecycle includes spawn/ready/exit/crash, retry, idle/wake,
+hibernate, stop and deploy/retire.
+
+The daemon's Worker owns `$BEDROCK_HOME/observability.sqlite`; it stays on the
+home filesystem across `dataDir` moves and is excluded from backups. Writes
+batch every second/256 records in a bounded queue and never hold up serving.
+Byte budgets apply before time retention: total 512 MiB, logs 256, events 64,
+metrics/resources 160, lifecycle 32; oldest records are evicted with counters (finest metric tiers first).
+Physical DB/WAL limits independently bound storage. Logs retain 7 d;
+request/lifecycle events 90 d. Coverage and drops may shorten any history;
+missing telemetry is unknown, never zero traffic. Runtime drops are scoped to
+the daemon boot, with snapshots from previous boots reported separately.
+
+stdout/stderr go to SQLite FTS5, capped at 16 KiB/line, 50 lines/s and
+128 KiB/s/pebble; drops/truncations are counted. Secret values (at least eight
+characters, including JSON escapes) are scrubbed before enqueueing and again in
+the Worker. Avoid logging private data yourself. Unknown request paths collapse
+every segment; diagnostic events capture no queries, headers, bodies, IPs or
+identity. Every failure/slow request plus 1% successes is eligible, capped at
+10 events/s/pebble independently of unsampled RED.
+
+Existing rotated pebble logs remain read-only legacy files. Plain logs and
+follow include their bounded tail; JSON/search only covers SQLite history.
+Follow is best effort, bounded, and may show a line whose later storage batch
+fails. Cloudflared keeps its existing rotated file. Disk/storage failure drops
+telemetry with one notice per outage and retries once a minute; a failed Worker
+restarts automatically. Delete purges the pebble's telemetry asynchronously.
+
+JSON metrics/log search use the Bedrock envelope with `rows`, opaque `cursor`,
+requested `range`, retained `coverage`, writer intervals and drops. Use
+`--cursor <returned-cursor>` / `--limit 1..1000`, `--since <positive s|m|h|d>`
+(up to 365d). Follow (`-f`/`--follow`) cannot combine with search/since/cursor;
+JSON follow retains the single string stream with coverage/drop metadata on close. Creator API equivalents:
+GET `/api/pebbles/:name/metrics|resources|lifecycle` require scoped `status`;
+`/events|logs` require `logs`, always restricted by pebble glob. Parameters are
+`since`, epoch-ms `from`/`to`, `step`, `cursor`, `limit`; logs add FTS5 `q` and
+`format=json`. Bad ranges/search return `INVALID_ARGS`; outages return
+`TELEMETRY_UNAVAILABLE`/`DISK_FULL`. Status reports unknown data when unavailable.
+
 ### Secrets, scoped deploy tokens and service tokens
 
 ```sh

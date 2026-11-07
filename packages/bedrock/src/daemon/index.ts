@@ -1,3 +1,4 @@
+import { Telemetry, type RequestObservation } from "./telemetry";
 import { detectCgroups } from "./cgroups";
 import { createSessionLinks } from "../auth/session-links";
 import { matchesPublicRoute } from "./public-routes";
@@ -25,7 +26,7 @@ import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
 
-export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; hibernateTimeoutForTests?: number; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string; dataDir?: string; cron?: boolean }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
+export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; hibernateTimeoutForTests?: number; telemetryForTests?: boolean; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string; dataDir?: string; cron?: boolean }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
   const home = resolve(options.home ?? bedrockHome());
@@ -39,7 +40,8 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const dev = options.dev === true;
   const master = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
   const cgroups = await detectCgroups({ dev });
-  const supervisor = new Supervisor(home, db, master, config.creators, dev, data, options.idleTimeoutForTests, undefined, cgroups, options.hibernateTimeoutForTests);
+  const telemetry: Telemetry = new Telemetry(home, () => supervisor.resourceGroups(), options.telemetryForTests !== false);
+  const supervisor: Supervisor = new Supervisor(home, db, master, config.creators, dev, data, options.idleTimeoutForTests, undefined, cgroups, options.hibernateTimeoutForTests, telemetry);
   const sessions = createSessions(db.db);
   const sockets = sessionSockets(sessions);
   const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);
@@ -72,6 +74,9 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       hostname: "127.0.0.1", port: config.port, maxRequestBodySize: 1024 ** 4,
       websocket: relayWebSocket,
       async fetch(request, server) {
+        let observation: RequestObservation | undefined;
+        let proxied = false;
+        const handle = async () => {
         try {
           const host = request.headers.get("host") ?? "";
           const target = hostTarget(host, config.domain);
@@ -87,6 +92,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
           if (!target || ["auth", "www"].includes(target)) return notFound(request);
           if (url.pathname === "/_bedrock/session" && db.get(target)) return await links.handle(request, origin, target);
+          if (telemetry.enabled && (supervisor.child(target) || db.get(target) || options.devPebble?.name === target)) observation = telemetry.begin(target, request.method, url.pathname, request.headers.get("upgrade")?.toLowerCase() === "websocket" ? "websocket" : url.pathname.startsWith("/_bedrock/") ? "control" : "ordinary");
           // Cold starts may exceed Bun's default request timeout on a slow disk.
           server.timeout(request, 0);
           let child;
@@ -98,6 +104,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             stopped.headers.set("retry-after", "5");
             return stopped;
           }
+          observation?.route(child.publicRoutes);
           if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
           const websocket = request.headers.get("upgrade")?.toLowerCase() === "websocket";
           if (!websocket && matchesPublicRoute(child.publicRoutes, request.method, url.pathname)) {
@@ -106,7 +113,8 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             for (const name of [...request.headers.keys()]) if (name.startsWith("x-bedrock-")) request.headers.delete(name);
             server.timeout(request, 0);
             const complete = supervisor.activity(child);
-            return await proxyHttp(request, child.port, child.releaseId, complete, { "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) });
+            proxied = true;
+            return await proxyHttp(request, child.port, child.releaseId, complete, { "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) }, observation);
           }
           const hasSessionCookie = (request.headers.get("cookie") ?? "").split(";").some(part => part.trim().split("=", 1)[0] === "bedrock_session");
           const bearer = !hasSessionCookie && request.headers.get("authorization")?.startsWith("Bearer brk_") === true;
@@ -138,19 +146,26 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           if (websocket) {
             const complete = supervisor.activity(child);
             try {
-              return await proxyWebSocket(request, server, child.port, identity, relay => {
+              const response = await proxyWebSocket(request, server, child.port, identity, relay => {
                 const remove = session ? sockets.register(relay, token!, session.hash) : undefined;
                 if (session) sockets.revalidate();
                 return () => { remove?.(); complete(); };
-              });
-            } catch (error) { complete(); throw error; }
+              }, observation);
+              if (!response) { proxied = true; observation?.headers(101); }
+              return response;
+            } catch (error) { complete(); observation?.finish(request.signal.aborted ? "abort" : "failure"); throw error; }
           }
           server.timeout(request, 0);
           const complete = supervisor.activity(child);
-          const response = await proxyHttp(request, child.port, child.releaseId, complete, identity);
+          proxied = true;
+          const response = await proxyHttp(request, child.port, child.releaseId, complete, identity, observation);
           if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));
           return response;
         } catch (error) { return daemonError(error, request); }
+        };
+        const response = await handle();
+        if (!proxied && response) { observation?.headers(response.status); observation?.finish(request.signal.aborted ? "abort" : undefined); }
+        return response;
       },
       error: error => daemonError(error),
     });
@@ -167,7 +182,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
     if (!dev) backups.start();
     let stopping: Promise<void> | undefined;
     return {
-      server, home,
+      server, home, telemetry,
       async runDevJob(name: string) {
         if (!options.devPebble) throw new BedrockError("DEV_ONLY", "Explicit dev jobs require an attached pebble.", "Use bedrock jobs run for deployed pebbles.");
         return supervisor.jobs(options.devPebble.name, name);
@@ -181,6 +196,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           await supervisor.shutdown();
           await server!.stop(true);
           await tunnel?.stop();
+          await telemetry.close();
           db.close();
         })();
       },
@@ -191,6 +207,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
     await server?.stop(true);
     await tunnel?.stop();
     await supervisor.shutdown();
+    await telemetry.close();
     db.close();
     throw asBedrockError(error, "DAEMON_START_FAILED", "Check setup, the listen port, and daemon home permissions.");
   }

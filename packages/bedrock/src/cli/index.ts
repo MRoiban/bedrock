@@ -32,6 +32,8 @@ const commandHelp: Record<string, [usage: string, description: string]> = {
   session: [creatorUsage.session, "Create a one-time creator sign-in URL with a fixed expiry."],
   token: ["create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id> [--url <url>] [--token <token>]", "Create, list, or revoke deploy tokens."],
   backup: ["setup --dir <path> | setup --r2-account <id> --r2-bucket <bucket> --r2-access-key-id <key> [--r2-secret-access-key <secret>] | run [pebble] | ls <pebble> | restore <pebble> [--at <ts>] --yes", "Configure backups, create or list snapshots, or restore pebble data."],
+  metrics: ["<pebble> [--since 1h] [--step 1m|1h|1d] [--cursor <cursor>]", "Read daemon RED rollups and bucket-range percentiles."],
+  logs: ["<pebble> [--follow] [--search <fts>] [--since 1h] [--cursor <cursor>]", "Read or follow redacted logs; search retained SQLite history."],
   jobs: ["ls <pebble> | run <pebble> <job> [--url <url>] [--token <token>]", "List or run pebble jobs."],
   data: ["move <dir>", "With the daemon stopped, copy pebble data and logs to <dir>, verify the copy, and switch dataDir; the old copy is kept."],
 };

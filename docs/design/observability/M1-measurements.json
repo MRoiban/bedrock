@@ -1,0 +1,369 @@
+{
+  "host": {
+    "date": "2026-11-07",
+    "os": "Linux 6.12.113+deb13-amd64 x86_64",
+    "bun": "1.4.3",
+    "filesystem": "/dev/nvme0n1p6, ext4",
+    "home": "temporary workspace directory; cleaned after measurement",
+    "fixture_data": "NVMe; no HDD I/O in this proxy-only fixture"
+  },
+  "method": {
+    "measured_requests_per_run": 5000,
+    "concurrency": 16,
+    "warmup_requests": 5000,
+    "warmup_drain_ms": 1100,
+    "cpu_drain_ms": 1100,
+    "event_loop_probe_ms": 5,
+    "daemon_and_client": "separate processes",
+    "cpu": "process.cpuUsage, daemon plus Worker, excludes load generator and pebble subprocess",
+    "latency": "client fetch through complete body consumption",
+    "growth": "24 pebbles, 1 request/s/pebble aggregated to minute records, 1 180-byte log/min/pebble, cgroup resources every 15s, 1% diagnostic success events; transient 1s request tier approximated by minute deltas",
+    "budget_stress": "40 batches of 256 ~16KiB log lines, actual default budgets"
+  },
+  "steady_medians": {
+    "off": {
+      "p50_ms": 2.005381999999372,
+      "p99_ms": 5.46244999999999,
+      "cpu_us": 1240103,
+      "elapsed_ms": 687.9377779999995
+    },
+    "on": {
+      "p50_ms": 2.141569999999774,
+      "p99_ms": 5.887300000000323,
+      "cpu_us": 1289314,
+      "elapsed_ms": 724.3626560000002
+    }
+  },
+  "steady_runs": [
+    {
+      "telemetry": false,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 2.2285899999997127,
+      "p99_ms": 5.46244999999999,
+      "elapsed_ms": 746.5713489999998,
+      "op": "result",
+      "cpu_us": 1303711,
+      "max_lag_ms": 3.213518000000022,
+      "drops": {}
+    },
+    {
+      "telemetry": true,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 2.141569999999774,
+      "p99_ms": 4.9489229999999225,
+      "elapsed_ms": 724.3626560000002,
+      "op": "result",
+      "cpu_us": 1289314,
+      "max_lag_ms": 3.0252220000002126,
+      "drops": {
+        "event_rate": 54
+      }
+    },
+    {
+      "telemetry": true,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 2.4532970000000205,
+      "p99_ms": 5.887300000000323,
+      "elapsed_ms": 811.0611520000002,
+      "op": "result",
+      "cpu_us": 1393622,
+      "max_lag_ms": 4.288872000000083,
+      "drops": {
+        "event_rate": 89
+      }
+    },
+    {
+      "telemetry": false,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 2.005381999999372,
+      "p99_ms": 5.012679999999818,
+      "elapsed_ms": 687.9377779999995,
+      "op": "result",
+      "cpu_us": 1240103,
+      "max_lag_ms": 3.3467940000000453,
+      "drops": {}
+    },
+    {
+      "telemetry": false,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 1.516179000002012,
+      "p99_ms": 5.944346999996924,
+      "elapsed_ms": 549.6066169999976,
+      "op": "result",
+      "cpu_us": 998816,
+      "max_lag_ms": 3.7511779999999817,
+      "drops": {}
+    },
+    {
+      "telemetry": true,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 1.6216160000003583,
+      "p99_ms": 7.045690999999351,
+      "elapsed_ms": 601.9312429999991,
+      "op": "result",
+      "cpu_us": 1076753,
+      "max_lag_ms": 4.462530999999899,
+      "drops": {
+        "event_rate": 70
+      }
+    },
+    {
+      "scenario": "3s log flood",
+      "printed_lines": 1669000,
+      "op": "result",
+      "cpu_us": 2703549,
+      "max_lag_ms": 1.3551079999997455,
+      "drops": {
+        "event_rate": 70,
+        "log_rate": 1668800
+      }
+    }
+  ],
+  "growth": [
+    {
+      "scenario": "simulated day",
+      "pebbles": 24,
+      "requests_per_s_per_pebble": 1,
+      "logs_per_minute_per_pebble": 1,
+      "bytes": 147759104,
+      "dropped_records": 0,
+      "accounting": [
+        {
+          "kind": "metrics",
+          "bytes": 163349028,
+          "evicted": 0
+        },
+        {
+          "kind": "logs",
+          "bytes": 60410880,
+          "evicted": 0
+        },
+        {
+          "kind": "events",
+          "bytes": 11843712,
+          "evicted": 0
+        }
+      ]
+    },
+    {
+      "scenario": "default budget",
+      "dropped_records": 7680,
+      "retained_losses": [
+        {
+          "reason": "physical_budget_evicted",
+          "count": 3840
+        }
+      ],
+      "bytes": 237248512,
+      "accounting": [
+        {
+          "kind": "metrics",
+          "bytes": 161584860,
+          "evicted": 0
+        },
+        {
+          "kind": "logs",
+          "bytes": 225784432,
+          "evicted": 0
+        },
+        {
+          "kind": "events",
+          "bytes": 11604964,
+          "evicted": 0
+        }
+      ],
+      "physical_limit": {
+        "max_page_count": 63488
+      },
+      "wal_bytes": 0
+    }
+  ],
+  "earlier_contended_runs": [
+    {
+      "telemetry": false,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 5.55328099999997,
+      "p99_ms": 16.776630000000296,
+      "elapsed_ms": 2055.438587,
+      "op": "result",
+      "cpu_us": 2087798,
+      "max_lag_ms": 10.27401000000009,
+      "drops": {}
+    },
+    {
+      "telemetry": true,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 7.791594999999688,
+      "p99_ms": 27.766998000000058,
+      "elapsed_ms": 2865.572991,
+      "op": "result",
+      "cpu_us": 2409829,
+      "max_lag_ms": 38.77230099999997,
+      "drops": {
+        "event_rate": 26
+      }
+    },
+    {
+      "telemetry": true,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 4.99447599999985,
+      "p99_ms": 13.15401700000075,
+      "elapsed_ms": 1786.1701809999995,
+      "op": "result",
+      "cpu_us": 2257363,
+      "max_lag_ms": 9.755566999999928,
+      "drops": {
+        "event_rate": 23
+      }
+    },
+    {
+      "telemetry": false,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 5.608798999999635,
+      "p99_ms": 18.325332999998864,
+      "elapsed_ms": 2067.186147999999,
+      "op": "result",
+      "cpu_us": 2106605,
+      "max_lag_ms": 17.890240000000176,
+      "drops": {}
+    },
+    {
+      "telemetry": false,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 4.612390000002051,
+      "p99_ms": 14.72299799999746,
+      "elapsed_ms": 1693.768745999998,
+      "op": "result",
+      "cpu_us": 2054708,
+      "max_lag_ms": 9.199558999999908,
+      "drops": {}
+    },
+    {
+      "telemetry": true,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 5.3039520000020275,
+      "p99_ms": 17.006561999998667,
+      "elapsed_ms": 1981.7049260000022,
+      "op": "result",
+      "cpu_us": 2252345,
+      "max_lag_ms": 10.31405099999995,
+      "drops": {
+        "event_rate": 28
+      }
+    },
+    {
+      "scenario": "3s log flood",
+      "printed_lines": 719000,
+      "op": "result",
+      "cpu_us": 2587670,
+      "max_lag_ms": 9.70777999999973,
+      "drops": {
+        "event_rate": 28,
+        "log_rate": 718800
+      }
+    }
+  ],
+  "earlier_short_warmup_runs": [
+    {
+      "telemetry": false,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 1.4530150000000503,
+      "p99_ms": 3.0768980000000283,
+      "elapsed_ms": 483.39821499999994,
+      "op": "result",
+      "cpu_us": 823885,
+      "max_lag_ms": 2.542051000000015,
+      "drops": {}
+    },
+    {
+      "telemetry": true,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 2.0993250000001353,
+      "p99_ms": 4.974762999999712,
+      "elapsed_ms": 718.7400889999999,
+      "op": "result",
+      "cpu_us": 1175669,
+      "max_lag_ms": 2.672465999999986,
+      "drops": {
+        "event_rate": 50
+      }
+    },
+    {
+      "telemetry": true,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 2.0191530000001876,
+      "p99_ms": 4.558426999999938,
+      "elapsed_ms": 675.1197610000008,
+      "op": "result",
+      "cpu_us": 1119231,
+      "max_lag_ms": 2.556271000000038,
+      "drops": {
+        "event_rate": 53
+      }
+    },
+    {
+      "telemetry": false,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 2.247519999999895,
+      "p99_ms": 4.939346000000114,
+      "elapsed_ms": 746.4637090000006,
+      "op": "result",
+      "cpu_us": 1264812,
+      "max_lag_ms": 2.5403909999999996,
+      "drops": {}
+    },
+    {
+      "telemetry": false,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 1.4895010000000184,
+      "p99_ms": 3.2913690000004863,
+      "elapsed_ms": 498.66619300000093,
+      "op": "result",
+      "cpu_us": 846862,
+      "max_lag_ms": 2.2007229999999254,
+      "drops": {}
+    },
+    {
+      "telemetry": true,
+      "requests": 5000,
+      "concurrency": 16,
+      "p50_ms": 2.4077890000007756,
+      "p99_ms": 5.487524000000121,
+      "elapsed_ms": 804.4830429999984,
+      "op": "result",
+      "cpu_us": 1320039,
+      "max_lag_ms": 2.7876420000000053,
+      "drops": {
+        "event_rate": 41
+      }
+    },
+    {
+      "scenario": "3s log flood",
+      "printed_lines": 1156000,
+      "op": "result",
+      "cpu_us": 2387961,
+      "max_lag_ms": 8.850427999999738,
+      "drops": {
+        "event_rate": 41,
+        "log_rate": 1155800
+      }
+    }
+  ]
+}

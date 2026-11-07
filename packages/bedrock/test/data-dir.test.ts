@@ -16,7 +16,7 @@ export default definePebble({ name: "sample", backup: { directories: ["workspace
   "GET /note": () => new Response(Bun.file(process.env.BEDROCK_DATA + "/workspaces/note.txt")),
 }});`;
 
-test("pebble data, logs and backups follow dataDir; data move relocates them between daemon runs", async () => {
+test("pebble data and backups follow dataDir; telemetry stays in home across data moves", async () => {
   const temp = tempDirectory();
   const home = join(temp.dir, "home");
   const disk = join(temp.dir, "disk");
@@ -43,7 +43,9 @@ test("pebble data, logs and backups follow dataDir; data move relocates them bet
     expect(await (await pebble("/data")).text()).toBe(join(disk, "pebbles", "sample", "data"));
     expect((await pebble("/note", { method: "POST", body: "kept" })).status).toBe(200);
     expect(await Bun.file(join(disk, "pebbles", "sample", "data", "db.sqlite")).exists()).toBe(true);
-    expect(await Bun.file(join(disk, "pebbles", "sample", "logs", "pebble.log")).text()).toContain("started");
+    expect(await (await api("/api/pebbles/sample/logs")).text()).toContain("started");
+    expect(await Bun.file(join(home, "observability.sqlite")).exists()).toBe(true);
+    expect(await Bun.file(join(disk, "pebbles", "sample", "logs", "pebble.log")).exists()).toBe(false);
     expect((await readdir(join(home, "pebbles", "sample"))).sort()).toEqual(["current", "releases"]);
     const backup = (await (await api("/api/backup/run?name=sample", { method: "POST" })).json()).value;
     expect(backup[0].directories.workspaces[0].path).toBe("note.txt");

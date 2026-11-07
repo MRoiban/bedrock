@@ -43,6 +43,7 @@ export class Releases {
       }
       old = this.supervisor.child(name);
       this.supervisor.activate(name, child);
+      this.supervisor.telemetry?.lifecycle(name, "deploy", child.releaseId);
     } finally { await rm(temporary, { force: true }); }
     if (old) await retireChild(old).catch(error => this.warn(name, error));
     return this.supervisor.startExclusive(name, child);

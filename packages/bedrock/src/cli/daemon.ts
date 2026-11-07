@@ -18,9 +18,9 @@ function parse(args: string[], hint: string) {
   const flags: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (["--yes", "--force", "--no-open", "-f"].includes(arg)) flags[arg] = "true";
+    if (["--yes", "--force", "--no-open", "-f", "--follow"].includes(arg)) flags[arg] = "true";
     else if (arg.startsWith("--")) {
-      if (!["--port", "--url", "--token", "--name", "--pebbles", "--actions"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, hint);
+      if (!["--port", "--url", "--token", "--name", "--pebbles", "--actions", "--search", "--since", "--step", "--cursor", "--limit"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, hint);
       flags[arg] = args[++i]!;
     } else positionals.push(arg);
   }
@@ -69,18 +69,18 @@ export async function call(flags: Record<string, string>, path: string, init: Re
   return response;
 }
 
-export const daemonCommands = ["daemon", "deploy", "ls", "logs", "start", "stop", "restart", "rollback", "rm", "token", "whoami", "status"];
+export const daemonCommands = ["daemon", "deploy", "ls", "logs", "start", "stop", "restart", "rollback", "rm", "token", "whoami", "status", "metrics"];
 export async function daemonCommand(command: string, args: string[], json: boolean, options: { open?: typeof openBrowser; tty?: boolean } = {}): Promise<unknown> {
   const usage: Record<string, string> = {
-    daemon: "[--port <port>]", deploy: "[dir] [--no-open]", ls: "", logs: "<name> [-f]",
+    daemon: "[--port <port>]", deploy: "[dir] [--no-open]", ls: "", logs: "<name> [-f|--follow] [--search <fts>] [--since 1h] [--cursor <cursor>]",
     start: "<name>", stop: "<name>", restart: "<name>", rollback: "<name> [--force]",
-    rm: "<name> --yes", token: "create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id>", whoami: "", status: "",
+    rm: "<name> --yes", token: "create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id>", whoami: "", status: "", metrics: "<name> [--since 1h] [--step 1m] [--cursor <cursor>]",
   };
   const hint = `Use bedrock ${command}${usage[command] ? ` ${usage[command]}` : ""}${command === "daemon" ? "" : " [--url <url>] [--token <token>]"} [--json].`;
   const { positionals, flags } = parse(args, hint);
   const name = positionals[0];
   const invalid = () => { throw new BedrockError("INVALID_ARGS", `Invalid arguments for ${command}.`, hint); };
-  const allowed = command === "rollback" ? ["--url", "--token", "--force"] : command === "daemon" ? ["--port"] : command === "deploy" ? ["--url", "--token", "--no-open"] : command === "logs" ? ["--url", "--token", "-f"] : command === "rm" ? ["--url", "--token", "--yes"] : command === "token" ? ["--url", "--token", "--name", "--pebbles", "--actions"] : ["--url", "--token"];
+  const allowed = command === "rollback" ? ["--url", "--token", "--force"] : command === "daemon" ? ["--port"] : command === "deploy" ? ["--url", "--token", "--no-open"] : command === "logs" ? ["--url", "--token", "-f", "--follow", "--search", "--since", "--cursor", "--limit"] : command === "metrics" ? ["--url", "--token", "--since", "--step", "--cursor", "--limit"] : command === "rm" ? ["--url", "--token", "--yes"] : command === "token" ? ["--url", "--token", "--name", "--pebbles", "--actions"] : ["--url", "--token"];
   if (Object.keys(flags).some(key => !allowed.includes(key))) invalid();
   if (command === "daemon") {
     if (positionals.length) invalid();
@@ -99,7 +99,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
     const daemon = await connection(flags);
     const value = (await (await call(flags, "/api/status")).json()).value;
     const pebbles = value.pebbles.map((pebble: { name: string }) => ({ ...pebble, url: value.domain === "localhost" ? `http://${pebble.name}.localhost:${new URL(daemon.url).port}` : `https://${pebble.name}.${value.domain}` }));
-    if (!json) { console.log(`Daemon  ${daemon.url} · ${formatBuild(value)}\nUser: ${value.user ?? "creator deploy token"}\n${pebbles.map((pebble: { name: string; url: string; provenance?: import("../version").Provenance }) => `${pebble.name}  ${pebble.url}  ${formatProvenance(pebble.provenance)}`).join("\n") || "No pebbles yet. Run bedrock new my-app."}`); return; }
+    if (!json) { console.log(`Daemon  ${daemon.url} · ${formatBuild(value)}\nUser: ${value.user ?? "creator deploy token"}\n${pebbles.map((pebble: { name: string; url: string; status?: string; telemetry?: unknown; provenance?: import("../version").Provenance }) => `${pebble.name}  ${pebble.status ?? "unknown"}  ${pebble.url}  ${formatProvenance(pebble.provenance)}\n  Telemetry: ${JSON.stringify(pebble.telemetry ?? null)}`).join("\n") || "No pebbles yet. Run bedrock new my-app."}`); return; }
     return { command, daemon: daemon.url, ...value, pebbles };
   }
   if (command === "deploy") {
@@ -151,8 +151,16 @@ export async function daemonCommand(command: string, args: string[], json: boole
   }
   if (positionals.length !== 1) invalid();
   const path = `/api/pebbles/${encodeURIComponent(name!)}`;
+  if (command === "metrics" || command === "logs" && !(flags["-f"] || flags["--follow"]) && (json || flags["--search"] || flags["--since"] || flags["--cursor"] || flags["--limit"])) {
+    const query = new URLSearchParams({ format: "json" });
+    for (const [flag, key] of [["--search", "q"], ["--since", "since"], ["--step", "step"], ["--cursor", "cursor"], ["--limit", "limit"]]) if (flags[flag!]) query.set(key!, flags[flag!]!);
+    const result = await (await call(flags, `${path}/${command}?${query}`)).json();
+    if (!json && command === "logs") { for (const row of result.value.rows.reverse()) console.log(`${new Date(row.time).toISOString()} ${row.text}`); return; }
+    return { command, name, ...result, ...(command === "logs" ? { logs: [...result.value.rows].reverse().map((row: { time: number; text: string }) => `${new Date(row.time).toISOString()} ${row.text}\n`).join("") } : {}) };
+  }
   if (command === "logs") {
-    if (!flags["-f"]) {
+    if ((flags["-f"] || flags["--follow"]) && ["--search", "--since", "--cursor", "--limit"].some(key => flags[key])) invalid();
+    if (!(flags["-f"] || flags["--follow"])) {
       const logs = await (await call(flags, `${path}/logs`)).text();
       if (json) return { command, name, logs };
       process.stdout.write(logs);
@@ -172,7 +180,13 @@ export async function daemonCommand(command: string, args: string[], json: boole
       for await (const chunk of response.body!) write(decoder.decode(chunk, { stream: true }));
     } catch (error) { if (!controller.signal.aborted) throw error; }
     finally {
-      if (opened) { write(decoder.decode()); if (json) process.stdout.write('"}\n'); }
+      if (opened) {
+        write(decoder.decode());
+        if (json) {
+          const page = await call(flags, `${path}/logs?format=json&limit=1`).then(response => response.json()).then(body => body.value).catch(() => null);
+          process.stdout.write(`","value":${JSON.stringify({ cursor: null, coverage: page?.coverage ?? null, drops: page?.drops ?? null, historical_drops: page?.historical_drops ?? null })}}\n`);
+        }
+      }
       process.off("SIGINT", stop);
       process.off("SIGTERM", stop);
     }
