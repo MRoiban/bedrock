@@ -21,6 +21,8 @@ export type StartPebbleOptions = ({ dir: string; pebble?: never } | { pebble: Pe
   dataDir?: string;
   port?: number;
   dev?: boolean;
+  /** Disable scheduled dispatch while retaining explicit jobs.run(). */
+  cron?: boolean;
   /** The daemon starts exclusive services after the previous child exits. */
   deferExclusive?: boolean;
   /** Reject fetch inside queue slots. On unless the caller opts out; production child processes decide from their environment. */
@@ -123,7 +125,7 @@ export async function startPebble(options: StartPebbleOptions) {
     storageCleanup.unref();
     const tokenCleanup = pebble.tokens ? setInterval(() => { void execute.flushTokens().catch(error => console.error("Token usage flush failed", error)); }, 60_000) : undefined;
     tokenCleanup?.unref();
-    jobs.start();
+    if (options.cron !== false) jobs.start();
     let stopping: Promise<void> | undefined;
     return {
       server, pebble, startExclusive, stopTimeout: services.stopTimeout, db: database.db, execute, jobs,

@@ -1218,6 +1218,67 @@ The link is bound to one pebble, but its resulting cookie carries the ordinary
 that identity to its first redeemer. No pebble changes are needed; use temporary
 homes and fake users for tests, never real creator cookies.
 
+## Testing your pebble
+
+Run `bedrock test --json`: Bun tests under `tests/unit` first, then built-in smoke
+and ordinary Playwright `tests/e2e/**/*.spec.ts`. Install browser tooling only as
+**dev dependencies**: `bun add --dev @playwright/test@1.64.0 @axe-core/playwright@4.14.0`,
+then `bunx playwright install chromium`. One Chromium worker runs both desktop
+1280×800 and phone 390×844. API-only pebbles skip built-in browser smoke.
+
+Runtime unit tests use `startPebble({ dir, dataDir, port: 0, cron: false })` from
+`bedrock/server`, real SQLite and `app.execute`/`app.jobs.run(name)`; always stop
+the app in `finally`. The command supplies a temporary `BEDROCK_HOME`. Browser
+cases get separate daemon/data homes copied from a closed migration + seed
+template, port 0, no watching or scheduled jobs. Services still run: use your
+own substitutes for external mail/devices/APIs. `server.runJob(name)` invokes
+jobs explicitly. No deployed data/secrets or shell application secrets are used.
+
+Optional `tests/seed.ts` default-exports a function receiving
+`{ db, sqlite, dataDir, users, now }`. Fixture IDs are `bedrock-test-owner`,
+`bedrock-test-friend`, `bedrock-test-outsider`; `now` is fixed at
+`2024-01-01T00:00:00.000Z`. Use fixed IDs/dates for application rows too.
+Optional `bedrock.test.ts` exports `{ seed?, users?, pages?, prepareScreenshot? }`:
+
+```ts
+import type { TestConfig } from "bedrock/testing";
+export default {
+  pages: [{ path: "/", user: "owner", ready: '[data-testid="app-ready"]' }],
+} satisfies TestConfig;
+```
+
+`users` maps owner/friend/outsider to emails (defaults `<role>@example.test`;
+owner is a creator). Override addresses for allow-list pebbles. No config: smoke
+`/` as owner, plus anonymously if public. The readiness fallback is the first
+`[data-bedrock-ready]`, `main` or `[role="main"]`; set an app-specific selector
+when that would match a loading shell, or when your app has no main landmark.
+Login redirects never establish app readiness. Explicit pages can select
+`anonymous`, `owner`, `friend`, `outsider`. Smoke checks fail browser errors,
+definite axe WCAG A/AA violations, and horizontal overflow beyond 1px; axe
+`incomplete` is listed for manual review.
+
+Import `{ test, expect, loginAs }` from `bedrock/testing`. `test` supplies
+`server`, `loginAs(page, "friend")` and separate-context `anonymous`, `owner`,
+`friend`, `outsider` pages. Login uses the real dev form and session enforcement.
+The ordinary `page` starts anonymous. Browser API checks can use same-origin
+`page.evaluate(() => fetch(...))`; the separate Playwright API request client
+may not resolve `*.localhost` on your host.
+
+Screenshots are opt-in (`visual: true` per page): threshold 0.2, zero changed
+pixels, disabled animations, reduced motion, fonts/images ready. Bundle fonts
+and use `prepareScreenshot(page)` for animated runtime state. Approve baselines
+on the home server (Linux/pinned Chromium) with `--update-snapshots --yes`, then
+review and commit `tests/e2e/__screenshots__`. Ordinary missing baselines fail.
+
+`--grep`, `--project desktop|phone`, `[path]`, `--list`, `--headed`, `--repeat N`
+select/diagnose browser tests; units still run unless listing. No retries by
+default; `--diagnostic-retry` marks a passing retry flaky and still fails.
+Exit codes are 0 pass, 1 check failure, 2 setup failure. JSON failures carry the
+report in `error.data`; success uses `value`. Logs, axe results, failure PNGs and
+traces live in `.bedrock/tests/<run>/`, pruned after 7 days / 500 MiB, preserving
+the current run. See `bedrock test --help` and the reference's Testing pebbles
+section for the full contract.
+
 ## Common mistakes
 
 - Importing `pebble.ts` as a runtime value in browser code bundles server code.

@@ -1473,3 +1473,103 @@ against end users and the internet, not hostile creators.
 - The package ships the complete author guide `AGENTS.md` and a short `llms.txt` index.
 - Destructive commands (`db reset`, `pebble delete`) require `--yes`.
 
+
+### Testing pebbles (`bedrock test`)
+
+`bedrock test [path] [--grep <pattern>] [--project desktop|phone] [--json]`
+runs `bun test ./tests/unit` first, then `tests/e2e/**/*.spec.ts` and built-in
+Chromium smoke tests. Missing unit tests are reported as skipped. Unit tests use
+`startPebble({ dir, dataDir, port: 0, cron: false })` from `bedrock/server` and its
+real SQLite database, executor and `jobs.run(name)`; no database mocks are supplied.
+A temporary `BEDROCK_HOME` also protects runtime tests that omit `dataDir`.
+
+Browser tooling is optional, development-only: install
+`bun add --dev @playwright/test@1.64.0 @axe-core/playwright@4.14.0`, then
+`bunx playwright install chromium`. Neither the daemon nor pebble runtime imports
+these packages. A pebble that does not use browser tests need not install them.
+There is one Chromium worker; browsers close at the end of each run. Browser
+integration tests in Bedrock's own suite skip when Chromium is not installed.
+
+Each run builds a new seed template under the system temporary directory. It
+replays the pebble's committed migrations, inserts fixed daemon fixture identities
+(`bedrock-test-owner`, `bedrock-test-friend`, `bedrock-test-outsider`), then calls
+optional `tests/seed.ts`'s default export. The seed receives
+`{ db, sqlite, dataDir, users, now }`; `now` is `2024-01-01T00:00:00.000Z`.
+Use fixed application IDs and dates too. The template database is checkpointed
+and closed before copying. Each browser test gets a separate copy of the daemon
+identity DB, application DB and seeded files, and a fresh real dev daemon/pebble
+on port 0. Source watching and cron dispatch are disabled. Shutdown precedes case
+disposal. `server.runJob(name)` explicitly invokes a job through dev-worker/child
+IPC. Services still start normally: provide pebble-specific substitutes for
+external mail, devices or paid APIs; SQLite isolation does not isolate those.
+Shell application secrets are not inherited, and no deployed data or secrets are
+loaded by the harness.
+
+Optional `bedrock.test.ts` default-exports a plain object (unknown keys fail):
+
+```ts
+import type { TestConfig } from "bedrock/testing";
+export default {
+  users: { owner: "me@example.test", friend: "friend@example.test" },
+  pages: [{ path: "/", user: "owner", ready: '[data-testid="app-ready"]', visual: false }],
+  // seed: overrides the default tests/seed.ts function
+  // prepareScreenshot: async page => { ... put animated controls in a stable state ... }
+} satisfies TestConfig;
+```
+
+Roles are `anonymous`, `owner`, `friend`, `outsider`; default emails are
+`<role>@example.test`, and the owner is a daemon creator. Configured emails must
+be distinct; use the pebble's actual allow-list addresses when necessary. Tests
+can import `{ test, expect, loginAs }` from `bedrock/testing`. The exported `test`
+adds `server`, `loginAs(page, role)` and separate-context `anonymous`, `owner`,
+`friend`, `outsider` page fixtures. Login fills and submits the real same-origin
+dev form and verifies `/_bedrock/me`; it never forges identity headers or cookies.
+The default `page` remains anonymous until login. For browser API assertions use
+same-origin `page.evaluate(() => fetch(...))`: Chromium resolves `*.localhost`
+without host DNS, whereas Playwright's separate API request client may not.
+
+With no `pages`, web pebbles smoke `/` as owner and, if public, anonymously.
+Protected anonymous roots are explicitly skipped; declare an accessible anonymous
+page to cover that state. API-only pebbles skip smoke (authored e2e specs still
+run). Default readiness is the first `[data-bedrock-ready]`, `main` or
+`[role="main"]`; supply a meaningful selector for apps without these or with
+loading shells. A redirect to dev login never counts as application readiness.
+Each declared page runs at 1280×800 and 390×844, DPR 1, locale en-US, timezone UTC
+and reduced motion. Checks report readiness, zero `pageerror`/`console.error`,
+axe WCAG 2.0/2.1/2.2 A/AA violations of every impact, and document-level horizontal
+overflow above 1 CSS pixel. Axe `incomplete` results are listed for manual review;
+a pass is not WCAG certification. Dependent checks are skipped if readiness fails.
+
+Visual comparisons are opt-in per page (`visual: true`). They use Playwright
+`toHaveScreenshot`, color-distance threshold 0.2, **zero changed pixels**, disabled
+animations and hidden caret, after fonts and images settle and optional
+`prepareScreenshot(page)` runs. Bundle the pebble's fonts; do not depend on remote
+font availability or host fallback fonts. Canonical approval uses the home
+server's Linux and pinned Playwright Chromium. Baselines live in
+`tests/e2e/__screenshots__/<platform>/<project>/...`; generation requires
+`--update-snapshots --yes`. Review the images before committing. Missing baselines
+fail ordinary runs. Canvas/JS animation needs the app's real stable-state API in
+the hook; disabled CSS animations alone cannot freeze it.
+
+Additional options: `--list` discovers browser tests without running migrations,
+seed, servers or browsers; `--headed` diagnoses; `--repeat 1..100` repeats browser
+cases; `path` selects matching e2e spec paths (and omits built-in smoke).
+`--grep` and `--project` select browser cases; unit tests still run first.
+Retries default to zero. `--diagnostic-retry` allows one retry, preserves the
+first failure, reports `flaky` if it passes, and still exits nonzero. No silent
+quarantine is provided.
+
+Exit codes: 0 pass/discovery, 1 failed checks (including flakes), 2 setup/config
+failure. `--json` emits one Bedrock envelope: `{ ok: true, value: report }` or
+`{ ok: false, error: { code, message, hint, data: report } }`. Report version 1
+contains run ID, duration, configuration, per-check status/duration/attempts,
+artifact paths and reproduction argv. Bun JUnit and Playwright JSON supply the
+results; logs never mix into stdout. Logs, axe data, failure screenshots and
+retained failure traces live under `.bedrock/tests/<run>/`. Completed runs older
+than 7 days are removed, then oldest completed runs until below 500 MiB. Active
+and current runs are preserved; retention reports an oversized current run.
+Nothing is uploaded. `bedrock test --help` lists options and repair commands.
+
+`bedrock dev` retains its source-local `.bedrock/daemon` home, `.bedrock` data,
+source watching, cron and default port 3000. Its shared launcher accepts explicit
+home/data directory, port 0, watch and cron switches for isolated tests.

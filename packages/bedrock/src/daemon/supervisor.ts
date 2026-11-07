@@ -188,6 +188,8 @@ export class Supervisor {
     if (!state) { state = { failures: 0, generation: 0, retired: Promise.resolve() }; this.states.set(name, state); }
     return state;
   }
+  devOptions: { dataDir?: string; cron?: boolean } = {};
+
   async launch(name: string, release: string, devSource = false, onFailure?: (child: Child) => void): Promise<Child> {
     const state = this.state(name);
     const current = this.child(name);
@@ -223,7 +225,8 @@ export class Supervisor {
         env: childEnvironment(process.env, secretEnv, devSource, { BEDROCK_API_URL: this.apiUrl, BEDROCK_HOME: this.home, BEDROCK_RELEASE: release,
           BEDROCK_RELEASE_ID: releaseId, BEDROCK_PREVIOUS_RELEASE: previous ? resolve(previous) : "",
           BEDROCK_DEV: devSource ? "1" : "0",
-          BEDROCK_DATA: devSource ? join(release, ".bedrock") : pebbleDataDir(this.dataRoot, name), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) }),
+          BEDROCK_CRON: devSource && this.devOptions.cron === false ? "0" : "1",
+          BEDROCK_DATA: devSource ? this.devOptions.dataDir ?? join(release, ".bedrock") : pebbleDataDir(this.dataRoot, name), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) }),
         ipc(message: unknown) {
           const value = message as { requestId?: string; value?: unknown; op?: string; name: string; port: number; stopTimeout?: number; error?: { code: string; message: string; hint: string } };
           if (value.op === "reply" && value.requestId) {

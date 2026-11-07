@@ -25,7 +25,7 @@ import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
 
-export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; hibernateTimeoutForTests?: number; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
+export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; hibernateTimeoutForTests?: number; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string; dataDir?: string; cron?: boolean }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
   const home = resolve(options.home ?? bedrockHome());
@@ -157,6 +157,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
     supervisor.apiUrl = `http://127.0.0.1:${server.port}`;
     if (options.devPebble) {
       if (!dev) throw new BedrockError("INVALID_DEV_DOMAIN", "A dev pebble requires development mode.", "Use bedrock dev.");
+      supervisor.devOptions = options.devPebble;
       const child = await supervisor.launch(options.devPebble.name, options.devPebble.dir, true);
       supervisor.activate(options.devPebble.name, child);
       await supervisor.startExclusive(options.devPebble.name, child);
@@ -167,6 +168,10 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
     let stopping: Promise<void> | undefined;
     return {
       server, home,
+      async runDevJob(name: string) {
+        if (!options.devPebble) throw new BedrockError("DEV_ONLY", "Explicit dev jobs require an attached pebble.", "Use bedrock jobs run for deployed pebbles.");
+        return supervisor.jobs(options.devPebble.name, name);
+      },
       stop() {
         return stopping ??= (async () => {
           sockets.stop();

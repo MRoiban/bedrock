@@ -17,6 +17,7 @@ import { bedrockHome } from "../daemon/config";
 import { moveData } from "../daemon/move-data";
 
 const commandHelp: Record<string, [usage: string, description: string]> = {
+  test: ["[path] [--grep <pattern>] [--project desktop|phone] [--list] [--headed] [--repeat <1..100>] [--diagnostic-retry] [--update-snapshots --yes]", "Run Bun unit tests, then isolated Chromium smoke and Playwright specs. Install optional dev dependencies with bun add --dev @playwright/test@1.64.0 @axe-core/playwright@4.14.0; bunx playwright install chromium. Screenshots are opt-in; diagnostic retries still fail on flakes."],
   new: ["<name> [--template react|minimal]", "Create a pebble directory, install dependencies, and initialize Git and migrations."],
   init: ["<name> [--template react|minimal]", "Scaffold a pebble in the current empty directory."],
   db: ["generate [name] [--allow-data-loss] | new <name> | check | plan | migrate", "Generate, create, check, inspect, or apply pebble database migrations."],
@@ -51,6 +52,7 @@ async function main() {
     throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, `Use bedrock ${command} ${commandHelp[command]![0]} [--json].`);
   }
   if (command === "--version" && !args.length) { const info = await buildInfo(); console.log(json ? JSON.stringify({ ok: true, ...info }) : formatBuild(info)); return; }
+  if (command === "test") { await (await import("./test")).testCommand(args, json); return; }
   if (command === "__dev_worker") { await devWorker(); return; }
   if (command === "dev") {
     let port = 3000;
@@ -82,7 +84,7 @@ async function main() {
     const usage = command === "new" || command === "init" ? " <name> [--template react|minimal]" : command === "db" || command === "data" ? ` ${commandHelp[command]![0]}` : " [--remote]";
     throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, `Use bedrock ${command}${usage} [--json].`);
   }
-  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], db generate|new|check|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, pebble-token create|revoke, session create, secrets ls|set|unset, tunnel setup|status|teardown, service install|uninstall|status, doctor, login <domain>, logout, new <name>, self-update, whoami, status, backup setup|run|ls|restore, jobs ls|run, data move <dir>, or --version; add --json for machine-readable output.");
+  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], test [path], db generate|new|check|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, pebble-token create|revoke, session create, secrets ls|set|unset, tunnel setup|status|teardown, service install|uninstall|status, doctor, login <domain>, logout, new <name>, self-update, whoami, status, backup setup|run|ls|restore, jobs ls|run, data move <dir>, or --version; add --json for machine-readable output.");
   console.log(json ? JSON.stringify({ ok: true, ...(result as object) }) : JSON.stringify(result, null, 2));
 }
 
@@ -105,6 +107,6 @@ if (import.meta.main) {
       return;
     }
     console[process.argv.includes("--json") ? "log" : "error"](process.argv.includes("--json") ? JSON.stringify({ ok: false, error: typed.toJSON() }) : `${typed.code}: ${typed.message}\nHint: ${typed.hint}`);
-    process.exitCode = 1;
+    process.exitCode = process.argv.slice(2).filter(arg => arg !== "--json")[0] === "test" ? 2 : 1;
   });
 }

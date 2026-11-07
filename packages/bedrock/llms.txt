@@ -33,6 +33,7 @@ export default definePebble({
 - [Browser client and React](AGENTS.md#browser-client-and-react): client, hooks, UI and release freshness.
 - [Host operations and backups](AGENTS.md#host-operations-and-backups): install, doctor, deploy, tunnel, service and recovery.
 - [Secrets, scoped deploy tokens and service tokens](AGENTS.md#secrets-scoped-deploy-tokens-and-service-tokens): credentials and delegated administration.
+- [Testing your pebble](AGENTS.md#testing-your-pebble).
 - [Common mistakes](AGENTS.md#common-mistakes): author checks.
 
 ## Key CLI commands
