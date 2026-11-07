@@ -1,16 +1,18 @@
 # Work log
 
 ## Now
-Goal: Built-in observability, alerting and `bedrock test`, plus a monitoring pebble, per the owner-approved design (`docs/design/observability/DESIGN.md`, reports 01–04 beside it). Build order: telemetry store + status/metrics/logs → readiness, job deadlines, incidents, alert outbox → `bedrock test` → error tracking (after source maps) → monitoring pebble + off-box watcher kit.
-State: Owner approved the plan (M0 pick fork, M1 telemetry, M2 health/alerts via generic webhook outbox, M3 bedrock test, M4 errors, M5 monitoring pebble). Branch `feat/observability` (e8336f9) holds design docs. M0, M1, M3 delegated to GPT-6.1-sol (xhigh) in worktrees. Live host runs fe93675.
-Next: Review each agent's commit, cherry-pick onto `feat/observability`, run full suite, Rottweiler, deploy, compare against the M1 baseline below. Then M2 and M4.
-Don't: Use Opus sub-agents. Push or make any repo public beyond the owner-approved monitoring fork without asking. Touch `$HOME/.bedrock` in tests.
+Goal: Built-in observability, alerting and `bedrock test`, plus a monitoring pebble, per `docs/design/observability/DESIGN.md` (owner decisions binding).
+State: M0–M4b + M5a on `feat/observability` (live host runs 5f0ce16; 61d463d and later not deployed). M5c prober is LIVE on public fork `MRoiban/bedrock-monitor` master (Actions + Pages + Issues on; var BEDROCK_CANARY_URL; secret NTFY_TOPIC_URL = comms' ntfy topic); page https://www.roiban.xyz/bedrock-monitor/. M5b (private pebble, fork branch `pebble`, /data/playground/bedrock-monitor) still with its agent, uncommitted.
+Next: finish outage drill (scratchpad drill.sh restores the real canary var on exit); review M5b against design/monitoring/handoff.md; Rottweiler over M5; PR feat/observability; deploy; measure telemetry write rate.
+Waiting on owner: private archive repo name; comms `bedrock-monitor` token (`bedrock alerts setup`); `monitor` token for the pebble; boot-herd grace proposal.
+Don't: Use Opus sub-agents. Make anything else public without asking. Print or read secret values (pipe them). Touch `$HOME/.bedrock` in tests.
 
 ## Gotchas
 - Never `git add -A` here: untracked `reports/` and `research_notes/` at the repo root get committed — happened in the M4b merge, 2026-11-07.
 - "standalone react installs, typechecks and deploys…" can time out at 30 s under full-suite load; it passes alone with `--timeout 90000` — 2026-11-07.
 - Run tests with `TMPDIR` on `/dev/shm`: `/tmp` is a small tmpfs and causes bogus ENOSPC — repeated test failures, 2026-11-02.
 - Two socket backpressure tests fail on `main` regardless of changes ("real daemon keeps an unconfigured application burst alive…", "real daemon closes application sockets only when…") — reproduced on several branches.
+- Agent-written GitHub Actions SHA pins can be fabricated; resolve each with `gh api repos/<o>/<r>/commits/<sha>` before pushing — 2 of 4 prober pins did not exist, 2026-11-07.
 - Pilot pebbles comms, typewriter and babel live under `~/.bedrock/pebbles/`, not `/data/bedrock/pebbles/` — `ls` on 2026-11-07.
 
 ## Log
@@ -41,3 +43,5 @@ Don't: Use Opus sub-agents. Push or make any repo public beyond the owner-approv
 - 2026-11-07 [claude]: M5 UX research merged (8ff2d48): 5 views, incidents first, freshness per source, unknown-not-green, fixed-time strips, no ambient motion, public = "Home cloud" only. Decided NOT to use Anima in M5 (research rules out ambient status motion; private pre-1.0 runtime). Built mockup myself: design/monitoring/mockup.html + handoff.md (200542b), reusing Onyx tokens, Typewriter titlebar/section headers, Babel UI activity bar; screenshot-checked 17 view/scenario/theme/width combos with Playwright (0 px overflow). Created public fork MRoiban/bedrock-monitor (from TwiN/gatus, Apache-2.0); local clone /data/playground/bedrock-monitor (branch pebble) + worktree /data/playground/bedrock-monitor-prober (branch prober). Delegated M5a monitor token scope (bedrock), M5b pebble app, M5c off-box prober + public page. Nothing pushed. Private archive repo name still needs owner confirmation.
 - 2026-11-07 [claude]: M5a merged (2419063 → cherry-picked): least-privilege `monitor` scoped-token action + backup timestamps on status. Gap fixed by me (f1a4507): `*`-scoped monitor now sees host-wide incidents (tunnel, backup) and outbox state, needed for the Overview verdict; new test fails before / passes after; narrower globs unchanged. Agent suite 628 pass / 2 known fails.
 - 2026-11-07 [claude]: M5c done (fork worktree branch prober 9fbcc93c, not pushed): prober + journal + 3-fail/2-success lifecycle + issue/ntfy on transitions + Pages export; removed all 9 inherited Gatus workflows; 28 tests, 0 axe violations, privacy scan 0 matches; side-by-side with mockup at 390/1280 close (UTC times, real coverage). Live Actions/Pages/ntfy untested.
+- 2026-11-07 22:20 UTC [claude]: M5c pushed to fork master (26aa88f9; removed local workstation paths first). First dispatch failed at job setup: agent-pinned SHAs for upload-pages-artifact and deploy-pages did not exist upstream → repinned all 4 actions to current releases (79249d8d) and added `check-workflow.py --remote` that resolves pins via `gh api`. Rerun 42420150689: probe + deploy success, journal commit 6ce7380e, page 200, Actions log has no pebble names or ntfy topic.
+- 2026-11-07 22:25 UTC [claude]: started outage drill: canary var → https://bedrock.drill.invalid/healthz for 3 slots, then restore; expects ntfy push + GitHub issue open, then recovery close (unverified until drill log shows DRILL-DONE).
