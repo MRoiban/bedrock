@@ -1,3 +1,5 @@
+import type { Alerts } from "./alerts";
+import type { JobSchedule, Readiness, JobEvent } from "./alerts/model";
 import type { Telemetry } from "./telemetry";
 import { QUIET_MEMORY_MS, emptyMemory, type ChildCgroup, type PebbleCgroups } from "./cgroups";
 import { preferPebbleOom } from "./oom";
@@ -35,6 +37,7 @@ export interface Child {
   access: Access;
   publicRoutes: string[];
   exclusiveServices: string[];
+  jobSchedules?: JobSchedule[];
 }
 interface State { launching?: number; candidates?: Set<Child>; relaunch?: Promise<unknown>; nextRetryAt?: number; waking?: Promise<Child | undefined>; sleeping?: Promise<void>; child?: Child; timer?: ReturnType<typeof setTimeout>; failures: number; generation: number; retired: Promise<void> }
 
@@ -56,6 +59,10 @@ export const restartTiming = { baseMs: 250, fastCapMs: 30000, capMs: 300000, sta
 
 export class Supervisor {
   apiUrl = "";
+  alerts?: Alerts;
+  readiness(name: string, child: Child) {
+    return this.request(name, "readiness", {}, { child, stoppedHint: "Start the pebble.", timeout: { ms: 2000, error: () => new BedrockError("READINESS_TIMEOUT", "Readiness probe timed out.", "Check pebble logs and restart if needed.") } }) as Promise<{ state: Readiness }>;
+  }
   private requests = new Map<string, { child: Child; resolve: (value: unknown) => void; reject: (error: unknown) => void }>();
   private states = new Map<string, State>();
   private loggers = new Map<string, PebbleLogs>();
@@ -85,7 +92,7 @@ export class Supervisor {
   private async request(name: string, op: string, payload: Record<string, unknown>, options: { stoppedHint: string; child?: Child; timeout?: { ms: number; error: () => BedrockError } }) {
     const child = options.child ?? await this.ensure(name);
     if (!child || child.process.exitCode !== null) throw new BedrockError("PEBBLE_STOPPED", `${name} is not running.`, options.stoppedHint);
-    if (op !== "idle.check") child.lastActive = Date.now();
+    if (!["idle.check", "readiness"].includes(op)) child.lastActive = Date.now();
     const observation = this.telemetry?.begin(name, "POST", "/_bedrock/control", "control");
     const requestId = crypto.randomUUID();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -100,7 +107,7 @@ export class Supervisor {
       const value = await response; observation?.headers(200); observation?.finish(); return value;
     } catch (error) { observation?.finish("failure"); throw error; } finally {
       clearTimeout(timer); this.requests.delete(requestId);
-      if (op !== "idle.check") child.lastActive = Date.now();
+      if (!["idle.check", "readiness"].includes(op)) child.lastActive = Date.now();
     }
   }
   // Callers reserve activity synchronously once ensure resolves, before any I/O.
@@ -226,6 +233,8 @@ export class Supervisor {
     const secretEnv = await createSecrets(this.home).env(name);
     logs.protect(Object.values(secretEnv));
     const requests = this.requests;
+    const alerts = this.alerts;
+    const activeJobs = new Map<string, JobEvent>();
     const command = [process.execPath, ...await bunConfigArgs(release), join(import.meta.dir, "../runtime/child.ts")];
     const cgroup = !devSource ? await this.cgroups?.create(name) : undefined;
     let processChild: Child["process"];
@@ -239,6 +248,12 @@ export class Supervisor {
           BEDROCK_DATA: devSource ? this.devOptions.dataDir ?? join(release, ".bedrock") : pebbleDataDir(this.dataRoot, name), BEDROCK_IDENTITY_SECRET: deriveIdentitySecret(this.master, name), BEDROCK_CREATORS: JSON.stringify(this.creators) }),
         ipc(message: unknown) {
           const value = message as { requestId?: string; value?: unknown; op?: string; name: string; port: number; stopTimeout?: number; error?: { code: string; message: string; hint: string } };
+          if (value.op === "job-event") {
+            const event = (message as { event: JobEvent }).event;
+            if (event.state === "started") activeJobs.set(event.run, event);
+            else if (["succeeded", "failed", "interrupted"].includes(event.state)) activeJobs.delete(event.run);
+            alerts?.job(name, event); return;
+          }
           if (value.op === "reply" && value.requestId) {
             const pending = requests.get(value.requestId);
             if (pending?.child !== child) return;
@@ -262,6 +277,7 @@ export class Supervisor {
     void reading.catch(() => {});
     const child: Child = { process: processChild, port: 0, release, releaseId, devSource, started, reading, requests: 0, lastActive: started, idleSafe: false, access: "users", publicRoutes: [], exclusiveServices: [], ...(cgroup ? { cgroup } : {}) };
     void processChild.exited.then(code => {
+      for (const event of activeJobs.values()) alerts?.job(name, { ...event, state: "interrupted", at: Date.now() });
       this.telemetry?.lifecycle(name, code === 0 ? "exit" : "crash", releaseId, code, processChild.signalCode ?? null);
       if (cgroup) void this.cgroups?.remove(cgroup);
       for (const [requestId, pending] of requests) {
@@ -291,6 +307,7 @@ export class Supervisor {
       const exclusiveServices = info.exclusive_services;
       if (!Array.isArray(exclusiveServices) || exclusiveServices.some((name: unknown) => typeof name !== "string")) throw new BedrockError("HEALTH_FAILED", "Invalid exclusive service list.", "Return exclusive service names in the health check.");
       child.exclusiveServices = exclusiveServices;
+      child.jobSchedules = Array.isArray(info.job_schedules) ? info.job_schedules : [];
       child.publicRoutes = publicRoutes;
       const declarations = { jobs: info.jobs, services: info.services };
       child.idleSafe = !this.dev && Object.values(declarations).every(names => Array.isArray(names) && names.length === 0) && await idleSourceSafe(release);

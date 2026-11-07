@@ -1,3 +1,4 @@
+import { alertsApi } from "./alerts/api";
 import { telemetryQuery, telemetryStatus } from "./telemetry/api";
 import { tokenCreator } from "./creator";
 import type { SessionLinks } from "../auth/session-links";
@@ -33,6 +34,8 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
     if (!token || !db.accepts(token)) throw new BedrockError("UNAUTHORIZED", "A valid deploy token is required.", "Run bedrock login for the remote server, pass a valid --token, or restart the local daemon to restore its admin token.");
     const scope = db.tokenScope(token);
     authorizeScope(scope, request);
+    const alertResponse = await alertsApi(request, supervisor.alerts);
+    if (alertResponse) return alertResponse;
     const records = () => db.list().filter(record => !scope || matchesPebble(scope, record.name));
     const url = new URL(request.url);
     const secretMatch = /^\/api\/pebbles\/([^/]+)\/secrets$/.exec(url.pathname);
@@ -97,7 +100,7 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
         const child = supervisor.child(record.name);
         let healthy = false;
         if (child) try { healthy = (await fetch(`http://127.0.0.1:${child.port}/_bedrock/health`, { signal: AbortSignal.timeout(2000) })).ok; } catch {}
-        return { name: record.name, telemetry: observations.get(record.name), memory: await supervisor.memory(record.name), status: record.status, next_retry_at: supervisor.nextRetryAt(record.name), healthy, provenance: record.provenance };
+        return { name: record.name, readiness: supervisor.alerts?.status(record.name, record.status) ?? { state: "starting", observed_at: null }, telemetry: observations.get(record.name), memory: await supervisor.memory(record.name), status: record.status, next_retry_at: supervisor.nextRetryAt(record.name), healthy, provenance: record.provenance };
       })) };
     } else if (request.method === "POST" && url.pathname === "/api/self-update" && maintenance) {
       value = await maintenance.update();

@@ -692,6 +692,8 @@ $BEDROCK_HOME (default ~/.bedrock)
   logs/cloudflared.log  rotated cloudflared output (run token redacted)
   bedrock.sqlite     users, sessions, pebbles registry (release paths relative to home), deploy tokens
   observability.sqlite  daemon telemetry; disposable, excluded from backups
+  alerts.sqlite         durable incidents, job deadlines/history and webhook outbox
+  alerts-secret         webhook bearer credential (0600; never sent to children)
   pebbles/<name>/
     releases/<ts>/   deployed code + .bedrock-web/{public,maps,manifest.json} (last 3)
     current -> releases/<ts>  (relative link; absolute directory junction on Windows)
@@ -951,7 +953,7 @@ $BEDROCK_HOME (default ~/.bedrock)
 The daemon controls pebble children over parent/child IPC, separately from HTTP
 identity forwarding. Requests are `{ op, requestId, ...payload }`: `jobs.list`,
 `jobs.run` (payload `{ name }`), `service-token` (payload `{ user, input?, id? }`),
-`idle.check` (no payload; returns a boolean), and `services.exclusive.start` (no payload; returns `{ started: string[] }`).
+`readiness` (no payload; returns `{ state }`), `idle.check` (no payload; returns a boolean), and `services.exclusive.start` (no payload; returns `{ started: string[] }`).
 Replies are `{ op: "reply", requestId, value }` or
 `{ op: "reply", requestId, error: { code, message, hint } }`. The daemon sends
 `{ op: "stop" }` without a reply; the child performs cleanup and exits. Startup
@@ -1138,8 +1140,7 @@ applies to every endpoint. Parameters: `since`, `from`/`to` (epoch ms), `step`,
 `format=json`. Plain `/logs` remains text; `follow=true` streams text.
 Malformed ranges/FTS/cursors return `INVALID_ARGS` with a hint; storage outages
 return `TELEMETRY_UNAVAILABLE`/`DISK_FULL`. Status stays available with explicit
-unknown coverage and `unavailable:true` if telemetry is down. No alerting,
-readiness probes, error ingestion or public monitoring page is added here.
+unknown coverage and `unavailable:true` if telemetry is down. See the readiness and alerting contract below.
 
 `restart: true` requires an existing deployed pebble. The normal restart now
 launches and health-checks a replacement before switching routing and retiring
@@ -1229,6 +1230,149 @@ IPC failure on child exit returns `PEBBLE_STOPPED`; 15-second timeouts return
 must not assume that no token was created. Ordinary pebble tokens remain in
 `data/db.sqlite` and are included in database backups.
 
+
+### Readiness, jobs and alerts
+
+`/_bedrock/health` remains child liveness and deployment metadata. Readiness is
+private IPC: migrations completed, `sqlite_schema` readable, and **all declared
+services** successfully started (including exclusive services). A child reports
+`ready`, `degraded` (services unavailable), `failed` (DB unreadable), or `stopped`;
+the daemon adds `starting` and `idle`. This tests local resources, not external
+service connectivity or application correctness. Diagnostic DB reads disable
+SQLite lock waits for the synchronous read, restoring the application timeout
+afterwards. Services that fail later must
+let their process fail or expose their own application diagnostics.
+
+The daemon probes existing running children every 30 s, with two concurrent IPC
+requests, a 2 s deadline and no overlapping sweep. Three failures open the check;
+two successes recover it. A readiness page requires two minutes unhealthy or the
+supervisor's `crashed` state. Probes never call `ensure`, extend inactivity, or
+count as application traffic. Idle means **available on demand**, never probed
+awake; hibernation still means running. `bedrock status --json` includes
+`readiness: { state, observed_at }` (idle also `available_on_demand:true`). No
+recent observation (>65 s) is `starting`/unknown, never a fabricated green.
+
+Unauthenticated `GET https://bedrock.<domain>/healthz` returns exactly 200 and
+`bedrock-health-v1\n` when the daemon can read its registry; otherwise 503 and
+`bedrock-unavailable-v1\n`. Plain text, no redirects, no names/counts, no-store,
+fixed body under 32 bytes. Only the daemon hostname exposes this route. An
+external prober must enforce status **and** exact body, disable redirects and
+cache, and bound response size; configure a Cloudflare cache bypass for this
+path. This says nothing about individual pebbles. Whole-host/edge/network failure
+requires the external watcher (M5), independent of this host and webhook target.
+Locally, tunnel detection means cloudflared process presence, not proof of an
+established connector or public reachability.
+
+The daemon's SQLite Worker retains cron/release metadata and next expected
+occurrence independently of the child scheduler. Jobs emit correlated
+`scheduled`, `started`, `succeeded`, `failed`, `skipped` and `interrupted` IPC
+events; success follows executor commit/detached completion. Manual runs have no
+scheduled occurrence. Start grace is 5 min; runtime budget is 10 min (includes
+queue wait). Exceeding the budget records an incident and never kills/replays a
+job. On child death or daemon restart, unfinished starts become interrupted.
+Missed occurrences during a restart/gap become one episode per job; no catch-up.
+Intentionally idle/stopped pebbles have no expected-run pages. Removed jobs and
+pebbles resolve their obsolete incidents on the next sweep.
+
+Criticality belongs to the **host config**, using existing job names, with no new
+`job()` option or pebble primitive:
+
+```json
+{
+  "alerts": {
+    "webhook": "https://comms.example.test/api/v1/messages",
+    "criticalJobs": { "notes": ["sync"] }
+  }
+}
+```
+
+No jobs are critical by default. Only four conditions page: a configured tunnel's
+process is absent; desired-running readiness remains unhealthy for 2 min or the
+supervisor enters a crash loop; an explicitly critical job fails/is interrupted
+or misses its deadline; a configured backup target has no successful backup for
+more than twice its interval. Backup age is per pebble and daemon, including
+stopped/idle data. A never-backed-up target gets a persistent initial 2-interval
+grace; partial successes do not hide another target's stale backup.
+
+Delivery failure >10 min creates a **local-only** `alert-delivery` incident and
+one stderr repair notice per episode. It cannot page through itself; the owner
+must inspect alerts or use independent external monitoring. It resolves when
+webhook submission resumes. Acceptance by a webhook is not provider delivery or
+human acknowledgment. Ordinary job failures, skipped runs and interruptions go
+to the digest. CPU/memory/request spikes and isolated failed probes never page.
+
+Incident fingerprints are JSON `[host, pebble, rule, job]`, stable across release
+and restart, with one incident per episode. Each page opening/resolution commits
+with exactly one immutable outbox row/key in the same transaction. A 30 s group
+window batches eligible transitions in each delivery sweep; it does not combine
+several transitions into one payload. Child-readiness messages wait beneath an
+open tunnel incident. A child recovering while inhibited produces no delayed
+page. Unrelated job/backup incidents remain eligible. Exact-fingerprint silences
+have an expiry; unresolved pages become eligible after expiry. Silences and
+inhibition retain the incident evidence. There is no acknowledgment API yet.
+
+Webhook URL uses HTTPS (HTTP only for loopback), no URL credentials, query or
+fragment. `alerts-secret` is an atomic 0600 file in BEDROCK_HOME, like backup
+credentials. It never enters a child environment or API response. Configure it
+on the daemon host, then restart; URL defaults to comms on this domain:
+
+```sh
+# Dedicated bedrock-monitor client token, from stdin or a hidden terminal prompt:
+bedrock alerts setup --json
+bedrock alerts setup --webhook https://notify.example.test/messages --json
+bedrock alerts test --json
+bedrock alerts --json
+bedrock alerts silence '["example.test","notes","readiness",""]' --for 2h --json
+bedrock jobs history notes --json
+```
+
+`test` durably queues a test message; inspect its outbox state for acceptance. All
+alert notifications, including tests and escalation, use normal urgency and
+respect 23:00–07:30 **Europe/Brussels** quiet hours in Bedrock before submission.
+The comms-compatible JSON payload has `to:["me"]`, subject/text, urgency,
+explicit channels, `idempotency_key`, and metadata (incident, rule, target,
+fingerprint). Initial/resolution messages use Poke. Unresolved incidents escalate
+after 15 min to ntfy + email, then remind at most once per 6 h, all with separate
+durable transition keys. Comms owns provider routing/retries and applies its own
+quiet-hour policy too. No automatic high-urgency wake-up override is enabled.
+
+The generic receiver gets `Authorization: Bearer …` and `Idempotency-Key`, plus
+the same key in the payload. It must accept the comms-shaped payload and dedupe
+unchanged retries. Any 2xx means accepted. Redirects fail; response bodies are
+cancelled unread. At most 16 submissions per sweep, a 2 s network deadline,
+exponential retry 1 s to 6 h (including persistent auth/config failures, surfaced
+locally); numeric Retry-After seconds are honored up to 6 h. Pending payloads
+survive restarts and never change under the same key. HTTP/provider details or
+secrets are not retained in errors. Idempotency lasts only as long as receiver
+retention; this is at-least-once submission, not exactly-once provider delivery.
+
+Weekly Monday 08:00 **server local time**, or the first observation afterwards,
+a low-urgency email digest includes unresolved incidents, job failure/skip counts,
+latest probe observations and outbox counts. A daily digest is enabled only while
+incidents remain unresolved; one per local date, persisted across restarts. No
+missed digests are replayed. Text is bounded to 24,000 characters. Quiet-hour
+email bypass applies only to digests; escalation waits with its push channel.
+
+`GET /api/alerts`, `POST /api/alerts/silence` (`{fingerprint,for:"2h"}`),
+`POST /api/alerts/test`, and `GET /api/jobs/:pebble/history` require an **unscoped
+creator token**, like existing job control and host configuration. Scoped status
+still includes only matching pebbles' readiness; it cannot read global incidents,
+job history, silences or the outbox. Alert APIs use Bedrock envelopes/no-store.
+`alerts` returns open/recent incidents, active silences, checks, and outbox
+metadata/counts, not payloads or credentials; history returns newest 1,000 events.
+
+Storage is `alerts.sqlite`, separate from M1 telemetry so telemetry retention and
+Worker outages cannot remove pending notifications. All monitoring writes run in
+a separate Worker; store failure leaves serving/canary independent and surfaces
+`ALERTS_UNAVAILABLE`. Worker crash retries after 1 min; at most 128 pending IPC
+operations, 5 s response deadline. Probes have constant-size current-state rows;
+job history is 30 days/100,000 events globally. Accepted/suppressed transitions
+and resolved incidents expire after 365 days. At most 1,000 pending outbox rows;
+a full outbox rejects/rolls back a new transition (the condition is evaluated
+again next sweep), never evicts pending delivery. SQLite has a 64 MiB page budget;
+WAL autocheckpoints every 256 pages. These are bounded diagnostic histories, not
+an audit archive. Alert state/credentials are not included in existing daemon DB
+backups; retain BEDROCK_HOME for outbox durability.
 
 ### One-time creator session links
 
@@ -1350,8 +1494,9 @@ ctx.invalidate([audit.schema.auditLog]);
   time. Restricted day-of-month/day-of-week use traditional OR semantics.
   By default, jobs execute in the pebble's write queue with `user: null` (bypassing pebble
   access, retaining bucket policies), invalidate sync after commit, log named
-  failures, and skip overlapping runs of the same job. There is no catch-up or
-  persisted history; overlap protection is process-local.
+  failures, and skip overlapping runs of the same job. There is no catch-up;
+  overlap protection is process-local. The daemon retains execution history and
+  expected deadlines (see [Readiness, jobs and alerts](#readiness-jobs-and-alerts)).
 - `bedrock jobs ls <pebble>` and `jobs run <pebble> <job>` use the authenticated
   daemon API and the IPC control channel to the child.
 - Route handlers keep `(request, server)` and receive FunctionContext as a third

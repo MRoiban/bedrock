@@ -1,3 +1,5 @@
+import { databaseReadable } from "../db/readable";
+import { Alerts } from "./alerts";
 import { Telemetry, type RequestObservation } from "./telemetry";
 import { detectCgroups } from "./cgroups";
 import { createSessionLinks } from "../auth/session-links";
@@ -26,7 +28,7 @@ import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
 
-export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; hibernateTimeoutForTests?: number; telemetryForTests?: boolean; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string; dataDir?: string; cron?: boolean }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
+export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; hibernateTimeoutForTests?: number; telemetryForTests?: boolean; alertsClockForTests?: () => number; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string; dataDir?: string; cron?: boolean }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
   const home = resolve(options.home ?? bedrockHome());
@@ -42,6 +44,8 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const cgroups = await detectCgroups({ dev });
   const telemetry: Telemetry = new Telemetry(home, () => supervisor.resourceGroups(), options.telemetryForTests !== false);
   const supervisor: Supervisor = new Supervisor(home, db, master, config.creators, dev, data, options.idleTimeoutForTests, undefined, cgroups, options.hibernateTimeoutForTests, telemetry);
+  const alerts = new Alerts(home, options.alertsClockForTests, config);
+  supervisor.alerts = alerts;
   const sessions = createSessions(db.db);
   const sockets = sessionSockets(sessions);
   const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);
@@ -82,6 +86,10 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           const target = hostTarget(host, config.domain);
           const url = new URL(request.url);
           const origin = `${dev || host.split(":")[0]!.endsWith(".localhost") ? "http" : "https"}://${host}`;
+          if (target === "bedrock" && request.method === "GET" && url.pathname === "/healthz") {
+            const viable = databaseReadable(db.db, "pebbles");
+            return new Response(viable ? "bedrock-health-v1\n" : "bedrock-unavailable-v1\n", { status: viable ? 200 : 503, headers: { "cache-control": "no-store, max-age=0", "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" } });
+          }
           if (target === "bedrock" || host.split(":")[0] === "127.0.0.1" && url.pathname.startsWith("/api/")) {
             if (request.method === "GET" && url.pathname === "/") return dashboard(request, origin, config, db, sessions, dev);
             if (request.method === "POST" && url.pathname === "/sign-out") return signOut(auth.logout(request, origin));
@@ -180,9 +188,10 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
     await atomicWrite(join(home, "daemon.json"), JSON.stringify({ port: server.port, domain: config.domain }) + "\n");
     tunnel?.start();
     if (!dev) backups.start();
+    if (!options.alertsClockForTests) alerts.start(db, supervisor, config, () => config.cloudflare ? tunnel?.status().running ?? false : null);
     let stopping: Promise<void> | undefined;
     return {
-      server, home, telemetry,
+      server, home, telemetry, alerts,
       async runDevJob(name: string) {
         if (!options.devPebble) throw new BedrockError("DEV_ONLY", "Explicit dev jobs require an attached pebble.", "Use bedrock jobs run for deployed pebbles.");
         return supervisor.jobs(options.devPebble.name, name);
@@ -190,12 +199,14 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       stop() {
         return stopping ??= (async () => {
           sockets.stop();
+          await alerts.pause();
           await backups.stop();
           await releases.shutdown();
           // Keep the relay alive until children send their restart close frames.
           await supervisor.shutdown();
           await server!.stop(true);
           await tunnel?.stop();
+          await alerts.close();
           await telemetry.close();
           db.close();
         })();
@@ -203,10 +214,12 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
     };
   } catch (error) {
     sockets.stop();
+    await alerts.pause();
     await backups.stop();
     await server?.stop(true);
     await tunnel?.stop();
     await supervisor.shutdown();
+    await alerts.close();
     await telemetry.close();
     db.close();
     throw asBedrockError(error, "DAEMON_START_FAILED", "Check setup, the listen port, and daemon home permissions.");

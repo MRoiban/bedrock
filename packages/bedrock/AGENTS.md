@@ -660,7 +660,7 @@ Cron has five fields: minute (0–59), hour (0–23), day (1–31), month (1–1
 (0–7, 0/7 Sunday). Supports numbers, `*`, comma lists, inclusive ranges, `/steps`;
 `5/20` means 5,25,45. Uses local server time. If both day and weekday are restricted,
 either matching is sufficient (traditional cron). No named weekdays/months,
-seconds field, catch-up, or persisted execution history. Each process schedules
+seconds field or catch-up. The daemon persists execution history and expected deadlines. Each process schedules
 once per observed minute; skipped minutes are not replayed. DST follows the local
 clock: missing local minutes are skipped and repeated local minutes can run twice.
 
@@ -672,6 +672,7 @@ skipped (manual or scheduled); different jobs queue through the executor.
 ```sh
 bedrock jobs ls notes --json
 bedrock jobs run notes prune --json
+bedrock jobs history notes --json
 ```
 
 These use creator-authorized daemon APIs. The daemon sends `jobs.list` and
@@ -1411,3 +1412,60 @@ A disk-full backup is skipped independently and retried next cycle. Inspect
 skipped snapshots never advance their success timestamps. Snapshot staging is
 removed after failure/cancellation; the next snapshot also reclaims staging
 owned by dead daemon PIDs before checking space.
+
+
+### Readiness and alerting
+
+`/_bedrock/health` stays liveness. The daemon probes readiness through IPC every
+30 s (2 concurrent, 2 s deadline): migrations applied, SQLite schema readable and
+all declared services started. Diagnostic reads fail immediately on SQLite lock
+contention, restoring the application timeout afterwards. States are starting/ready/degraded/failed/idle/
+stopped. Three failed probes open a check; two successes recover it. Readiness
+in `bedrock status --json` carries observation time; stale observations are
+unknown/starting. Idle means available on demand: probes never wake it or reset
+idle timers. Hibernated children remain running. This checks local resources,
+not external dependencies or application correctness.
+
+Jobs emit scheduled/started/succeeded/failed/skipped/interrupted events; the
+daemon keeps next expected occurrences even if the child scheduler dies. Five
+minutes start grace, ten minutes runtime budget (including queue wait), no
+killing/catch-up. A restart gap is one incident per job; unfinished starts become
+interrupted. History is newest 1,000 events via `bedrock jobs history <pebble>
+--json`, with 30 days/100,000 events global retention. Success means commit or
+detached handler completion, not exactly-once external side effects.
+
+Critical job selection is host administration, not a new pebble option:
+`alerts.criticalJobs: { notes: ["prune"] }` in daemon config (none by default).
+Four page rules: configured cloudflared process absent, desired-running pebble
+unready for 2 min/crash loop, critical job failure/deadline, configured backup age
+>2 intervals. Ordinary job errors/skips and other noise enter digests. A webhook
+submission outage >10 min creates a local incident/stderr notice; independent
+external monitoring is needed because delivery cannot page through itself.
+
+Use `bedrock alerts [ls] --json`, `alerts silence <fingerprint> --for 2h --json`,
+and `alerts test --json`. `alerts setup [--webhook <url>] --json` reads the
+bearer secret from stdin/hidden prompt into BEDROCK_HOME/alerts-secret (0600);
+default URL is https://comms.<domain>/api/v1/messages. Restart after config edits.
+The durable generic webhook uses comms-shaped JSON, Authorization Bearer,
+Idempotency-Key and payload idempotency_key. Receivers must dedupe; 2xx means
+accepted, not provider delivered. Initial Poke, ntfy+email after 15 min unresolved,
+then reminders at most every 6 h. Pages/escalation wait during 23:00–07:30 Brussels;
+weekly Monday 08:00 server-local email digest, daily only while unresolved.
+
+Incidents use stable [host,pebble,rule,job] fingerprints, 30 s grouping, one outbox
+row per opening/resolution, expiring silences, and tunnel inhibition of child
+readiness messages. Unrelated backup/job alerts remain eligible. The Worker keeps
+alerts.sqlite separate from disposable telemetry; 64 MiB page budget, 1,000
+pending transitions, retries to 6 h, no pending eviction. Storage failure leaves
+serving independent. A full outbox rolls back the new transition until a later
+sweep. Histories expire after 365 days; alert state/credentials are excluded from
+existing daemon DB backups. Global alerts/silences/outbox and job history APIs
+require unscoped creator tokens; scoped status only reveals matching readiness.
+
+Unauthenticated https://bedrock.<domain>/healthz returns exactly 200 and
+bedrock-health-v1 plus newline, or 503, fixed text <32 bytes, no-store, no names.
+An outside prober must require status/body, disable redirects/cache and bound the
+body; configure a Cloudflare cache bypass. Registry viability is all it proves;
+whole-host/network failures need an off-box watcher. See
+[the reference](../../docs/reference.md#readiness-jobs-and-alerts) for exact APIs,
+retention, retry, silence, quiet-hours and submission semantics.

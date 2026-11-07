@@ -56,6 +56,7 @@ export function createServices(definitions: Record<string, ServiceDefinition>) {
   }
   return {
     values, stop, stopTimeout, exclusiveNames,
+    ready: () => !controller.signal.aborted && started.length === Object.keys(definitions).length,
     async start(ctx: Omit<ServiceContext, "signal">) {
       try { await startNames(Object.keys(definitions).filter(name => !definitions[name]!.exclusive), ctx); }
       catch (error) { await stop(); throw error; }
