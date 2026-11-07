@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { symbolicate } from "../source-maps";
+import { SymbolicationBatch } from "./symbolication";
 import { cleanEvent, scrub, type ErrorEvent } from "../../errors/model";
-export async function prepareError(home: string, pebble: string, input: unknown, runtime: ErrorEvent["runtime"], secrets: string[]) {
+export async function prepareError(home: string, pebble: string, input: unknown, runtime: ErrorEvent["runtime"], secrets: string[], symbols = new SymbolicationBatch()) {
   const event = cleanEvent(input, runtime, secrets);
   if (!event) return null;
   const root = join(home, "pebbles", pebble, "releases", event.release) + "/";
@@ -10,7 +10,7 @@ export async function prepareError(home: string, pebble: string, input: unknown,
   for (const frame of event.frames) {
     if (runtime === "browser" && frame.file.startsWith("/")) {
       try {
-        const position = await symbolicate(join(home, "pebbles", pebble, "releases"), event.release, frame.file, frame.line, frame.column);
+        const position = await symbols.position(join(home, "pebbles", pebble, "releases"), event.release, frame.file, frame.line, frame.column);
         if (position) { frame.file = position.source; frame.line = position.line; frame.column = position.column; frame.function = position.function ?? "<anonymous>"; frame.mapped = true; }
         else missingMaps = true;
       } catch { missingMaps = true; }

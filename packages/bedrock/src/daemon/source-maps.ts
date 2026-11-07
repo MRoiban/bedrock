@@ -2,11 +2,11 @@ import { join } from "node:path";
 import { BedrockError } from "../error";
 import { webBuildDirectory, type WebBuild } from "../runtime/web-artifacts";
 
-interface SourceMap { version: number; sources: string[]; sourceRoot?: string; names: string[]; mappings: string }
+export interface SourceMap { version: number; sources: string[]; sourceRoot?: string; names: string[]; mappings: string }
 export interface OriginalPosition { source: string; line: number; column: number; function: string | null }
 const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-function values(segment: string) {
+export function mappingValues(segment: string) {
   const result: number[] = [];
   let value = 0, shift = 0;
   for (const char of segment) {
@@ -33,7 +33,7 @@ export function originalPosition(map: SourceMap, line: number, column: number): 
     let found: OriginalPosition | null = null;
     for (const segment of mappings.split(",")) {
       if (!segment) continue;
-      const delta = values(segment);
+      const delta = mappingValues(segment);
       if (![1, 4, 5].includes(delta.length)) throw new Error("Invalid mapping segment");
       generatedColumn += delta[0]!;
       if (generatedLine === line && generatedColumn > column - 1) return found;

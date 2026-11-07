@@ -4,6 +4,7 @@ import { BedrockError } from "../../error";
 import { scrub, type ErrorEvent } from "../../errors/model";
 import { prepareError } from "./prepare";
 import { ErrorStore } from "./store";
+import { SourceMapCache, SymbolicationBatch } from "./symbolication";
 export interface ErrorWork {
   op: string; errorRecords: { pebble: string; event: ErrorEvent }[];
   pebble: string; issue?: string; action: string; target?: string; cursor: number; after: number;
@@ -11,6 +12,7 @@ export interface ErrorWork {
 export class ErrorWorker {
   private store: ErrorStore | undefined;
   private retryAt = 0;
+  private maps = new SourceMapCache();
   private protections = new Map<string, string[]>();
   async handle(home: string, data: ErrorWork, secrets: Map<string, string[]>) {
     try {
@@ -27,9 +29,9 @@ export class ErrorWorker {
         return this.protections.get(pebble)!;
       };
       if (data.op === "errors.batch") {
-        const transitions = [];
+        const transitions = [], symbols = new SymbolicationBatch(this.maps);
         for (const { pebble, event } of data.errorRecords) {
-          const prepared = await prepareError(home, pebble, event, event.runtime, await protect(pebble));
+          const prepared = await prepareError(home, pebble, event, event.runtime, await protect(pebble), symbols);
           if (!prepared) { store.drop("invalid"); continue; }
           const transition = store.write(pebble, prepared); if (transition) transitions.push(transition);
         }

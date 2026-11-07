@@ -1081,8 +1081,14 @@ Payload visibility expires after **14 days**; daily issue/release counts and
 digest transitions after **90 days**. A bounded sweeper runs on writes, reads
 and every minute (physical deletion may lag a large expiry backlog). At most
 20 samples are admitted per issue/release/UTC day, even after eviction; noise
-keeps counts only. Issue/fingerprint metadata is capped at 10,000 fingerprints;
-new groups beyond that drop with a counter. Retry deduplication covers the most
+keeps counts only. Issue/fingerprint metadata is capped at 10,000 fingerprints.
+Browser fingerprints (including merged aliases) are limited to 1,000 per pebble
+and 8,000 globally, reserving at least 2,000 slots for server fingerprints.
+Existing groups keep counting at these limits; new groups drop with
+`browser_issue_budget` or `issue_budget` counters. After 90 days without activity,
+issues and their fingerprints, merge aliases, samples, counts and transitions are
+reclaimed in bounded passes before admission. Resolved/ignored state is kept for
+issues with recent activity. Retry deduplication covers the most
 recent 20,000 event IDs. List pages contain at most 100 issues; detail returns
 20 newest retained samples; count results are capped at 1,000 rows. Missing
 history is not zero occurrences.
@@ -1092,13 +1098,24 @@ frames (relative path, mapped function or anonymous, positive original line),
 excluding dependencies and Bedrock wrappers. Messages, columns and release IDs
 are not fingerprint inputs. No fuzzy line-shift merging is promised. With no
 mapped app evidence, same-type errors share an empty-frame group; `missing_maps`
-remains visible rather than inventing original frames. Extension-only stacks
+remains visible rather than inventing original frames. Browser symbolication uses
+a 64 MiB byte-accounted LRU of private parsed/indexed maps and deduplicates exact
+positions per batch. Each batch allows 100 ms of symbolication, 8 MiB of map/
+manifest input, and 256 distinct positions (manifests also cap at 1 MiB).
+Maps exceeding cache capacity or remaining work fall back to visibly unmapped
+frames; repeated or out-of-range frames cannot monopolize the telemetry Worker.
+Extension-only stacks
 use a quarantine namespace; ResizeObserver loop errors use a count-only noise
 namespace. Neither emits digest transitions. Coarse browser family and a bot
 boolean are the only user-agent derivatives; bots remain tagged, not trusted.
 
 Both client and daemon scrub emails, IP literals, URLs' origins/credentials/query
-strings/fragments, bearer/JWT/token patterns and secret assignments. The Worker
+strings/fragments, bearer/JWT/token patterns and credential assignments with
+quoted or unquoted keys/values (including password/passwd, secret, token,
+api_key/api-key, authorization, cookie/set-cookie, session and bearer).
+Quoted values are redacted in full, including spaces and escaped quotes;
+unquoted credential values conservatively redact through the next comma,
+closing brace or newline, including authorization/cookie spaces and semicolons. The Worker
 also scrubs known pebble secrets (at least four characters where available),
 including mapped frames. The Worker reads current secrets per batch/query even
 without a child, retains known values through rotations, and fails closed if
@@ -1120,7 +1137,9 @@ GET `/api/pebbles/:name/errors[/:issue]?cursor=<number>` and POST
 `/api/pebbles/:name/errors/:issue/resolve|ignore`; merge uses
 `/api/pebbles/:name/errors/:issue/merge?confirm=true&target=<id>`.
 Reads require scoped **logs**; changes require **lifecycle**, both restricted by
-pebble globs. Browser collection grants no issue-read permission. Resolve and
+pebble globs. Detail and changes return `NOT_FOUND` when the issue does not
+belong to that pebble; merge requires both issues in the same pebble.
+Browser collection grants no issue-read permission. Resolve and
 ignore are idempotent; merge keeps fingerprint aliases and daily counts and
 caps merged samples at 20/day/release. A recurrence reopens a resolved issue;
 ignored issues keep counting without reopening. Merge requires --yes; resolve/ignore need no confirmation.

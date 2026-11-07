@@ -5,11 +5,11 @@ export interface ErrorEvent {
 }
 export function scrub(text: string, secrets: string[] = []) {
   for (const secret of secrets) if (secret.length >= 4) text = text.replaceAll(secret, "[REDACTED]");
+  text = text.replace(/(^|[^\w-])(["']?)(password|passwd|secret|(?:access[_-]?|refresh[_-]?)?token|api[_-]?key|authorization|cookie|set-cookie|session(?:[_-]?id)?|bearer|client[_-]?secret)\2\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n,}]+)/gi, "$1$2$3$2=[REDACTED]");
   return text.replace(/https?:\/\/[^\s)]+/gi, value => {
     try { return new URL(value).pathname; } catch { return "[URL]"; }
   }).replace(/[^\s<>@/]+@[^\s<>@/]+\.[^\s<>@/]+/gu, "[EMAIL]")
     .replace(/\b(?:Bearer\s+\S+|(?:brk_|brd_)[\w-]+|eyJ[\w-]+\.[\w-]+\.[\w-]+)\b/gi, "[TOKEN]")
-    .replace(/\b(password|secret|token|api[_-]?key|authorization|cookie)\s*[:=]\s*["']?[^\s,;"']+/gi, "$1=[REDACTED]")
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b|(?<![\w:])(?:[a-f\d]{0,4}:){2,}[a-f\d:.]{0,39}(?![\w:])/gi, "[IP]")
     .replace(/[?#][^\s)]*/g, "").slice(0, 2048);
 }

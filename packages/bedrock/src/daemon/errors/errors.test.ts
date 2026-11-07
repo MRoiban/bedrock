@@ -72,7 +72,7 @@ test("payload budget, sample cap, retention and reserved server capacity stay bo
     expect(store.query("p", issue).samples).toHaveLength(0);
     expect(store.query("p", issue).counts).toHaveLength(1);
     store.maintain(now + 91 * 86400000);
-    expect(store.query("p", issue).counts).toHaveLength(0);
+    expect(store.query("p").issues).toHaveLength(0);
     const defaultPath = join(temp.dir, "default.sqlite"), defaults = new ErrorStore(defaultPath);
     try {
       for (let i = 0; i < 25; i++) defaults.write("p", { ...prepared, id: crypto.randomUUID() }, now);
