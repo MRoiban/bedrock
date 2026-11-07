@@ -78,3 +78,9 @@ Synthesised from four GPT-6.1-sol research reports (01–04 in this folder; ever
 - Alerts leave the daemon through a generic webhook outbox (URL + bearer secret in daemon config); comms is the first and default target. The daemon never depends on one pebble.
 - Playwright and axe are allowed as dev-only dependencies, loaded only by `bedrock test`.
 - A public status page is fine if it makes sense; decide at milestone 5.
+
+## Owner decisions for milestone 5 (2026-11-07)
+- Outside canary: `https://bedrock.<domain>/healthz` (daemon/tunnel/registry liveness only, versioned marker, no per-pebble names).
+- Off-box alert delivery: the Actions probe posts to the same public ntfy.sh topic comms uses (topic kept as a GitHub secret) and opens/closes a GitHub issue in the fork for email. Cloudflare Tunnel Health Alert and a Healthchecks.io watchdog stay optional, off by default.
+- History: pebble keeps check results 14 days, hourly rollups 400 days, incidents forever, 64 MiB cap; public journal keeps 5-minute results 90 days and daily uptime forever.
+- Archive: check results older than 14 days are archived to GitHub (compressed, append-only) instead of deleted. They name private pebbles, so they go to a separate private repository, never the public fork (confirm the repo at M5 before creating it).
