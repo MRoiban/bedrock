@@ -7,6 +7,8 @@ Next: Review each agent's commit, cherry-pick onto `feat/observability`, run ful
 Don't: Use Opus sub-agents. Push or make any repo public beyond the owner-approved monitoring fork without asking. Touch `$HOME/.bedrock` in tests.
 
 ## Gotchas
+- Never `git add -A` here: untracked `reports/` and `research_notes/` at the repo root get committed — happened in the M4b merge, 2026-11-07.
+- "standalone react installs, typechecks and deploys…" can time out at 30 s under full-suite load; it passes alone with `--timeout 90000` — 2026-11-07.
 - Run tests with `TMPDIR` on `/dev/shm`: `/tmp` is a small tmpfs and causes bogus ENOSPC — repeated test failures, 2026-11-02.
 - Two socket backpressure tests fail on `main` regardless of changes ("real daemon keeps an unconfigured application burst alive…", "real daemon closes application sockets only when…") — reproduced on several branches.
 - Pilot pebbles comms, typewriter and babel live under `~/.bedrock/pebbles/`, not `/data/bedrock/pebbles/` — `ls` on 2026-11-07.
