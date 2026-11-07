@@ -52,9 +52,9 @@ export async function startPebble(options: StartPebbleOptions) {
     const release = process.env.BEDROCK_RELEASE_ID || `local-${crypto.randomUUID().slice(0, 8)}`;
     const sync = pebble.sync === true ? createSync(execute, release) : undefined;
     const appSockets = createApplicationSockets(pebble, execute);
-    const web = await loadWeb(dir, pebble.web);
+    const web = await loadWeb(dir, pebble.web, options.dev === true);
     // Bun's generated bundle assets outrank root params and bypass our handler wrappers.
-    if (web.html && pebble.access && pebble.access !== "public" && publicRouteKeys(pebble.routes).some(key => /^(GET|HEAD) \/:[^/]+$/.test(key)))
+    if ((web.html || web.bundled) && pebble.access && pebble.access !== "public" && publicRouteKeys(pebble.routes).some(key => /^(GET|HEAD) \/:[^/]+$/.test(key)))
       throw new BedrockError("INVALID_PUBLIC_ROUTE", "Root public parameter routes conflict with bundled web assets.", "Use a namespaced public parameter route (such as /files/:id), a static public route, or a static web directory.");
     const routes: Record<string, any> = {};
     for (const [key, handler] of Object.entries(pebble.routes ?? {})) {
@@ -75,6 +75,14 @@ export async function startPebble(options: StartPebbleOptions) {
       };
     }
     if (web.html && !Object.hasOwn(routes, "/*")) routes["/*"] = web.html;
+    if (web.bundled) {
+      if (!Object.hasOwn(routes, "/*")) routes["/*"] = web.staticResponse;
+      for (const path of web.assets ?? []) {
+        routes[path] ??= {};
+        routes[path].GET ??= web.staticResponse;
+        routes[path].HEAD ??= web.staticResponse;
+      }
+    }
     routes["/_bedrock/files/*"] = files.handle;
     routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, exclusive_services: services.exclusiveNames, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes), backup: pebble.backup ?? null, jobs: Object.keys(pebble.jobs ?? {}), services: Object.keys(pebble.services ?? {}) }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };

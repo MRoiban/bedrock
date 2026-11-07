@@ -69,6 +69,36 @@ The default `bedrock new notes` React template includes a complete frontend, ins
 dependencies, generates migrations and commits. `new --template minimal` is public
 HTML; `init <name> [--template react]` scaffolds in the current empty directory.
 
+## Production browser assets
+
+Keep `web: "./web/index.html"` for Bun HTML entries or point it at an already-built
+static directory. Deploy installs production dependencies, then builds HTML once
+on the daemon host with production React, minification, split/content-hashed
+assets and external maps, before starting/migrating/health-checking the candidate.
+Build failure gives `WEB_BUILD_FAILED` with a repair hint; the previous release
+keeps serving. Browser imports and build plugins belong in production dependencies.
+`bunfig.toml`'s `[serve.static] plugins` list is shared with the build; without
+that config Bedrock supplies its single-React plugin. If you have your own config,
+include `"bedrock/bundler"` so `bedrock/react` and `@bedrock/ui` share your React.
+Keep module-scope configuration imports free of side effects: build discovery
+imports `pebble.ts` in a separate process with the pebble's secrets.
+
+Only `.bedrock-web/public/` is served. Maps stay in private
+`.bedrock-web/maps/` beside an internal manifest, per release. JS has no public
+map comment; map paths and the internal directory return 404. Do not create
+custom routes exposing these files. Three retained releases keep matching maps;
+restart and rollback reuse the build. HTML uses `no-cache`; hashed assets are
+immutable and weak ETags support 304s. Previous-release hashed assets remain
+available for stale tabs; release headers and safe reload behavior still apply.
+
+Static directories keep their existing URLs and already-built content. Supplied
+external/inline JS and CSS maps move to private storage and map comments are
+removed. Ship maps with your static build if later symbolication needs original
+source: Bedrock cannot reconstruct mappings from a map-less bundle.
+`bedrock dev` and `bedrock test` continue using the live bundler/HMR and ignore
+production artifacts. Old deployed releases retain their old serving behavior
+until redeployed. No extra author configuration or runtime dependency is needed.
+
 ## Idle lifecycle
 
 Production pebbles without background work may sleep after 15 quiet minutes.

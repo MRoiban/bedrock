@@ -464,7 +464,7 @@ reconnect now with `attempt = 0`. Sent mutations pending at `pagehide` count one
 failed attempt and are resent with the same idempotency key after `pageshow`
 (see [Idempotency](#idempotency)).
 
-**Static caching (static `web` directories).**
+**Static caching (static `web` directories and deployed HTML builds).**
 - `.html` responses: `Cache-Control: no-cache`.
 - Fingerprinted assets (a `-` or `.` followed by 8+ `[A-Za-z0-9_-]` chars containing a
   digit, right before the extension): `Cache-Control: public, max-age=31536000, immutable`.
@@ -474,7 +474,11 @@ failed attempt and are resent with the same idempotency key after `pageshow`
   release's same web directory if present (the supervisor passes
   `BEDROCK_PREVIOUS_RELEASE`), so tabs still on old code keep loading lazy chunks.
   HTML is never served from the previous release.
-- Bun HTML-bundle mode keeps Bun's own asset handling.
+- Deploy-time HTML builds use content-hashed asset names, immutable caching and
+  the same weak validators. Missing hashed assets can come from the previous
+  release's build; HTML always comes from the selected release. Explicit custom
+  routes keep precedence; other URLs fall back to the built HTML entry.
+- Development HTML-bundle mode keeps Bun's own asset handling.
 
 **Bun HTML bundles and React.** Bedrock runs every pebble process with
 `bun --config=<bedrock>/src/runtime/bunfig.toml`, whose `[serve.static] plugins`
@@ -482,12 +486,54 @@ loads `bedrock/bundler`. The plugin resolves every `react` and `react-dom` impor
 (including subpaths such as `react/jsx-runtime` and `react-dom/client`, but not
 `react-dom/server*`/`static*`) from the pebble directory, so linked Bedrock
 packages, `@bedrock/ui` and its dependencies share the pebble's single React copy
-in `bedrock dev` and in hosted releases. Without it they would resolve React from
+in `bedrock dev` and in the deploy-time browser build. Without it they would resolve React from
 their real path in the Bedrock checkout and the page would render blank
 (`Cannot read properties of null (reading 'useContext')`). A pebble without
 React falls back to normal resolution. A pebble's own `bunfig.toml` replaces
 Bedrock's (Bun reads one config), so it must list the plugin itself:
 `[serve.static] plugins = ["bedrock/bundler", …]`; `bedrock doctor` warns otherwise.
+
+**Production builds and private source maps.** After installing a release's
+production dependencies, the daemon builds its HTML `web` entry once with
+`Bun.build`: browser target, production React, minification, split/content-hashed
+assets, absolute asset URLs and external source maps. It uses the same
+`serve.static.plugins` as development (Bedrock's single-React plugin by default;
+a pebble's own `bunfig.toml` replaces that list). Build plugins and browser
+imports must be production dependencies. No laptop build step or new author
+option is required. The build runs in a separate Bun process, with the child's
+allow-listed host environment and pebble secrets; build errors redact those
+secrets. One build runs at a time across deploys, with a 120-second deadline.
+It imports `pebble.ts` to discover `web`, so keep module-scope work free of side
+effects, as for other configuration-loading commands.
+
+Each release owns `.bedrock-web/public/`, `.bedrock-web/maps/` and an internal
+manifest. Only `public/` is served. External maps contain original sources;
+the private map directory is owner-only on POSIX. Requests for `.map` paths or
+any `.bedrock-web` path return 404; generated JS has no `sourceMappingURL`.
+Static `web` directories are already built: Bedrock snapshots their regular files,
+preserves URLs, moves supplied maps into private storage and strips JS/CSS map
+comments (including inline maps, which are retained privately). It does not
+recompile these assets or invent original-source mappings for files shipped
+without maps. Local map-comment targets are associated with their bundle;
+external URLs are never fetched.
+
+Build failure (`WEB_BUILD_FAILED`, with a repair hint) aborts before migrations,
+services or the health gate and leaves the previous release serving. The
+three retained releases include their matching public assets and private maps;
+rollback/restart reuse them without rebuilding. Existing releases without the
+manifest retain their old serving path until redeployed. `bedrock dev` and
+`bedrock test` keep live HTML bundling/HMR and ignore production artifacts.
+
+For later error tracking, internal `daemon/source-maps.ts` exports
+`symbolicate(releasesDirectory, releaseId, bundlePath, line, column)`.
+The caller supplies the trusted pebble releases directory, an exact release id,
+an absolute bundle pathname (no origin/query), and **one-based** line/column.
+It returns `{ source, line, column, function }`, where `function` is the mapped
+name or null; unmapped positions, absent maps and pruned releases return null.
+Malformed maps raise `SOURCE_MAP_INVALID`; invalid coordinates/paths raise
+`INVALID_SOURCE_POSITION`. Lookup uses only the exact private manifest, never
+an event-provided URL. Server-side Bun TS stacks already identify original TS
+lines; no server compilation/map layer is added.
 
 **Connection and HTTP freshness.** `ClientOptions.pollInterval?: number` defaults to
 5000 ms; 0 preserves one-shot HTTP subscriptions. `client.connection(): Connection`
@@ -646,7 +692,7 @@ $BEDROCK_HOME (default ~/.bedrock)
   logs/cloudflared.log  rotated cloudflared output (run token redacted)
   bedrock.sqlite     users, sessions, pebbles registry (release paths relative to home), deploy tokens
   pebbles/<name>/
-    releases/<ts>/   deployed code (kept: last 3)
+    releases/<ts>/   deployed code + .bedrock-web/{public,maps,manifest.json} (last 3)
     current -> releases/<ts>  (relative link; absolute directory junction on Windows)
     secrets.json    private environment secrets, outside releases and data (0600 / owner ACL)
 
@@ -827,7 +873,7 @@ $BEDROCK_HOME (default ~/.bedrock)
   under `/api/`. Every other request gets JSON `{ ok: false, error }` (404/503
   stay plain text). Errors from pebble code are unaffected. The local CLI login
   callback also answers with a styled page.
-- **Deploy**: `bedrock deploy` in a pebble directory. Local: copies to a new release. Remote: tars the directory and uploads to `https://bedrock.<domain>/api/deploy` with a creator deploy token (`bedrock login` stores it). Daemon then installs deps (`bun install --production`), migrates, swaps.
+- **Deploy**: `bedrock deploy` in a pebble directory. Local: copies to a new release. Remote: tars the directory and uploads to `https://bedrock.<domain>/api/deploy` with a creator deploy token (`bedrock login` stores it). Daemon then installs deps (`bun install --production`), prepares the production browser build and private maps, starts/migrates the candidate, health-checks, then swaps.
   Archives always omit `node_modules`, `.bedrock`, `.git`, `._*`, `.DS_Store`,
   `.env` and `.env.*` at every depth, and the archive output itself. `.envoy/`
   and `.environment` are included. Git ignore rules are never applied: ignored
