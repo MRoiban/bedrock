@@ -2,7 +2,7 @@
 
 ## Now
 Goal: Built-in observability, alerting and `bedrock test`, plus a monitoring pebble, per `docs/design/observability/DESIGN.md` (owner decisions binding).
-State: M0–M4b + M5a on `feat/observability` (live host runs 5f0ce16; 61d463d and later not deployed). M5c prober is LIVE on public fork `MRoiban/bedrock-monitor` master (Actions + Pages + Issues on; var BEDROCK_CANARY_URL; secret NTFY_TOPIC_URL = comms' ntfy topic); page https://www.roiban.xyz/bedrock-monitor/. M5b (private pebble, fork branch `pebble`, /data/playground/bedrock-monitor) still with its agent, uncommitted.
+State: M0–M4b + M5a on `feat/observability` (live host runs 5f0ce16; 61d463d and later not deployed). M5c prober is LIVE on public fork `MRoiban/bedrock-monitor` master (Actions + Pages + Issues on; var BEDROCK_CANARY_URL; secret NTFY_TOPIC_URL = comms' ntfy topic); page https://www.roiban.xyz/bedrock-monitor/, also served at https://mc2.onl by Worker `bedrock-status` (fork prober/status-worker). M5b (private pebble, fork branch `pebble`, /data/playground/bedrock-monitor) still with its agent, uncommitted.
 Next: finish outage drill (scratchpad drill.sh restores the real canary var on exit); review M5b against design/monitoring/handoff.md; Rottweiler over M5; PR feat/observability; deploy; measure telemetry write rate.
 Waiting on owner: boot-herd grace proposal. Archive repo = private `MRoiban/Lich` (created, empty). `monitor` token: mint when the M5b pebble deploys.
 Don't: Use Opus sub-agents. Make anything else public without asking. Print or read secret values (pipe them). Touch `$HOME/.bedrock` in tests.
@@ -13,6 +13,8 @@ Don't: Use Opus sub-agents. Make anything else public without asking. Print or r
 - Run tests with `TMPDIR` on `/dev/shm`: `/tmp` is a small tmpfs and causes bogus ENOSPC — repeated test failures, 2026-11-02.
 - Two socket backpressure tests fail on `main` regardless of changes ("real daemon keeps an unconfigured application burst alive…", "real daemon closes application sockets only when…") — reproduced on several branches.
 - Agent-written GitHub Actions SHA pins can be fabricated; resolve each with `gh api repos/<o>/<r>/commits/<sha>` before pushing — 2 of 4 prober pins did not exist, 2026-11-07.
+- This host has no working IPv6: curl to any *.mc2.onl intermittently returns 000 (connect timeout) when it picks AAAA; use `curl -4` before blaming a deploy — 2026-11-07.
+- Wrangler OAuth here has workers_scripts:write but no DNS or workers_routes scope; zone DNS edits go through the tunnel cert token (~/.bedrock/cloudflared/cert.pem, base64 JSON apiToken/zoneID) — never print it — 2026-11-07.
 - Pilot pebbles comms, typewriter and babel live under `~/.bedrock/pebbles/`, not `/data/bedrock/pebbles/` — `ls` on 2026-11-07.
 
 ## Log
@@ -47,3 +49,4 @@ Don't: Use Opus sub-agents. Make anything else public without asking. Print or r
 - 2026-11-07 22:25 UTC [claude]: started outage drill: canary var → https://bedrock.drill.invalid/healthz for 3 slots, then restore; expects ntfy push + GitHub issue open, then recovery close (unverified until drill log shows DRILL-DONE).
 - 2026-11-07 22:27 UTC [claude]: owner named archive repo "Lich" → created PRIVATE MRoiban/Lich (empty). Owner said get the comms token myself → `bun scripts/admin.ts client register bedrock-monitor --print --json` piped (never displayed) into `bedrock alerts setup`; webhook https://comms.mc2.onl/api/v1/messages; restarted daemon (still 5f0ce16): 22 running, 5 idle, 2 stopped (newspaper, nexusboard-lab). Outbox drained: 3 accepted by comms, incl. a STALE newspaper-nightly page opened+resolved from the 21:16 deploy (~1 h late) and a digest.
 - 2026-11-07 [claude]: follow-up: when an undelivered "opened" page's incident has already resolved, the outbox should send one "was down N min, recovered" note instead of a late page + resolved pair (seen on first delivery after setup).
+- 2026-11-07 22:40 UTC [claude]: owner asked mc2.onl to show the status page → Cloudflare Worker `bedrock-status` (custom domain mc2.onl, proxies https://www.roiban.xyz/bedrock-monitor/, strips the source zone's injected cdn-cgi/content link), source in fork prober/status-worker (31de9c82). Wrangler OAuth lacks DNS/routes scopes, so I deleted the apex placeholder with the tunnel cert's zone token: REVERT = CNAME mc2.onl → example.com, proxied, comment "Created during Cloudflare Rules deployment process for Instagram". MX/SPF untouched; redirect rule mc2.onl/insta → Instagram still 301. Verified 200 + identical content over IPv4.
