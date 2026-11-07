@@ -26,3 +26,27 @@ test("static releases privatize existing maps and remove JS/CSS map references",
     expect(await symbolicate(temp.dir, basename(release), "/app-abcdef12.js", 1, 1)).toEqual({ source: "original.ts", line: 1, column: 1, function: "start" });
   } finally { await running.stop(); temp.cleanup(); }
 }, 10000);
+
+test("static maps with other extensions or same-line comments never stay public", async () => {
+  const temp = tempDirectory(), release = join(temp.dir, "release");
+  const map = JSON.stringify({ version: 3, sources: ["original.ts"], names: ["start"], mappings: "AAAAA" });
+  await Bun.write(join(release, "pebble.ts"), `import {definePebble} from 'bedrock';export default definePebble({name:'static',web:'public'});`);
+  await Bun.write(join(release, "public/index.html"), '<script src="/app.js"></script>');
+  await Bun.write(join(release, "public/app.js"), 'console.log("named");//# sourceMappingURL=app.sourcemap.json');
+  await Bun.write(join(release, "public/app.sourcemap.json"), map);
+  await Bun.write(join(release, "public/inline.js"), 'console.log("inline");//# sourceMappingURL=data:application/json;base64,' + Buffer.from(map).toString("base64"));
+  await installRelease(release);
+  await buildReleaseWeb(release, { BEDROCK_HOME: join(temp.dir, "home") }, value => value);
+  const running = await startPebble({ dir: release, dataDir: join(temp.dir, "data"), port: 0 });
+  const request = (path: string) => fetch(new URL(path, running.server.url));
+  try {
+    expect((await request("/app.sourcemap.json")).status).toBe(404);
+    for (const path of ["/app.js", "/inline.js"]) {
+      const text = await (await request(path)).text();
+      expect(text).toContain("console.log");
+      expect(text).not.toContain("sourceMappingURL");
+    }
+    expect(await symbolicate(temp.dir, basename(release), "/app.js", 1, 1)).toEqual({ source: "original.ts", line: 1, column: 1, function: "start" });
+    expect(await symbolicate(temp.dir, basename(release), "/inline.js", 1, 1)).toEqual({ source: "original.ts", line: 1, column: 1, function: "start" });
+  } finally { await running.stop(); temp.cleanup(); }
+}, 10000);

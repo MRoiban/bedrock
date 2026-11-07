@@ -1,6 +1,7 @@
 import { watch } from "node:fs";
 import { join } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
+import { MAX_SERVICE_STOP_TIMEOUT } from "../config/hosting";
 
 export interface DevOptions {
   dir: string;
@@ -47,7 +48,9 @@ export async function launchDev(options: DevOptions, restarted?: (url: string) =
     void Promise.all([forward(worker.stdout), forward(worker.stderr)]).catch(error => console.error(asBedrockError(error).toJSON()));
     const stop = async () => {
       if (worker.exitCode === null) { try { worker.send({ op: "stop" }); } catch { worker.kill(); } }
-      const timeout = setTimeout(() => { if (worker.exitCode === null) worker.kill("SIGKILL"); }, 5000);
+      // Outlast the supervisor's own child deadline (max service stopTimeout + 1 s before SIGKILL + 3 s drain),
+      // so it can reap the pebble; killing the worker first would orphan the child.
+      const timeout = setTimeout(() => { if (worker.exitCode === null) worker.kill("SIGKILL"); }, MAX_SERVICE_STOP_TIMEOUT + 5000);
       try { await worker.exited; } finally { clearTimeout(timeout); }
     };
     const deadline = setTimeout(() => failed(new BedrockError("DEV_START_TIMEOUT", "Development startup exceeded 60 seconds.", "Check service startup and migrations.")), 60_000);

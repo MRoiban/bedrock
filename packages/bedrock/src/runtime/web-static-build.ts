@@ -1,5 +1,5 @@
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, rename } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { webBuildDirectory, type WebBuild } from "./web-artifacts";
 
 // Static directories are already built by their author; preserve their URLs and bytes.
@@ -18,7 +18,7 @@ async function copyStatic(source: string, output: string, manifest: WebBuild, re
         let content: string | Bun.BunFile = file;
         if (/\.(js|css)$/.test(name)) {
           const text = await file.text();
-          const reference = [...text.matchAll(/(?:^\s*\/\/[#@]\s*sourceMappingURL=([^\r\n]+)|\/\*[#@]\s*sourceMappingURL=([^\s*]+)\s*\*\/(?=\s*$))/gm)].at(-1);
+          const reference = [...text.matchAll(mapComment)].at(-1);
           if (reference) references["/" + name] = (reference[1] ?? reference[2])!.trim();
           content = withoutMapReference(text);
         }
@@ -29,9 +29,11 @@ async function copyStatic(source: string, output: string, manifest: WebBuild, re
   }
 }
 
+// Not anchored to the line start: minifiers often append the comment after code on the last line.
+const mapComment = /\/\/[#@]\s*sourceMappingURL=([^\s'"`]+)[ \t]*$|\/\*[#@]\s*sourceMappingURL=([^\s*]+)\s*\*\//gm;
+
 function withoutMapReference(text: string) {
-  return text.replace(/^\s*\/\/[#@]\s*sourceMappingURL=[^\r\n]*/gm, "")
-    .replace(/\/\*[#@]\s*sourceMappingURL=[^\s*]+\s*\*\/(?=\s*$)/g, "");
+  return text.replace(mapComment, "");
 }
 
 export async function buildStatic(entry: string, output: string, manifest: WebBuild) {
@@ -52,6 +54,13 @@ export async function buildStatic(entry: string, output: string, manifest: WebBu
       const pathname = decodeURIComponent(url.pathname);
       if (/[\\\\]/.test(pathname) || pathname.split("/").some(part => part === ".." || part === ".")) continue;
       const map = "maps" + pathname;
+      // A referenced map may use any extension (e.g. app.sourcemap.json); never leave it public.
+      const published = join(output, "public", pathname);
+      if (await Bun.file(published).exists()) {
+        await mkdir(dirname(join(output, map)), { recursive: true });
+        await rename(published, join(output, map));
+        manifest.files = manifest.files.filter(file => file !== pathname);
+      }
       if (await Bun.file(join(output, map)).exists()) manifest.maps[bundle] = map;
     }
   }

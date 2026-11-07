@@ -12,15 +12,20 @@ export async function pruneRuns(root: string, current: string, now = Date.now(),
   const runs = [];
   for (const name of await readdir(root)) {
     const path = join(root, name);
-    if (name === current || !(await stat(join(path, "complete.json")).catch(() => null))?.isFile()) continue;
-    const info = await stat(join(path, "complete.json"));
-    runs.push({ path, time: info.mtimeMs, size: await bytes(path) });
+    if (name === current) continue;
+    const complete = await stat(join(path, "complete.json")).catch(() => null);
+    const info = complete?.isFile() ? complete : await stat(path).catch(() => null);
+    if (!info) continue;
+    // Interrupted runs never write complete.json; count their bytes and reclaim them once
+    // nothing has touched them for a day, so another live run is never deleted.
+    const abandoned = !complete?.isFile() && now - info.mtimeMs > 86_400_000;
+    runs.push({ path, time: info.mtimeMs, size: await bytes(path), removable: !!complete?.isFile() || abandoned });
   }
   runs.sort((a, b) => a.time - b.time);
   const currentBytes = await bytes(join(root, current));
   let total = currentBytes + runs.reduce((sum, run) => sum + run.size, 0);
   const removed: string[] = [];
-  for (const run of runs) if (now - run.time > 7 * 86_400_000 || total > budget) {
+  for (const run of runs) if (run.removable && (now - run.time > 7 * 86_400_000 || total > budget)) {
     await rm(run.path, { recursive: true, force: true });
     total -= run.size;
     removed.push(run.path);
