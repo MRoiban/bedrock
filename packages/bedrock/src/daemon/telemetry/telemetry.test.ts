@@ -46,15 +46,21 @@ test("telemetry Worker storage denial drops without throwing on ingestion", asyn
   } finally { await store.close(); temp.cleanup(); }
 });
 
-test("resource sampling returns explicit nulls and cgroup deltas without processes or wakes", async () => {
+test("resource sampling omits idle/unreadable cgroups and keeps live deltas without wakes", async () => {
   const temp = tempDirectory();
   try {
-    expect((await sampleResources([{ pebble: "test", paths: [] }]))[0]).toMatchObject({ value: { resident: null, swap: null, cpu_us: null, oom_kills: null, source: null } });
+    let now = 1700000000000;
+    const groups = [{ pebble: "idle", paths: [] }, { pebble: "gone", paths: [join(temp.dir, "gone")] }];
+    for (let day = 0; day < 8; day++) {
+      now += 86400000;
+      expect(await sampleResources(groups, () => now)).toEqual([]);
+    }
     await Bun.write(join(temp.dir, "memory.current"), "123"); await Bun.write(join(temp.dir, "memory.swap.current"), "456");
     await Bun.write(join(temp.dir, "cpu.stat"), "usage_usec 100\n"); await Bun.write(join(temp.dir, "memory.events"), "oom_kill 1\n");
-    await sampleResources([{ pebble: "test", paths: [temp.dir] }]);
+    await sampleResources([{ pebble: "test", paths: [temp.dir] }], () => now);
+    now += 15000;
     await Bun.write(join(temp.dir, "cpu.stat"), "usage_usec 600\n"); await Bun.write(join(temp.dir, "memory.events"), "oom_kill 2\n");
-    expect((await sampleResources([{ pebble: "test", paths: [temp.dir] }]))[0]).toMatchObject({ value: { resident: 123, swap: 456, cpu_us: 500, oom_kills: 1, source: "cgroup" } });
+    expect((await sampleResources([{ pebble: "test", paths: [temp.dir] }], () => now))[0]).toMatchObject({ value: { resident: 123, swap: 456, cpu_us: 500, oom_kills: 1, interval_ms: 15000, source: "cgroup" } });
   } finally { temp.cleanup(); }
 });
 

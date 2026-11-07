@@ -195,7 +195,7 @@ export class Supervisor {
     }
   }
   resourceGroups() {
-    return this.db.list().map(record => ({ pebble: record.name, paths: [...new Set([this.states.get(record.name)?.child, ...this.states.get(record.name)?.candidates ?? [], ...[...this.retiring].filter(child => child.release.includes(`/pebbles/${record.name}/`))].filter((child): child is Child => !!child && child.process.exitCode === null).flatMap(child => child.cgroup ? [child.cgroup.path] : []))] }));
+    return this.db.list().map(record => ({ pebble: record.name, paths: [...new Set([this.states.get(record.name)?.child, ...this.states.get(record.name)?.candidates ?? [], ...[...this.retiring].filter(child => child.release.includes(`/pebbles/${record.name}/`))].filter((child): child is Child => !!child && child.process.exitCode === null).flatMap(child => child.cgroup ? [child.cgroup.path] : []))] })).filter(group => group.paths.length > 0);
   }
   private retiring = new Set<Child>();
   nextRetryAt(name: string) { return this.states.get(name)?.nextRetryAt ?? null; }

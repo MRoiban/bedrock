@@ -32,9 +32,9 @@ export function mergeRed(target: Red, value: Red) {
 export interface Resource { resident: number | null; swap: number | null; cpu_us: number | null; oom_kills: number | null; source: "cgroup" | null; interval_ms: number; cpu_percent: number | null }
 export type Record =
   | { kind: "metrics"; pebble: string; time: number; traffic: Traffic; value: Red }
-  | { kind: "logs"; pebble: string; time: number; text: string; stream: string; run: string }
+  | { kind: "logs"; pebble: string; time: number; text: string; stream: string; run: string; boot?: string; sequence?: number }
   | { kind: "events"; pebble: string; time: number; route: string; method: string; status: number; outcome: string; headers_s: number | null; lifetime_s: number }
   | { kind: "lifecycle"; pebble: string; time: number; event: string; run: string | null; code: number | null; signal: string | null; retry_at: number | null }
   | { kind: "resources"; pebble: string; time: number; value: Resource };
-export interface Query { kind: "metrics" | "logs" | "events" | "lifecycle" | "resources"; pebble: string; from: number; to: number; step: number; limit: number; cursor?: number; search?: string }
+export interface Query { kind: "metrics" | "logs" | "events" | "lifecycle" | "resources"; pebble: string; from: number; to: number; step: number; limit: number; cursor?: number; search?: string; watermark?: { boot: string; sequence: number } }
 export const budgets = { logs: 256 * 1024 ** 2, events: 64 * 1024 ** 2, metrics: 160 * 1024 ** 2, lifecycle: 32 * 1024 ** 2 };

@@ -34,14 +34,14 @@ async function statusMetrics(store: Telemetry, pebble: string, from: number, to:
   }
   return result;
 }
-export async function telemetryStatus(store: Telemetry | undefined, pebble: string) {
+export async function telemetryStatus(store: Telemetry | undefined, pebble: string, measurable = true) {
   if (!store) return null;
   const to = Date.now(), from = to - 300000;
   try {
     const [metrics, resources, lifecycle] = await Promise.all([statusMetrics(store, pebble, from, to), store.query({ kind: "resources", pebble, from: to - 60000, to, step: 0, limit: 1 }), store.query({ kind: "lifecycle", pebble, from: 0, to, step: 0, limit: 1 })]);
     const red = new Map<string, Red>();
     for (const row of [...metrics.rows].sort((a: any, b: any) => a.time - b.time)) red.set(row.traffic, mergeRed(red.get(row.traffic) ?? emptyRed(), row));
-    return { now: store.now(pebble), last_5m: Object.fromEntries([...red].map(([traffic, value]) => [traffic, { ...value, starts_per_s: value.starts / 300, completions_per_s: value.completions / 300, p95: { headers_success: quantile(value.headers_success), headers_failure: quantile(value.headers_failure), lifetime_success: quantile(value.lifetime_success), lifetime_failure: quantile(value.lifetime_failure) } }])), resources: resources.rows[0]?.value ?? { resident: null, swap: null, cpu_us: null, oom_kills: null, source: null }, lifecycle: lifecycle.rows[0] ?? null, coverage: metrics.coverage, writer_coverage: metrics.writer_coverage, retained_losses: metrics.retained_losses, historical_drops: metrics.historical_drops, cursor: null, drops: store.drops(pebble), drop_scope: "daemon_boot", collected_since: store.started };
+    return { now: store.now(pebble), last_5m: Object.fromEntries([...red].map(([traffic, value]) => [traffic, { ...value, starts_per_s: value.starts / 300, completions_per_s: value.completions / 300, p95: { headers_success: quantile(value.headers_success), headers_failure: quantile(value.headers_failure), lifetime_success: quantile(value.lifetime_success), lifetime_failure: quantile(value.lifetime_failure) } }])), resources: (measurable ? resources.rows[0]?.value : null) ?? { resident: null, swap: null, cpu_us: null, oom_kills: null, source: null }, lifecycle: lifecycle.rows[0] ?? null, coverage: metrics.coverage, writer_coverage: metrics.writer_coverage, retained_losses: metrics.retained_losses, historical_drops: metrics.historical_drops, cursor: null, drops: store.drops(pebble), drop_scope: "daemon_boot", collected_since: store.started };
   } catch {
     return { now: store.now(pebble), last_5m: null, resources: { resident: null, swap: null, cpu_us: null, oom_kills: null, source: null }, lifecycle: null, coverage: { from_ms: null, to_ms: null }, cursor: null, drops: store.drops(pebble), unavailable: true };
   }

@@ -4,6 +4,10 @@ Implemented daemon telemetry, separate from identity and pebble databases. One
 Worker owns SQLite, FTS, rollups, checkpoints and cgroup reads. The proxy keeps
 unsampled counters and histograms in bounded in-memory deltas; ingestion never
 awaits storage. Supervisor lifecycle and stdout/stderr feed the same store.
+Review follow-up: [retention, resources and follow fixes](M1-REVIEW-FIXES.md)
+contains current limits and repeat measurements; the numbers below are the
+original M1 baseline.
+
 Creator API and CLI expose status, metrics, logs/search, resources and events
 with scoped authorization, coverage, opaque pagination and drops. No runtime
 dependencies were added. WORKLOG.md and the dev launcher were not edited.
@@ -87,7 +91,7 @@ privacy, log rate/byte/UTF-8 limits, resources, authorization, actual CLI envelo
 body-failure/abort separation, recovery, all four classes beyond 1,000 status
 rows, and late completions after deletion.
 
-## Limits and decisions
+## Original limits and decisions
 
 - Physical admission is deliberately more conservative than report 01's proposed
   448 MiB DB + 64 MiB WAL split: the DB caps at 248 MiB, dirty spills are disabled,

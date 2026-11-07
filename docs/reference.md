@@ -1037,20 +1037,29 @@ races, including on older SQLite builds. The Worker checkpoints after batches.
 
 Logical budgets precede time retention: logs **256 MiB**, diagnostic events
 **64 MiB**, metrics including resources **160 MiB**, lifecycle **32 MiB**.
-Accounting conservatively charges text, FTS and row/index overhead. Budget
-pressure evicts oldest records in that category (finest metric tiers first) and counts evictions. If space
-cannot be reclaimed within a bounded pass, new records drop. Independently,
+Accounting charges compact payloads plus row/index and log FTS allowances.
+Metrics reserve 4 MiB for the status tier, 32 MiB for raw resources, 96 MiB
+for minutes, 22 MiB for hours and 6 MiB for days; pressure evicts oldest rows
+within the affected tier and counts evictions. Empty traffic classes are not
+stored. Sparse histogram buckets and resource values use compact positional
+encoding on disk; API fields and histogram arrays are unchanged. Older payloads
+are compacted incrementally when opening/writing the store. Other categories
+evict their oldest records. If space cannot be reclaimed within a bounded pass,
+new records drop. Independently,
 the SQLite page limit caps the DB at 248 MiB. Dirty-page spills are disabled,
 and each batch must first truncate its WAL: even a transaction rewriting the
 whole DB fits with its WAL below the **512 MiB** physical budget. This conservative
-physical cap can shorten coverage before all logical budgets fill. Ingestion
-also stops at a 64 MiB WAL backstop, including externally pinned readers. Disk
+physical cap can shorten coverage before all logical budgets fill. It remains
+248 MiB to cover a worst-case full-DB WAL transaction (including frame overhead)
+without relying on a soft WAL size limit. Physical pressure reclaims raw
+resources/logs/events/lifecycle, then minute/hour/day history, and the status
+tier last. Ingestion also stops at a 64 MiB WAL backstop, including externally pinned readers. Disk
 admission uses the normal 64 MiB free-space margin plus a batch reserve.
 `SQLITE_FULL`, ENOSPC and EDQUOT follow `DISK_FULL`: drop, one daemon stderr
 notice per outage, retry once a minute. Other storage failures drop as well.
 Worker crashes/watchdog failures lose acknowledged-in-progress data, count drops
-and restart after 1 s. Idle resource samples retry storage too. Counters are
-reported per daemon boot; successful batches snapshot them for historical drop
+and restart after 1 s. Resource polling retries storage even when there are no
+measurable children. Counters are reported per daemon boot; successful batches snapshot them for historical drop
 reporting. Unsaved drops can be lost on a daemon crash.
 
 HTTP rollups use UTC **1 m / 7 d**, **1 h / 90 d**, **1 d / 365 d** intervals.
@@ -1091,8 +1100,10 @@ during deploy overlap: `memory.current`, `memory.swap.current`, `cpu.stat`
 `usage_usec` deltas, `memory.events` `oom_kill` deltas. A first/reset sample
 establishes a baseline; CPU 100% means one core. Resource rollups preserve CPU
 consumption, covered duration, memory/swap integrals, peaks and last values.
-Missing cgroups/non-Linux yield explicit nulls, never wake a pebble, and never
-infer OOM from SIGKILL alone. Lifecycle records include spawn, ready, exit/crash
+Missing/unreadable cgroups, idle children and non-Linux yield explicit nulls
+in status without persisting null resource samples; a stopped child cannot
+leave a stale resource value in status. Sampling never wakes a pebble and never
+infers OOM from SIGKILL alone. Lifecycle records include spawn, ready, exit/crash
 (code and signal), retry time, idle, wake, hibernate, stop, activation/deploy and
 retirement, with the child run/release identifier.
 
@@ -1111,7 +1122,10 @@ rotation and own timestamps.
 Existing `pebbles/<name>/logs/pebble.log{,.1,.2,.3}` are left in place and never
 written again. Plain `bedrock logs <name>` / the text logs API includes their
 bounded tail before recent SQLite history; `--follow` adds live accepted lines
-with bounded subscriber buffering. Follow is best effort and can show an
+with bounded subscriber buffering (1 MiB of live data during initialization;
+overflow closes the follower). Subscription precedes history reads; a stable
+per-boot acceptance watermark separates history from buffered live lines,
+including lines sharing a timestamp or identical text. Follow is best effort and can show an
 accepted line before its storage batch fails. JSON/search/paginated history
 covers SQLite only; old files are not indexed/imported and may be removed after
 inspection. Deleting a pebble purges its stored telemetry asynchronously.

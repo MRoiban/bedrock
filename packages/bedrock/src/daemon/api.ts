@@ -95,7 +95,8 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
       value = await Promise.all(records().map(async record => ({ ...record, memory: await supervisor.memory(record.name), next_retry_at: supervisor.nextRetryAt(record.name), public_routes: supervisor.child(record.name)?.publicRoutes ?? await Bun.file(join(record.release, ".bedrock-public-routes.json")).json().catch(() => []), port: supervisor.child(record.name)?.port ?? null, pid: supervisor.child(record.name)?.process.pid ?? null })));
     } else if (request.method === "GET" && url.pathname === "/api/status") {
       const observations = new Map<string, unknown>();
-      for (const record of records()) observations.set(record.name, await telemetryStatus(supervisor.telemetry, record.name));
+      const measurable = new Set(supervisor.resourceGroups().map(group => group.pebble));
+      for (const record of records()) observations.set(record.name, await telemetryStatus(supervisor.telemetry, record.name, measurable.has(record.name)));
       value = { ...maintenance?.info, instanceId, features: daemonFeatures, domain: config?.domain, user: db.tokenEmail(token) ?? "server creator token", creatorSignedIn: !scope && !!config?.creators.some(email => db.db.query("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.email=? AND s.expires_at>? LIMIT 1").get(email, Date.now())), ...(!scope ? { tunnel: tunnelStatus() } : {}), pebbles: await Promise.all(records().map(async record => {
         const child = supervisor.child(record.name);
         let healthy = false;

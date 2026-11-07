@@ -104,13 +104,15 @@ export class Telemetry {
     return this.metrics.begin(pebble, method, path, traffic);
   }
   protect(pebble: string, secrets: string[]) { this.protections.set(pebble, secrets); this.worker?.postMessage({ op: "protect", pebble, secrets }); }
+  private logSequence = 0;
+  logWatermark() { return { boot: this.boot, sequence: this.logSequence }; }
   log(pebble: string, text: string, stream: string, run: string) {
     const second = Math.floor(Date.now() / 1000);
     let rate = this.rates.get(pebble); if (rate?.second !== second) { rate = { second, lines: 0, bytes: 0 }; this.rates.set(pebble, rate); }
     if (rate!.lines++ >= 50 || rate!.bytes >= 128 * 1024) { this.drop(pebble, "log_rate"); return false; }
     const bytes = Buffer.from(text); if (bytes.length > 16384) this.drop(pebble, "log_truncated");
     text = new TextDecoder().decode(bytes.subarray(0, 16384), { stream: true }); rate!.bytes += Buffer.byteLength(text);
-    this.add({ kind: "logs", pebble, time: Date.now(), text, stream, run }, Buffer.byteLength(text) + 1024); return text;
+    this.add({ kind: "logs", pebble, time: Date.now(), text, stream, run, boot: this.boot, sequence: ++this.logSequence }, Buffer.byteLength(text) + 1024); return text;
   }
   lifecycle(pebble: string, event: string, run: string | null = null, code: number | null = null, signal: string | null = null, retry_at: number | null = null) { this.add({ kind: "lifecycle", pebble, time: Date.now(), event, run, code, signal, retry_at }); }
   private resources() {

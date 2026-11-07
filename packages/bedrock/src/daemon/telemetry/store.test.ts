@@ -21,7 +21,7 @@ test("telemetry rollups merge histogram counts atomically at all three resolutio
 });
 
 test("telemetry FTS cursors, bad search, budget eviction and time retention stay consistent", () => {
-  const temp = tempDirectory(); const store = new TelemetryStore(join(temp.dir, "observability.sqlite"), { ...budgets, logs: 4000 });
+  const temp = tempDirectory(); const store = new TelemetryStore(join(temp.dir, "observability.sqlite"), { ...budgets, logs: 900 });
   try {
     const time = Date.now();
     const log = (text: string, time = Date.now()): Record => ({ kind: "logs", pebble: "test", time, text, stream: "stdout", run: "run" });
@@ -98,4 +98,86 @@ test("late request completion cannot resurrect a deleted pebble's metrics", asyn
   const request = metrics.begin("test", "GET", "/", "ordinary");
   metrics.forget("test"); request.headers(200, true); request.finish();
   expect(metrics.take()).toEqual([]);
+});
+
+test("eight clock-driven days of sparse traffic keep seven-day minutes and the status tier", () => {
+  const temp = tempDirectory(), store = new TelemetryStore(join(temp.dir, "observability.sqlite"), { ...budgets, metrics: budgets.metrics / 10 });
+  const start = Date.UTC(2026, 0, 1), end = start + 8 * 86400000;
+  try {
+    // One interval in ten, with one tenth of the budget: exercise retention pressure without a slow soak.
+    for (let time = start; time < end; time += 600000) {
+      const records: Record[] = [];
+      for (let p = 0; p < 24; p++) records.push({ kind: "metrics", pebble: `p${p}`, time, traffic: "ordinary", value: { ...emptyRed(), starts: 1, completions: 1 } });
+      expect(store.write(records, time)).toEqual([]);
+    }
+    for (let p = 0; p < 24; p++) {
+      const pebble = `p${p}`;
+      store.write([{ kind: "metrics", pebble, time: end, traffic: "ordinary", value: { ...emptyRed(), starts: 1 } }, { kind: "metrics", pebble, time: end, traffic: "control", value: { ...emptyRed(), gauge_at: end } }], end);
+      expect(store.query(query("metrics", { pebble, to: end, step: 60 })).coverage).toMatchObject({ from_ms: end - 7 * 86400000 });
+      expect(store.query(query("metrics", { pebble, to: end, step: 1 })).rows).toHaveLength(1);
+    }
+    expect(store.db.query("SELECT * FROM losses").all()).toEqual([]);
+    expect(store.db.query("SELECT count(*) AS count FROM records WHERE traffic='control'").get()).toEqual({ count: 0 });
+    const actual = store.db.query<{ step: number; bytes: number }, []>("SELECT step,sum(bytes) AS bytes FROM records WHERE kind IN ('metrics','resources') GROUP BY step ORDER BY step").all();
+    expect(store.db.query("SELECT * FROM metric_tiers ORDER BY step").all()).toEqual(actual);
+  } finally { store.close(); temp.cleanup(); }
+});
+
+test("minute budget pressure cannot evict the five-minute status tier", () => {
+  const temp = tempDirectory(), store = new TelemetryStore(join(temp.dir, "observability.sqlite"), { ...budgets, metrics: 160000 });
+  const now = Date.UTC(2026, 0, 8);
+  try {
+    for (let i = 0; i < 1500; i++) store.write([{ kind: "metrics", pebble: "test", time: now - i * 60000, traffic: "ordinary", value: { ...emptyRed(), starts: 1 } }], now);
+    expect(store.query(query("metrics", { step: 1, to: now })).rows).toHaveLength(6);
+    expect(store.query(query("metrics", { to: now })).retained_losses.metrics_budget_evicted).toBeGreaterThan(0);
+  } finally { store.close(); temp.cleanup(); }
+});
+
+test("unmeasurable resources are neither stored nor returned as stale status", async () => {
+  const { telemetryStatus } = await import("./api");
+  const temp = tempDirectory(), store = new TelemetryStore(join(temp.dir, "observability.sqlite"));
+  const time = Date.now();
+  try {
+    const value = { resident: null, swap: null, cpu_us: null, oom_kills: null, source: null, interval_ms: 0, cpu_percent: null };
+    store.write(Array.from({ length: 24 }, (_, p) => ({ kind: "resources", pebble: `p${p}`, time, value })), time);
+    expect(store.db.query("SELECT count(*) AS count FROM records").get()).toEqual({ count: 0 });
+    store.write([{ kind: "resources", pebble: "test", time, value: { ...value, resident: 1000, source: "cgroup" } }], time);
+    const adapter = { query: async (q: Query) => store.query(q), now: () => ({}), drops: () => ({}) } as unknown as import("./index").Telemetry;
+    expect((await telemetryStatus(adapter, "test", false))?.resources).toMatchObject({ resident: null, source: null });
+    expect((await telemetryStatus(adapter, "test", true))?.resources).toMatchObject({ resident: 1000, source: "cgroup" });
+  } finally { store.close(); temp.cleanup(); }
+});
+
+test("legacy verbose rows compact on reopen while public metrics, resources and log search stay readable", () => {
+  const temp = tempDirectory(), path = join(temp.dir, "observability.sqlite"), time = Date.now();
+  let store = new TelemetryStore(path);
+  try {
+    const value = { ...emptyRed(), starts: 12 }; observe(value.headers_success, .1);
+    const records: Record[] = [
+      { kind: "metrics", pebble: "test", time, traffic: "ordinary", value },
+      { kind: "resources", pebble: "test", time, value: { resident: 123, swap: 0, cpu_us: null, oom_kills: null, source: "cgroup", interval_ms: 0, cpu_percent: null } },
+      { kind: "logs", pebble: "test", time, stream: "stdout", run: "run", text: "legacy timeout" },
+    ];
+    for (const record of records) store.db.query("INSERT INTO records(kind,pebble,time,step,traffic,value,text,bytes) VALUES(?,?,?,?,?,?,?,1000)").run(record.kind, record.pebble, time, record.kind === "metrics" ? 60 : 0, record.kind === "metrics" ? "ordinary" : "", JSON.stringify(record.kind === "metrics" ? record.value : record), record.kind === "logs" ? record.text : "");
+    store.db.exec("PRAGMA user_version=0"); store.close(); store = new TelemetryStore(path);
+    expect(store.query(query("metrics", { to: time })).rows[0]).toMatchObject({ starts: 12, headers_success: value.headers_success });
+    expect(store.query(query("resources", { to: time, step: 0 })).rows[0]).toMatchObject({ value: { resident: 123 } });
+    expect(store.query(query("logs", { to: time, search: "timeout" })).rows[0]).toMatchObject({ text: "legacy timeout", stream: "stdout", run: "run" });
+    expect(store.db.query<{ bytes: number }, []>("SELECT bytes FROM accounting WHERE kind='metrics'").get()!.bytes).toBeLessThan(500);
+    expect(store.db.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+  } finally { store.close(); temp.cleanup(); }
+});
+
+test("physical pressure reclaims history before the status window", () => {
+  const temp = tempDirectory(), store = new TelemetryStore(join(temp.dir, "observability.sqlite"));
+  const now = Date.UTC(2026, 0, 8);
+  try {
+    store.write(Array.from({ length: 300 }, (_, i) => ({ kind: "metrics", pebble: "test", time: now - i * 60000, traffic: "ordinary", value: { ...emptyRed(), starts: 1 } })), now);
+    const pages = store.db.query<{ page_count: number }, []>("PRAGMA page_count").get()!.page_count;
+    store.db.exec(`PRAGMA max_page_count=${pages + 1}`);
+    expect(store.write([{ kind: "logs", pebble: "test", time: now, stream: "stdout", run: "run", text: "cannot fit the reserve" }], now)).toEqual([{ pebble: "test", kind: "physical_budget" }]);
+    const status = store.query(query("metrics", { step: 1, to: now }));
+    expect(status.rows).toHaveLength(6);
+    expect(status.retained_losses.physical_budget_evicted).toBe(128);
+  } finally { store.close(); temp.cleanup(); }
 });

@@ -132,29 +132,31 @@ export class PebbleLogs {
       return this.redact(buffer.toString("utf8")).split("\n").slice(-lines - 1).join("\n");
     } finally { closeSync(fd); }
   }
-  private async history() {
+  private async history(watermark?: ReturnType<Telemetry["logWatermark"]>) {
     const legacy = this.tail();
     if (!this.telemetry) return legacy;
-    const page = await this.telemetry.store.query({ kind: "logs", pebble: this.telemetry.name, from: Date.now() - 7 * 86400_000, to: Date.now(), step: 0, limit: 100 }).catch(() => null);
+    const page = await this.telemetry.store.query({ kind: "logs", pebble: this.telemetry.name, from: Date.now() - 7 * 86400_000, to: Date.now(), step: 0, limit: 100, ...(watermark ? { watermark } : {}) }).catch(() => null);
     return legacy + (page?.rows ?? []).reverse().map((row: { time: number; text: string }) => `${new Date(row.time).toISOString()} ${this.redact(row.text)}\n`).join("");
   }
   async response(follow: boolean, signal: AbortSignal) {
-    const history = await this.history();
-    if (!follow) return new Response(history, { headers: { "content-type": "text/plain" } });
+    if (!follow) return new Response(await this.history(), { headers: { "content-type": "text/plain" } });
     const encoder = new TextEncoder();
     let cleanup = () => {};
     let closed = false;
     const stream = new ReadableStream<Uint8Array>({
-      start: controller => {
+      start: async controller => {
+        let pending: Uint8Array[] | null = [], pendingBytes = 0;
         const listener = (chunk: Uint8Array) => {
           if (closed) return;
-          if ((controller.desiredSize ?? 0) < -1024 * 1024) { close(); return; }
-          controller.enqueue(chunk);
+          if (pendingBytes + chunk.byteLength > 1024 * 1024 || (controller.desiredSize ?? 0) < -1024 * 1024) { close(); return; }
+          if (pending) { pending.push(chunk); pendingBytes += chunk.byteLength; }
+          else controller.enqueue(chunk);
         };
         const close = () => {
           if (closed) return;
           closed = true;
           cleanup();
+          pending = null;
           controller.close();
         };
         cleanup = () => {
@@ -165,10 +167,15 @@ export class PebbleLogs {
         this.listeners.add(listener);
         this.followers.add(close);
         signal.addEventListener("abort", close, { once: true });
+        if (signal.aborted) { close(); return; }
         try {
-          const tail = history;
+          // The listener is installed before the watermark; history excludes every later acceptance.
+          const watermark = this.telemetry?.store.logWatermark();
+          const tail = await this.history(watermark);
           if (closed) return;
           controller.enqueue(encoder.encode(tail));
+          for (const chunk of pending ?? []) controller.enqueue(chunk);
+          pending = null; pendingBytes = 0;
           if (signal.aborted) close();
         } catch (error) {
           if (!closed) { closed = true; cleanup(); controller.error(error); }

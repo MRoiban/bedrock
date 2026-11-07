@@ -1187,7 +1187,9 @@ transport/body failures count once; 4xx/429 and client aborts are separate.
 Traffic classes are ordinary, stream (SSE/NDJSON/stream responses), websocket
 and control. WebSockets also report handshakes; completion is connection close.
 Resource samples every 15 s reuse Linux cgroups (memory/swap, CPU and OOM deltas),
-including deploy overlap; unsupported/idle values are explicit nulls. CPU 100%
+including deploy overlap; unsupported/idle/unreadable values are explicit nulls
+in status and do not create stored resource rows. Stopped children show nulls
+immediately, even if a recent sample remains in history. CPU 100%
 means one core. Lifecycle includes spawn/ready/exit/crash, retry, idle/wake,
 hibernate, stop and deploy/retire.
 
@@ -1195,8 +1197,12 @@ The daemon's Worker owns `$BEDROCK_HOME/observability.sqlite`; it stays on the
 home filesystem across `dataDir` moves and is excluded from backups. Writes
 batch every second/256 records in a bounded queue and never hold up serving.
 Byte budgets apply before time retention: total 512 MiB, logs 256, events 64,
-metrics/resources 160, lifecycle 32; oldest records are evicted with counters (finest metric tiers first).
-Physical DB/WAL limits independently bound storage. Logs retain 7 d;
+metrics/resources 160, lifecycle 32. Metrics reserve 4/32/96/22/6 MiB for
+status/raw resources/minute/hour/day tiers; oldest rows within the affected tier
+are evicted with counters. Empty traffic classes and empty histogram buckets
+are omitted on disk; public metric fields stay unchanged. The physical DB cap
+remains 248 MiB so even a full-DB WAL transaction fits within 512 MiB; physical
+pressure reclaims raw records, then minute/hour/day history, then status last. Logs retain 7 d;
 request/lifecycle events 90 d. Coverage and drops may shorten any history;
 missing telemetry is unknown, never zero traffic. Runtime drops are scoped to
 the daemon boot, with snapshots from previous boots reported separately.
@@ -1211,8 +1217,10 @@ identity. Every failure/slow request plus 1% successes is eligible, capped at
 
 Existing rotated pebble logs remain read-only legacy files. Plain logs and
 follow include their bounded tail; JSON/search only covers SQLite history.
-Follow is best effort, bounded, and may show a line whose later storage batch
-fails. Cloudflared keeps its existing rotated file. Disk/storage failure drops
+Follow subscribes before reading history and reconciles a stable acceptance
+watermark, avoiding initialization gaps/duplicates. Live initialization buffering
+is bounded to 1 MiB; overflow closes the follower. Follow remains best effort
+and may show a line whose later storage batch fails. Cloudflared keeps its existing rotated file. Disk/storage failure drops
 telemetry with one notice per outage and retries once a minute; a failed Worker
 restarts automatically. Delete purges the pebble's telemetry asynchronously.
 
