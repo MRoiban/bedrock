@@ -35,7 +35,7 @@ export function authorizeScope(scope: TokenScope | null, request: Request) {
     }
   }
   const monitorName = /^\/api\/jobs\/([^/]+)\/history$/.exec(url.pathname);
-  const monitorPebble = /^\/api\/pebbles\/([^/]+)\/(metrics|logs|errors(?:\/(?!transitions$)[^/]+)?)$/.exec(url.pathname);
+  const monitorPebble = /^\/api\/pebbles\/([^/]+)\/(metrics|resources|lifecycle|logs|errors(?:\/(?!transitions$)[^/]+)?)$/.exec(url.pathname);
   const monitorChange = /^\/api\/pebbles\/([^/]+)\/errors\/[^/]+\/(resolve|ignore)$/.exec(url.pathname);
   const monitor = request.method === "GET" && (["/api/status", "/api/pebbles", "/api/alerts"].includes(url.pathname) || !!monitorName || !!monitorPebble) ||
     request.method === "POST" && (["/api/alerts/silence", "/api/alerts/test"].includes(url.pathname) || !!monitorChange);

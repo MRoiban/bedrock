@@ -1283,7 +1283,7 @@ since or cursor. JSON follow preserves the single JSON string stream and appends
 
 Creator-authenticated GET `/api/pebbles/:name/metrics|resources|lifecycle` uses
 scoped deploy action `status`; `/events|logs` uses `logs`. `monitor` also grants
-metrics and logs, including follow. Pebble glob scope
+metrics, resources, lifecycle and logs, including follow. Pebble glob scope
 applies to every endpoint. Parameters: `since`, `from`/`to` (epoch ms), `step`,
 `limit`, `cursor`; logs also `q` (FTS5, at most 1,024 characters) and
 `format=json`. Plain `/logs` remains text; `follow=true` streams text.
@@ -1339,11 +1339,11 @@ and `?` (one character), lowercase letters, digits and hyphens only. Actions are
   Status retains daemon version/features/domain needed by deploy clients; it
   omits tunnel information and does not disclose creator session presence.
 - `service-tokens`: create and revoke target pebble tokens.
-- `monitor`: read `/api/status`, `/api/pebbles`, per-pebble `metrics`, `logs`
+- `monitor`: read `/api/status`, `/api/pebbles`, per-pebble `metrics`, `resources`, `lifecycle`, `logs`
   (including follow), `errors` (including issue detail), and
   `/api/jobs/:pebble/history`; read `/api/alerts`, POST `/api/alerts/silence`
   and `/api/alerts/test`, and POST error issue `resolve`/`ignore`. Error merge,
-  error transition history, resources/events/lifecycle history, job control, and backup listing are excluded.
+  error transition history, events history, job control, and backup listing are excluded.
   Per-pebble routes enforce the token's globs. Status/list filter matching pebbles
   with the same daemon metadata restrictions as `status`. Alerts return only
   matching pebble incidents, their active silences, and matching checks. A token

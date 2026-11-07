@@ -49,7 +49,7 @@ test("monitor scope allows owner monitoring and refuses management and cross-peb
       }
       expect(JSON.stringify(value)).not.toContain("private");
     }
-    for (const path of ["/api/pebbles/bot-one/metrics", "/api/pebbles/bot-one/logs", "/api/jobs/bot-one/history", "/api/pebbles/bot-one/errors", `/api/pebbles/bot-one/errors/${issues["bot-one"]}`]) {
+    for (const path of ["/api/pebbles/bot-one/metrics", "/api/pebbles/bot-one/resources", "/api/pebbles/bot-one/lifecycle", "/api/pebbles/bot-one/logs", "/api/jobs/bot-one/history", "/api/pebbles/bot-one/errors", `/api/pebbles/bot-one/errors/${issues["bot-one"]}`]) {
       const response = await api(path); expect(response.status, path).toBe(200); await response.text();
     }
     const controller = new AbortController();
@@ -76,8 +76,8 @@ test("monitor scope allows owner monitoring and refuses management and cross-peb
       ["/api/jobs/bot-one?job=sync", "POST"], ["/api/jobs/bot-one", "GET"], ["/api/config", "GET"],
       [`/api/pebbles/bot-one/errors/${issues["bot-one"]}/merge?confirm=true&target=x`, "POST"],
       ["/api/pebbles/bot-one/errors/transitions", "GET"],
-      ["/api/pebbles/bot-one/resources", "GET"], ["/api/pebbles/bot-one/events", "GET"], ["/api/pebbles/bot-one/lifecycle", "GET"],
-      ...["metrics", "logs", "logs?follow=true", "errors", `errors/${issues.private}`].map(endpoint => [`/api/pebbles/private/${endpoint}`, "GET"] as [string, string]),
+      ["/api/pebbles/bot-one/events", "GET"],
+      ...["metrics", "resources", "lifecycle", "logs", "logs?follow=true", "errors", `errors/${issues.private}`].map(endpoint => [`/api/pebbles/private/${endpoint}`, "GET"] as [string, string]),
       ["/api/jobs/private/history", "GET"],
       ...["resolve", "ignore"].map(action => [`/api/pebbles/private/errors/${issues.private}/${action}`, "POST"] as [string, string]),
       ["/api/alerts/silence", "POST", { fingerprint: fingerprints.private, for: "2h" }],

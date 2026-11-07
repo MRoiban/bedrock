@@ -1400,10 +1400,10 @@ unmatched pebbles (403 `FORBIDDEN`). Status/list endpoints filter matching pebbl
 `token ls` shows scope; unscoped tokens retain full access.
 
 Use `bedrock token create --name monitor --pebbles "bot-*" --actions monitor --json`
-for monitoring only. `monitor` permits GET status/list, matching pebble metrics,
+for monitoring only. `monitor` permits GET status/list, matching pebble metrics, resources, lifecycle,
 logs (including follow), errors/issue detail, and job history;
 POST alert silence/test and matching issue resolve/ignore. It excludes error
-merge, error transition history, events/resources/lifecycle history, job control, deploy/lifecycle changes,
+merge, error transition history, events history, job control, deploy/lifecycle changes,
 secrets, tokens, service tokens, backups, self-update and sessions. Actions combine
 additively. Fleet status/list filter matching pebbles and omit tunnel/session
 presence just like `status`. Alert reads expose only matching pebble incidents,
