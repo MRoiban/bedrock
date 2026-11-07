@@ -16,7 +16,7 @@ async function copyStatic(source: string, output: string, manifest: WebBuild, re
         manifest.maps["/" + name.slice(0, -4)] = map;
       } else {
         let content: string | Bun.BunFile = file;
-        if (/\.(js|css)$/.test(name)) {
+        if (/\.(m?js|cjs|css)$/.test(name)) {
           const text = await file.text();
           const reference = [...text.matchAll(mapComment)].at(-1);
           if (reference) references["/" + name] = (reference[1] ?? reference[2])!.trim();

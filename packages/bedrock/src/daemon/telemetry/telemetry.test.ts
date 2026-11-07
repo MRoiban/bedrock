@@ -17,6 +17,8 @@ test("telemetry Worker keeps exact RED, separates abort/4xx/body failures, caps 
     for (let i = 0; i < 100; i++) { const request = store.begin("test", "GET", "/private/123?secret=yes", "ordinary"); request.headers(i < 10 ? 500 : i < 20 ? 404 : 200); request.finish(i >= 20 && i < 25 ? "failure" : i >= 25 && i < 30 ? "abort" : undefined); request.finish(); }
     const stream = store.begin("test", "GET", "/stream", "ordinary"); stream.headers(200, true); stream.finish();
     const ws = store.begin("test", "GET", "/ws", "websocket"); ws.headers(101); expect(store.now("test").websocket).toMatchObject({ open_sockets: 1 }); ws.finish();
+    // The limiter counts per calendar second; start early in one so all 61 writes share a window.
+    while (Date.now() % 1000 > 300) await Bun.sleep(5);
     logs.write(new TextEncoder().encode("very-private-secret " + "x".repeat(17000) + "\n"), "stderr", "run");
     for (let i = 0; i < 60; i++) logs.write(new TextEncoder().encode(`line ${i}\n`));
     await settle(store);
