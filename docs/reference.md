@@ -1525,7 +1525,7 @@ escalations and reminders bypass both Bedrock's and comms' quiet hours using
 `urgency:"high"`. Tests use normal urgency; email digests use low urgency.
 The comms-compatible JSON payload has `to:["me"]`, subject/text, urgency,
 explicit channels, `idempotency_key`, and metadata (incident, rule, target,
-fingerprint). Initial/resolution messages use Poke. Unresolved incidents escalate
+fingerprint). Initial/resolution messages use ntfy (never Poke). Unresolved incidents escalate
 after 15 min to ntfy + email, then remind at most once per 6 h, all with separate
 durable transition keys. Comms owns provider routing/retries. Existing immutable
 outbox payloads retain their original urgency across upgrades.

@@ -111,7 +111,7 @@ test("critical escalation at 15m and reminders at most every 6h bypass quiet hou
     await deliver(h.evaluator, h.temp.dir, "http://127.0.0.1/messages", fetcher);
     h.advance(900000); h.evaluator.evaluate({ pebbles: [], tunnel: false }); h.advance(30000);
     await deliver(h.evaluator, h.temp.dir, "http://127.0.0.1/messages", fetcher);
-    expect(calls.map(c => c.channels)).toEqual([["poke"], ["ntfy", "email"]]);
+    expect(calls.map(c => c.channels)).toEqual([["ntfy"], ["ntfy", "email"]]);
     h.evaluator.evaluate({ pebbles: [], tunnel: false });
     expect(h.store.pending()).toHaveLength(0);
     expect(isQuiet(Date.parse("2026-11-03T22:00:00Z"))).toBe(true);

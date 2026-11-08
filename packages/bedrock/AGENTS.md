@@ -1616,7 +1616,7 @@ retaining Host/path, normal access rules and idle wake-up without cloudflared.
 External webhook URLs remain generic.
 The durable generic webhook uses comms-shaped JSON, Authorization Bearer,
 Idempotency-Key and payload idempotency_key. Receivers must dedupe; 2xx means
-accepted, not provider delivered. Initial Poke, ntfy+email after 15 min unresolved,
+accepted, not provider delivered. Initial ntfy (no Poke), ntfy+email after 15 min unresolved,
 then reminders at most every 6 h. Critical incident transitions/escalations use
 high urgency and bypass quiet hours in Bedrock and comms. Non-critical push
 (including normal-urgency tests) waits during 23:00–07:30 Brussels; low-urgency

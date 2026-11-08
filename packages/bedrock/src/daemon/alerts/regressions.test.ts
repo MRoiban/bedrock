@@ -27,7 +27,7 @@ test("R2-1 critical opening, escalation and recovery bypass both quiet-hour gate
     expect(calls.map(c => c.subject)).toEqual(["Bedrock opened: tunnel"]);
     h.advance(900000); h.evaluator.evaluate({ pebbles: [], tunnel: false });
     h.advance(30000); await deliver(h.evaluator, h.temp.dir, "http://127.0.0.1/messages", fetcher);
-    expect(calls.map(c => c.channels)).toEqual([["poke"], ["ntfy", "email"]]);
+    expect(calls.map(c => c.channels)).toEqual([["ntfy"], ["ntfy", "email"]]);
     h.store.condition("", "tunnel", false); h.advance(30000);
     await deliver(h.evaluator, h.temp.dir, "http://127.0.0.1/messages", fetcher);
     expect(calls.map(c => c.urgency)).toEqual(["high", "high", "high"]);
