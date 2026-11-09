@@ -1,6 +1,6 @@
 # @bedrock/ui
 
-Onyx React primitives and four small Bedrock components. React 19 and Bun ≥ 1.2.
+Onyx React primitives, with Golem's motion on the interactive ones, and four small Bedrock components. React 19 and Bun ≥ 1.2.
 The package exports TypeScript source and a committed, standalone stylesheet.
 Pebbles need no Tailwind, PostCSS, configuration, or CSS build command.
 
@@ -53,6 +53,18 @@ SplitView, StatusBar), and display components (Badge, Card, Alert, Avatar,
 Skeleton, …). Names and APIs match Onyx; `Toast` and `Tabs` keep Onyx's
 composition API, including the toast queue hook.
 
+## Motion
+
+Switch, Checkbox, RadioGroupItem, Toggle, ToggleGroup, Button, Spinner, Progress, Meter,
+TabsList, SectionSelect, Slider, PasswordField, CollapsibleTrigger, AccordionTrigger, Alert,
+ToastProvider and ToastQueueViewport come from [Golem](https://github.com/MRoiban/golem): the
+same Onyx controls and props, each with an aria-hidden [Anima](https://github.com/MRoiban/anima)
+drawing for its motion (a thumb that stretches, a check that draws in, a tab indicator that
+travels). Onyx keeps roles, focus, keyboard and state. Importing this package points Golem at
+`/_bedrock/anima/<golem version>/`, which every pebble serves from its installed Golem, so there
+is nothing to configure. Motion follows `prefers-reduced-motion`; wrap the app in
+`<GolemProvider motion="css">` to turn it off. Without the runtime, controls are plain Onyx.
+
 ## Themes and custom styles
 
 Dark is the Onyx default. Switch the document tokens for controls and body portals:
@@ -87,8 +99,9 @@ bun install
 cd packages/ui && bun run build:css
 ```
 
-`build:css` concatenates Onyx's standalone `styles.css` (which already embeds
-the codicon font and its notices) with `src/bedrock/styles.css`; no Tailwind or
+Golem is a dependency the same way (the `@mroiban/golem` release tarball). `build:css`
+concatenates Onyx's standalone `styles.css` (which already embeds the codicon font and its
+notices), Golem's `anima-slots.css` and `styles.css`, and `src/bedrock/styles.css`; no Tailwind or
 PostCSS step is involved. Commit the lockfile and `dist/styles.css`. End users
 never run these scripts.
 

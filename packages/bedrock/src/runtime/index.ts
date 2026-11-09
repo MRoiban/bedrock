@@ -15,6 +15,7 @@ import { checkAccess } from "./access";
 import { createExecutor } from "./functions";
 import { slotOptions } from "./slots";
 import { loadWeb } from "./web";
+import { animaPrefix, createAnimaHandler } from "./anima";
 import { errorResponse, functionHandler } from "./http";
 import { loadPebble } from "./load";
 
@@ -86,6 +87,7 @@ export async function startPebble(options: StartPebbleOptions) {
       }
     }
     routes["/_bedrock/files/*"] = files.handle;
+    routes[`${animaPrefix}*`] = createAnimaHandler(dir);
     routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, exclusive_services: services.exclusiveNames, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes), backup: pebble.backup ?? null, jobs: Object.keys(pebble.jobs ?? {}), job_schedules: Object.entries(pebble.jobs ?? {}).map(([name, job]) => ({ name, cron: job.cron })), services: Object.keys(pebble.services ?? {}) }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };

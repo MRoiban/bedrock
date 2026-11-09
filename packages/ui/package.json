@@ -2,7 +2,7 @@
   "name": "@bedrock/ui",
   "version": "0.1.0",
   "type": "module",
-  "description": "Onyx primitives and Bedrock components with ready-to-use CSS for Bun React apps.",
+  "description": "Onyx primitives with Golem motion, Bedrock components and ready-to-use CSS for Bun React apps.",
   "exports": {
     ".": "./src/index.ts",
     "./styles.css": "./dist/styles.css"
@@ -13,7 +13,9 @@
     "README.md"
   ],
   "sideEffects": [
-    "./dist/styles.css"
+    "./dist/styles.css",
+    "./src/index.ts",
+    "./src/golem.ts"
   ],
   "scripts": {
     "build:css": "bun scripts/build-css.ts"
@@ -24,7 +26,8 @@
     "bedrock": "^0.1.0"
   },
   "dependencies": {
-    "@mroiban/onyx": "https://github.com/MRoiban/onyx/releases/download/v0.2.2/mroiban-onyx-0.2.2.tgz"
+    "@mroiban/onyx": "https://github.com/MRoiban/onyx/releases/download/v0.2.2/mroiban-onyx-0.2.2.tgz",
+    "@mroiban/golem": "https://github.com/MRoiban/golem/releases/download/v0.1.1/mroiban-golem-0.1.1.tgz"
   },
   "devDependencies": {
     "postcss": "^8.5.6",
