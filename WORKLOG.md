@@ -15,6 +15,10 @@ Branch `feat/cli-ux` (one commit). The owner asked 2026-11-09 for it and PR #8 t
 - Full suite at the squash: 839 pass; failing only the 2 known socket backpressure tests and 2 slow-disk timeouts (storage 90 MB chunking, telemetry 8-day) that also fail alone on base `f2a2932`.
 - Not verified for real: zsh and PowerShell completion (shells not installed), prompt cancellation exit 130 in a PTY.
 
+## Golem in @bedrock/ui (2026-11-09)
+Owner decision 2026-11-08 (golem docs/design.md §7): pebbles get Golem's motion with no code changes. Branch `feat/golem`, built from the Golem repo's session (MRoiban/golem). `@bedrock/ui` exports Golem's 18 motion-enabled controls by name over Onyx's (Golem CI type-checks them as drop-ins), calls `configureAnima` with `/_bedrock/anima/<golem version>/` (src/golem.ts), and appends Golem's anima-slots.css + styles.css (no `--onyx-*` definitions, so no theme change). The pebble child serves that path from its installed `@mroiban/golem/runtime/` (src/runtime/anima.ts), version-checked so a cached runtime never meets a newer page. Verified: Typewriter unchanged under `bedrock dev` (21 buttons + tabs drawn, editor pixel-identical apart from a render-time label); chrono, cloudly, discord-reader, netflix-code typecheck unchanged. Upgrading Golem = new release URL in packages/ui/package.json + `bun install` + `bun run build:css`.
+- Golem's runtime path needs the Golem *release* tarball (its `runtime/` folder); a pebble with Golem from a git checkout has no runtime and stays plain Onyx.
+
 ## Open
 - Waiting on owner: boot-herd proposal (health grace or staggered starts — on a cold HDD, `newspaper-nightly` misses the 15 s health gate after daemon restarts and needs a manual restart); confirm the drill's ntfy push and issue email arrived.
 - Not yet observed: the monitor fetching live data with its token (needs a signed-in viewer); a real ntfy push from a Bedrock incident since the Poke→ntfy switch.

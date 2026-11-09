@@ -76,8 +76,8 @@ Public entry points of `bedrock` (package.json `exports`):
 [`@mroiban/onyx`](https://github.com/MRoiban/onyx) release tarball and re-exports
 every Onyx primitive. To upgrade, change the release URL in `packages/ui/package.json`,
 run `bun install`, then `bun run build:css` in `packages/ui`, and commit the lockfile
-and `dist/styles.css`. The stylesheet is Onyx's prebuilt CSS (all layers and the
-codicon font) followed by Bedrock's layouts; pebbles need no CSS build step. Theme palettes and component
+and `dist/styles.css`. Golem (`@mroiban/golem`) upgrades the same way. The stylesheet is Onyx's
+prebuilt CSS (all layers and the codicon font), then Golem's motion-part styles, then Bedrock's layouts; pebbles need no CSS build step. Theme palettes and component
 defaults come from Onyx, with Bedrock supplying its web layouts. Select menus
 follow the trigger’s computed typography across portals, including application
 font-size overrides. Compact host buttons (`size="native"`) preserve child layout;
@@ -492,6 +492,23 @@ their real path in the Bedrock checkout and the page would render blank
 React falls back to normal resolution. A pebble's own `bunfig.toml` replaces
 Bedrock's (Bun reads one config), so it must list the plugin itself:
 `[serve.static] plugins = ["bedrock/bundler", …]`; `bedrock doctor` warns otherwise.
+
+**Motion (Golem).** `@bedrock/ui` exports the motion-enabled controls of
+[`@mroiban/golem`](https://github.com/MRoiban/golem) in place of Onyx's, by name and
+with the same props (Golem's CI checks they accept every Onyx prop): Switch, Checkbox,
+RadioGroupItem, Toggle, ToggleGroup, Button, Spinner, Progress, Meter, TabsList,
+SectionSelect, Slider, PasswordField, CollapsibleTrigger, AccordionTrigger, Alert,
+ToastProvider and ToastQueueViewport, plus `GolemProvider` and `useGolem`. Each is the Onyx
+control with an aria-hidden Anima drawing over it; Onyx keeps roles, focus, keyboard and
+state. Importing `@bedrock/ui` points Golem at `/_bedrock/anima/<golem version>/`, and
+every pebble process serves `GET`/`HEAD /_bedrock/anima/<version>/<path>` from the
+`runtime/` folder of the `@mroiban/golem` it has installed (directly or through
+`@bedrock/ui`), with `cache-control: public, max-age=31536000, immutable`. The version is
+in the path so a cached runtime never meets a newer page: another version, a path outside
+`runtime/`, or a pebble without Golem answers 404, and its controls render as plain Onyx.
+So do reduced motion (`prefers-reduced-motion`, or `<GolemProvider motion="css">`) and any
+load failure. The stylesheet appends Golem's `anima-slots.css` and `styles.css`; they read
+Onyx's tokens and define none, so themes are unchanged.
 
 **Production builds and private source maps.** After installing a release's
 production dependencies, the daemon builds its HTML `web` entry once with

@@ -960,8 +960,14 @@ layout inside host workbench controls, and `Panel variant="docked"` omits card
 borders, rounding, and shadows for docked regions. Docked panels clip and isolate
 positioned content. Floating menus and popovers use the host font and scale
 geometry with `--onyx-scale-ui`.
-Onyx comes from the published `@mroiban/onyx` release; maintainers upgrade it by
-changing the release URL in `packages/ui/package.json`, then running `bun install`
+Switch, Checkbox, RadioGroupItem, Toggle, ToggleGroup, Button, Spinner, Progress, Meter,
+TabsList, SectionSelect, Slider, PasswordField, CollapsibleTrigger, AccordionTrigger, Alert and
+the toast provider/viewport are Golem's (`@mroiban/golem`): the same Onyx controls and props, with
+an Anima motion part the pebble serves itself at `/_bedrock/anima/<version>/`. Nothing to set up.
+Motion follows `prefers-reduced-motion`; `<GolemProvider motion="css">` turns it off, and without
+the runtime every control is plain Onyx.
+Onyx and Golem come from published releases (`@mroiban/onyx`, `@mroiban/golem`); maintainers upgrade one by
+changing its release URL in `packages/ui/package.json`, then running `bun install`
 and `bun run build:css` in `packages/ui`.
 
 ## Host operations and backups
