@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { alertsCommand } from "./alerts";
+import { errorsCommand } from "./errors";
 import { creatorCommand, creatorUsage } from "./creator";
 import { secretsCommand } from "./secrets";
 import { setupWizard } from "./setup";
@@ -17,6 +19,7 @@ import { bedrockHome } from "../daemon/config";
 import { moveData } from "../daemon/move-data";
 
 const commandHelp: Record<string, [usage: string, description: string]> = {
+  test: ["[path] [--grep <pattern>] [--project desktop|phone] [--list] [--headed] [--repeat <1..100>] [--diagnostic-retry] [--update-snapshots --yes]", "Run Bun unit tests, then isolated Chromium smoke and Playwright specs. Install optional dev dependencies with bun add --dev @playwright/test@1.64.0 @axe-core/playwright@4.14.0; bunx playwright install chromium. Screenshots are opt-in; diagnostic retries still fail on flakes."],
   new: ["<name> [--template react|minimal]", "Create a pebble directory, install dependencies, and initialize Git and migrations."],
   init: ["<name> [--template react|minimal]", "Scaffold a pebble in the current empty directory."],
   db: ["generate [name] [--allow-data-loss] | new <name> | check | plan | migrate", "Generate, create, check, inspect, or apply pebble database migrations."],
@@ -29,9 +32,13 @@ const commandHelp: Record<string, [usage: string, description: string]> = {
   secrets: ["ls <pebble> | set <pebble> <NAME> | unset <pebble> <NAME>... [--restart] [--url <url>] [--token <token>]", "List secret names or set and remove pebble secrets."],
   "pebble-token": [creatorUsage["pebble-token"], "Create or revoke a creator-owned pebble token; creation prints the secret once."],
   session: [creatorUsage.session, "Create a one-time creator sign-in URL with a fixed expiry."],
-  token: ["create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id> [--url <url>] [--token <token>]", "Create, list, or revoke deploy tokens."],
+  token: ["create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id> [--url <url>] [--token <token>]", "Create, list, or revoke deploy tokens. Actions: deploy,lifecycle,logs,secrets,status,service-tokens,monitor."],
   backup: ["setup --dir <path> | setup --r2-account <id> --r2-bucket <bucket> --r2-access-key-id <key> [--r2-secret-access-key <secret>] | run [pebble] | ls <pebble> | restore <pebble> [--at <ts>] --yes", "Configure backups, create or list snapshots, or restore pebble data."],
-  jobs: ["ls <pebble> | run <pebble> <job> [--url <url>] [--token <token>]", "List or run pebble jobs."],
+  errors: ["<pebble> | show|resolve|ignore|merge <pebble> <issue> [target] [--yes]", "Inspect or change grouped browser/server error issues."],
+  metrics: ["<pebble> [--since 1h] [--step 1m|1h|1d] [--cursor <cursor>]", "Read daemon RED rollups and bucket-range percentiles."],
+  logs: ["<pebble> [--follow] [--search <fts>] [--since 1h] [--cursor <cursor>]", "Read or follow redacted logs; search retained SQLite history."],
+  alerts: ["[ls] | silence <fingerprint> --for 2h | test | setup [--webhook <url>]", "Inspect incidents, silence pages or configure/test durable webhook delivery."],
+  jobs: ["history <pebble> | ls <pebble> | run <pebble> <job> [--url <url>] [--token <token>]", "List or run pebble jobs."],
   data: ["move <dir>", "With the daemon stopped, copy pebble data and logs to <dir>, verify the copy, and switch dataDir; the old copy is kept."],
 };
 
@@ -51,6 +58,7 @@ async function main() {
     throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, `Use bedrock ${command} ${commandHelp[command]![0]} [--json].`);
   }
   if (command === "--version" && !args.length) { const info = await buildInfo(); console.log(json ? JSON.stringify({ ok: true, ...info }) : formatBuild(info)); return; }
+  if (command === "test") { await (await import("./test")).testCommand(args, json); return; }
   if (command === "__dev_worker") { await devWorker(); return; }
   if (command === "dev") {
     let port = 3000;
@@ -67,6 +75,8 @@ async function main() {
   else if (command === "pebble-token" || command === "session") result = await creatorCommand(command, args);
   else if (command === "secrets") result = await secretsCommand(args);
   else if (command === "backup") result = await backupCommand(args);
+  else if (command === "alerts") result = await alertsCommand(args);
+  else if (command === "errors") result = await errorsCommand(args);
   else if (command === "jobs") result = await jobsCommand(args);
   else if (command === "data" && args[0] === "move" && args.length === 2 && !args[1]!.startsWith("-")) result = { command: "data move", ...await moveData(bedrockHome(), args[1]!, json ? {} : { progress: line => console.error(line) }) };
   else if (command && opsCommands.includes(command)) {
@@ -82,7 +92,7 @@ async function main() {
     const usage = command === "new" || command === "init" ? " <name> [--template react|minimal]" : command === "db" || command === "data" ? ` ${commandHelp[command]![0]}` : " [--remote]";
     throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, `Use bedrock ${command}${usage} [--json].`);
   }
-  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], db generate|new|check|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, pebble-token create|revoke, session create, secrets ls|set|unset, tunnel setup|status|teardown, service install|uninstall|status, doctor, login <domain>, logout, new <name>, self-update, whoami, status, backup setup|run|ls|restore, jobs ls|run, data move <dir>, or --version; add --json for machine-readable output.");
+  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], test [path], db generate|new|check|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, pebble-token create|revoke, session create, secrets ls|set|unset, tunnel setup|status|teardown, service install|uninstall|status, doctor, login <domain>, logout, new <name>, self-update, whoami, status, backup setup|run|ls|restore, jobs ls|run, data move <dir>, or --version; add --json for machine-readable output.");
   console.log(json ? JSON.stringify({ ok: true, ...(result as object) }) : JSON.stringify(result, null, 2));
 }
 
@@ -105,6 +115,6 @@ if (import.meta.main) {
       return;
     }
     console[process.argv.includes("--json") ? "log" : "error"](process.argv.includes("--json") ? JSON.stringify({ ok: false, error: typed.toJSON() }) : `${typed.code}: ${typed.message}\nHint: ${typed.hint}`);
-    process.exitCode = 1;
+    process.exitCode = process.argv.slice(2).filter(arg => arg !== "--json")[0] === "test" ? 2 : 1;
   });
 }

@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
@@ -88,7 +89,9 @@ test("secrets, deploy scope and service tokens work through the daemon and super
     expect((await pebble("/_bedrock/jobs")).status).toBe(404);
     const logText = await (await request("/api/pebbles/upty/logs", scoped)).text();
     expect(logText).not.toContain(secret); expect(logText).toContain("[REDACTED]");
-    expect(await Bun.file(join(home, "pebbles/upty/logs/pebble.log")).text()).not.toContain(secret);
+    const telemetry = new Database(join(home, "observability.sqlite"), { readonly: true });
+    try { expect(JSON.stringify(telemetry.query("SELECT text FROM records WHERE kind='logs'").all())).not.toContain(secret); }
+    finally { telemetry.close(); }
     const replacement = "rotated-discord-credential";
     expect((await request("/api/pebbles/upty/secrets", scoped, "PUT", { set: { DISCORD_TOKEN: replacement } })).status).toBe(200);
     expect((await (await pebble("/env")).json()).digest).toBe(new Bun.CryptoHasher("sha256").update(secret).digest("hex"));

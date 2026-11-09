@@ -16,6 +16,6 @@ export async function jobsCommand(args: string[]) {
     }
   }
   const [action, name, jobName] = positions;
-  if (!name || !["ls", "run"].includes(action!) || positions.length !== (action === "run" ? 3 : 2)) invalid();
-  return { command: `jobs ${action}`, ...await (await call(flags, `/api/jobs/${encodeURIComponent(name!)}${jobName ? `?job=${encodeURIComponent(jobName)}` : ""}`, { method: action === "run" ? "POST" : "GET" })).json() };
+  if (!name || !["ls", "run", "history"].includes(action!) || positions.length !== (action === "run" ? 3 : 2)) invalid();
+  return { command: `jobs ${action}`, ...await (await call(flags, `/api/jobs/${encodeURIComponent(name!)}${action === "history" ? "/history" : ""}${jobName ? `?job=${encodeURIComponent(jobName)}` : ""}`, { method: action === "run" ? "POST" : "GET" })).json() };
 }

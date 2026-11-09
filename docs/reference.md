@@ -464,7 +464,7 @@ reconnect now with `attempt = 0`. Sent mutations pending at `pagehide` count one
 failed attempt and are resent with the same idempotency key after `pageshow`
 (see [Idempotency](#idempotency)).
 
-**Static caching (static `web` directories).**
+**Static caching (static `web` directories and deployed HTML builds).**
 - `.html` responses: `Cache-Control: no-cache`.
 - Fingerprinted assets (a `-` or `.` followed by 8+ `[A-Za-z0-9_-]` chars containing a
   digit, right before the extension): `Cache-Control: public, max-age=31536000, immutable`.
@@ -474,7 +474,11 @@ failed attempt and are resent with the same idempotency key after `pageshow`
   release's same web directory if present (the supervisor passes
   `BEDROCK_PREVIOUS_RELEASE`), so tabs still on old code keep loading lazy chunks.
   HTML is never served from the previous release.
-- Bun HTML-bundle mode keeps Bun's own asset handling.
+- Deploy-time HTML builds use content-hashed asset names, immutable caching and
+  the same weak validators. Missing hashed assets can come from the previous
+  release's build; HTML always comes from the selected release. Explicit custom
+  routes keep precedence; other URLs fall back to the built HTML entry.
+- Development HTML-bundle mode keeps Bun's own asset handling.
 
 **Bun HTML bundles and React.** Bedrock runs every pebble process with
 `bun --config=<bedrock>/src/runtime/bunfig.toml`, whose `[serve.static] plugins`
@@ -482,12 +486,54 @@ loads `bedrock/bundler`. The plugin resolves every `react` and `react-dom` impor
 (including subpaths such as `react/jsx-runtime` and `react-dom/client`, but not
 `react-dom/server*`/`static*`) from the pebble directory, so linked Bedrock
 packages, `@bedrock/ui` and its dependencies share the pebble's single React copy
-in `bedrock dev` and in hosted releases. Without it they would resolve React from
+in `bedrock dev` and in the deploy-time browser build. Without it they would resolve React from
 their real path in the Bedrock checkout and the page would render blank
 (`Cannot read properties of null (reading 'useContext')`). A pebble without
 React falls back to normal resolution. A pebble's own `bunfig.toml` replaces
 Bedrock's (Bun reads one config), so it must list the plugin itself:
 `[serve.static] plugins = ["bedrock/bundler", …]`; `bedrock doctor` warns otherwise.
+
+**Production builds and private source maps.** After installing a release's
+production dependencies, the daemon builds its HTML `web` entry once with
+`Bun.build`: browser target, production React, minification, split/content-hashed
+assets, absolute asset URLs and external source maps. It uses the same
+`serve.static.plugins` as development (Bedrock's single-React plugin by default;
+a pebble's own `bunfig.toml` replaces that list). Build plugins and browser
+imports must be production dependencies. No laptop build step or new author
+option is required. The build runs in a separate Bun process, with the child's
+allow-listed host environment and pebble secrets; build errors redact those
+secrets. One build runs at a time across deploys, with a 120-second deadline.
+It imports `pebble.ts` to discover `web`, so keep module-scope work free of side
+effects, as for other configuration-loading commands.
+
+Each release owns `.bedrock-web/public/`, `.bedrock-web/maps/` and an internal
+manifest. Only `public/` is served. External maps contain original sources;
+the private map directory is owner-only on POSIX. Requests for `.map` paths or
+any `.bedrock-web` path return 404; generated JS has no `sourceMappingURL`.
+Static `web` directories are already built: Bedrock snapshots their regular files,
+preserves URLs, moves supplied maps into private storage and strips JS/CSS map
+comments (including inline maps, which are retained privately). It does not
+recompile these assets or invent original-source mappings for files shipped
+without maps. Local map-comment targets are associated with their bundle;
+external URLs are never fetched.
+
+Build failure (`WEB_BUILD_FAILED`, with a repair hint) aborts before migrations,
+services or the health gate and leaves the previous release serving. The
+three retained releases include their matching public assets and private maps;
+rollback/restart reuse them without rebuilding. Existing releases without the
+manifest retain their old serving path until redeployed. `bedrock dev` and
+`bedrock test` keep live HTML bundling/HMR and ignore production artifacts.
+
+For later error tracking, internal `daemon/source-maps.ts` exports
+`symbolicate(releasesDirectory, releaseId, bundlePath, line, column)`.
+The caller supplies the trusted pebble releases directory, an exact release id,
+an absolute bundle pathname (no origin/query), and **one-based** line/column.
+It returns `{ source, line, column, function }`, where `function` is the mapped
+name or null; unmapped positions, absent maps and pruned releases return null.
+Malformed maps raise `SOURCE_MAP_INVALID`; invalid coordinates/paths raise
+`INVALID_SOURCE_POSITION`. Lookup uses only the exact private manifest, never
+an event-provided URL. Server-side Bun TS stacks already identify original TS
+lines; no server compilation/map layer is added.
 
 **Connection and HTTP freshness.** `ClientOptions.pollInterval?: number` defaults to
 5000 ms; 0 preserves one-shot HTTP subscriptions. `client.connection(): Connection`
@@ -645,19 +691,23 @@ $BEDROCK_HOME (default ~/.bedrock)
   tunnel-token       Cloudflare tunnel run token (0600); API token is never persisted
   logs/cloudflared.log  rotated cloudflared output (run token redacted)
   bedrock.sqlite     users, sessions, pebbles registry (release paths relative to home), deploy tokens
+  observability.sqlite  daemon telemetry; disposable, excluded from backups
+  alerts.sqlite         durable incidents, job deadlines/history and webhook outbox
+  alerts-secret         webhook bearer credential (0600; never sent to children)
+  errors.sqlite         error payloads/counts/state; disposable, excluded from backups
   pebbles/<name>/
-    releases/<ts>/   deployed code (kept: last 3)
+    releases/<ts>/   deployed code + .bedrock-web/{public,maps,manifest.json} (last 3)
     current -> releases/<ts>  (relative link; absolute directory junction on Windows)
     secrets.json    private environment secrets, outside releases and data (0600 / owner ACL)
 
 <data root> = config.dataDir, or $BEDROCK_HOME when unset
   pebbles/<name>/
     data/db.sqlite, data/files/   BEDROCK_DATA / ctx.dataDir
-    logs/            stdout/stderr, rotated
+    logs/            legacy rotated stdout/stderr only; new lines go to observability.sqlite
 ```
 
 - **Data directory.** `dataDir` (absolute) moves every pebble's `data/` and `logs/`
-  to another disk; code, secrets, the daemon database, configuration and
+  to another disk; new telemetry stays in BEDROCK_HOME. Code, secrets, daemon databases, configuration and
   `cloudflared/` stay in `$BEDROCK_HOME`. Unset, the layout is unchanged. When
   `dataDir` is set the daemon refuses to start (`DATA_DIR_MISSING`) unless
   `<dataDir>/pebbles` exists, so an unmounted disk never gets fresh, empty
@@ -827,7 +877,7 @@ $BEDROCK_HOME (default ~/.bedrock)
   under `/api/`. Every other request gets JSON `{ ok: false, error }` (404/503
   stay plain text). Errors from pebble code are unaffected. The local CLI login
   callback also answers with a styled page.
-- **Deploy**: `bedrock deploy` in a pebble directory. Local: copies to a new release. Remote: tars the directory and uploads to `https://bedrock.<domain>/api/deploy` with a creator deploy token (`bedrock login` stores it). Daemon then installs deps (`bun install --production`), migrates, swaps.
+- **Deploy**: `bedrock deploy` in a pebble directory. Local: copies to a new release. Remote: tars the directory and uploads to `https://bedrock.<domain>/api/deploy` with a creator deploy token (`bedrock login` stores it). Daemon then installs deps (`bun install --production`), prepares the production browser build and private maps, starts/migrates the candidate, health-checks, then swaps.
   Archives always omit `node_modules`, `.bedrock`, `.git`, `._*`, `.DS_Store`,
   `.env` and `.env.*` at every depth, and the archive output itself. `.envoy/`
   and `.environment` are included. Git ignore rules are never applied: ignored
@@ -904,7 +954,7 @@ $BEDROCK_HOME (default ~/.bedrock)
 The daemon controls pebble children over parent/child IPC, separately from HTTP
 identity forwarding. Requests are `{ op, requestId, ...payload }`: `jobs.list`,
 `jobs.run` (payload `{ name }`), `service-token` (payload `{ user, input?, id? }`),
-`idle.check` (no payload; returns a boolean), and `services.exclusive.start` (no payload; returns `{ started: string[] }`).
+`readiness` (no payload; returns `{ state }`), `idle.check` (no payload; returns a boolean), and `services.exclusive.start` (no payload; returns `{ started: string[] }`).
 Replies are `{ op: "reply", requestId, value }` or
 `{ op: "reply", requestId, error: { code, message, hint } }`. The daemon sends
 `{ op: "stop" }` without a reply; the child performs cleanup and exits. Startup
@@ -968,13 +1018,278 @@ restart, rollback, daemon restoration and crash recovery. Children also receive
 `BEDROCK_API_URL=http://127.0.0.1:<actual-daemon-port>`; loopback `/api/` requests
 reach the authenticated daemon API without a Host override. This URL conveys no
 credentials; a pebble must explicitly supply its own deploy bearer.
-Daemon-managed pebble logs prefix every line with an ISO timestamp and write
-whole lines only, so stdout and stderr never interleave mid-line (a line with no
-newline is held until 64 KiB). `logs/cloudflared.log` keeps cloudflared's own
-timestamps. They redact configured values of at least 8 characters, and their JSON-escaped variants,
-including values split across UTF-8 pipe chunks; rotated values remain protected
-for the logger's lifetime. Creators remain trusted and must not deliberately
-encode secrets into application responses or other files.
+### Error tracking
+
+Error capture is **on by default, minimal by default**. Browser `createClient()`
+adds `error` and `unhandledrejection` listeners, removed by `client.close()`.
+Resource-load failures without an exception/message are skipped. Node and bearer
+clients do not install browser listeners; cross-origin clients do not report the
+host page to another pebble. The page release comes from existing navigation
+Server-Timing / release headers, so a stale tab uses its own release's maps.
+
+`createClient({ errors: false })` disables capture. Opt in to console errors or
+Bedrock HTTP 5xx capture with `errors: { console: true, fetch: true }`; this does
+not patch global fetch. `errors.beforeSend(event)` can return a filtered event or
+null; its output is allowlisted and scrubbed again. `client.captureException(e)`
+is explicit opt-in capture. `bedrock/react` exports an optional `ErrorBoundary`
+with `{ client, fallback, children }`; wrapping a subtree opts in to handled
+React errors. No automatic component/DOM context or web-vitals instrumentation
+is installed. Vitals remain a pebble-level opt-in integration, not an error
+payload. The tiny native protocol is not Sentry-compatible.
+
+The client caps capture at **20 events per fixed UTC minute**, a 20-event memory
+queue, at most five events per batch, and a two-second timer. It deduplicates
+Error objects per client and global events across clients. Hidden/pagehide flush
+uses sendBeacon with keepalive fetch fallback. Normal sends use same-origin
+cookies for admission, no bearer/custom headers, and a five-second timeout.
+429 pauses until Retry-After (bounded to one hour); transport failures drop the
+batch. There is no persistent queue or durable-delivery promise.
+
+`POST /_bedrock/errors` is intercepted by the daemon **before any wake**, even
+for idle/stopped pebbles. Matching Origin and the retained release's access
+policy are required; anonymous public-pebble reports are untrusted. Cookies and
+authorization are discarded after admission and never enter storage. Missing
+retained policy fails closed to creators. Only JSON/text/plain versioned
+`{ v: 1, events: [...] }` is accepted: 1–5 events, 48 KiB per streamed body,
+16 KiB per event, 20 bounded frames, no compression. Body reads have a
+five-second deadline and 16 global admission slots. Browser-supplied runtime
+and mapped-frame flags are ignored. Oversized/malformed requests return 413/400;
+unsupported encodings/content types return 415. Capacity returns 429 with
+Retry-After. Per pebble/fixed minute the total is **120 events**, of which
+browsers can consume at most 90, reserving 30 for server crashes. The daemon's
+queue including its in-flight batch is 1 MiB/256 events; browser admissions
+stop at 768 KiB/192 events. Drops are exposed, never recursively reported.
+
+Unexpected query/mutation/route (including detached), job, application socket,
+service and startup throws are reported over child IPC before conversion to
+responses/wrapped errors. A BedrockError with status below 500 is an expected
+client failure and is excluded. Bun already provides original server TS stacks.
+The child deduplicates Error objects and caps IPC reports at 120/minute.
+Telemetry does not change transaction outcomes or process termination behavior.
+
+The M1 telemetry Worker also owns `$BEDROCK_HOME/errors.sqlite`, a separate
+physical file so error data cannot consume the 512 MiB telemetry budget. It stays
+on the home disk, not the pebble data disk. **All error data, including issue
+state, is disposable and excluded from backups.** No runtime dependency is added.
+The global logical payload ceiling is **1 GiB** with conservative JSON/row
+charges. A 480 MiB SQLite page ceiling, nonwaiting locks, disabled page spills,
+and truncate checkpoints before/after each event independently keep DB + WAL
+below 1 GiB. Physical exhaustion drops ingestion and retries after a minute;
+serving does not wait. Logical pressure evicts oldest samples in bounded passes.
+
+Payload visibility expires after **14 days**; daily issue/release counts and
+digest transitions after **90 days**. A bounded sweeper runs on writes, reads
+and every minute (physical deletion may lag a large expiry backlog). At most
+20 samples are admitted per issue/release/UTC day, even after eviction; noise
+keeps counts only. Issue/fingerprint metadata is capped at 10,000 fingerprints.
+Browser fingerprints (including merged aliases) are limited to 1,000 per pebble
+and 8,000 globally, reserving at least 2,000 slots for server fingerprints.
+Existing groups keep counting at these limits; new groups drop with
+`browser_issue_budget` or `issue_budget` counters. After 90 days without activity,
+issues and their fingerprints, merge aliases, samples, counts and transitions are
+reclaimed in bounded passes before admission. Resolved/ignored state is kept for
+issues with recent activity. Retry deduplication covers the most
+recent 20,000 event IDs. List pages contain at most 100 issues; detail returns
+20 newest retained samples; count results are capped at 1,000 rows. Missing
+history is not zero occurrences.
+
+Fingerprint v1 hashes runtime + exception type + up to five nearest mapped app
+frames (relative path, mapped function or anonymous, positive original line),
+excluding dependencies and Bedrock wrappers. Messages, columns and release IDs
+are not fingerprint inputs. No fuzzy line-shift merging is promised. With no
+mapped app evidence, same-type errors share an empty-frame group; `missing_maps`
+remains visible rather than inventing original frames. Browser symbolication uses
+a 64 MiB byte-accounted LRU of private parsed/indexed maps and deduplicates exact
+positions per batch. Each batch allows 100 ms of symbolication, 8 MiB of map/
+manifest input, and 256 distinct positions (manifests also cap at 1 MiB).
+Maps exceeding cache capacity or remaining work fall back to visibly unmapped
+frames; repeated or out-of-range frames cannot monopolize the telemetry Worker.
+Extension-only stacks
+use a quarantine namespace; ResizeObserver loop errors use a count-only noise
+namespace. Neither emits digest transitions. Coarse browser family and a bot
+boolean are the only user-agent derivatives; bots remain tagged, not trusted.
+
+Both client and daemon scrub emails, IP literals, URLs' origins/credentials/query
+strings/fragments, bearer/JWT/token patterns and credential assignments with
+quoted or unquoted keys/values (including password/passwd, secret, token,
+api_key/api-key, authorization, cookie/set-cookie, session and bearer).
+Quoted values are redacted in full, including spaces and escaped quotes;
+unquoted credential values conservatively redact through the next comma,
+closing brace or newline, including authorization/cookie spaces and semicolons. The Worker
+also scrubs known pebble secrets (at least four characters where available),
+including mapped frames. The Worker reads current secrets per batch/query even
+without a child, retains known values through rotations, and fails closed if
+secrets cannot be read; reads reapply known secrets to text fields. Bodies, request
+headers, cookies/auth, user/session IDs, raw user agents and arbitrary rejection
+objects are never collected. Free-form error text can still contain private
+application values: use beforeSend or avoid putting them in exceptions.
+
+```sh
+bedrock errors notes --json
+bedrock errors show notes <issue> --json
+bedrock errors resolve notes <issue> --json
+bedrock errors ignore notes <issue> --json
+bedrock errors merge notes <source-issue> <target-issue> --yes --json
+```
+
+These commands accept --url/--token; list accepts --cursor. API equivalents are
+GET `/api/pebbles/:name/errors[/:issue]?cursor=<number>` and POST
+`/api/pebbles/:name/errors/:issue/resolve|ignore`; merge uses
+`/api/pebbles/:name/errors/:issue/merge?confirm=true&target=<id>`.
+Reads require scoped **logs** or **monitor**; changes require **lifecycle**
+(or **monitor** for resolve/ignore), all restricted by pebble globs. Detail and changes return `NOT_FOUND` when the issue does not
+belong to that pebble; merge requires both issues in the same pebble.
+Browser collection grants no issue-read permission. Resolve and
+ignore are idempotent; merge keeps fingerprint aliases and daily counts and
+caps merged samples at 20/day/release. A recurrence reopens a resolved issue;
+ignored issues keep counting without reopening. Merge requires --yes; resolve/ignore need no confirmation.
+
+For M2, `telemetry.errors.onIssue(callback)` exposes committed new-issue and
+regression transitions with `{ id, pebble, issue, kind, time, delivery: "digest" }`.
+Durable catch-up is GET `/api/pebbles/:name/errors/transitions?after=<id>`
+(scoped logs, 100 rows/page, 90 days), using the last returned ID as the cursor.
+Callbacks are best effort; M2 should persist its cursor and use catch-up across
+restarts. Error transitions are digest inputs, never page requests.
+
+### Daemon telemetry
+
+The daemon owns `$BEDROCK_HOME/observability.sqlite`, separately from identity
+and pebble data. It stays on the home filesystem when `dataDir` moves pebble
+storage. It is disposable and excluded from daemon/pebble backups. No pebble
+configuration, imports or runtime dependencies are needed.
+
+One Worker owns every SQLite connection, read, write, checkpoint and cgroup
+sample. The daemon batches at 1 s or 256 records; its ingestion queue (including
+the acknowledged batch) is capped at 4 MiB / 4,096 records. Text leaves room for
+metrics/lifecycle. RED is aggregated without sampling before enqueueing; losing a
+batch loses its aggregate counters and increments explicit drops. Serving never
+waits for this Worker. Telemetry API reads can wait for preceding batches (up to
+the 5 s Worker watchdog); they do not hold a reader open while streaming.
+SQLite uses WAL/NORMAL, an 8 MiB cache, nonwaiting locks, bounded deletion and
+incremental vacuum. A single connection avoids concurrent WAL reset/checkpoint
+races, including on older SQLite builds. The Worker checkpoints after batches.
+
+Logical budgets precede time retention: logs **256 MiB**, diagnostic events
+**64 MiB**, metrics including resources **160 MiB**, lifecycle **32 MiB**.
+Accounting charges compact payloads plus row/index and log FTS allowances.
+Metrics reserve 4 MiB for the status tier, 32 MiB for raw resources, 96 MiB
+for minutes, 22 MiB for hours and 6 MiB for days; pressure evicts oldest rows
+within the affected tier and counts evictions. Empty traffic classes are not
+stored. Sparse histogram buckets and resource values use compact positional
+encoding on disk; API fields and histogram arrays are unchanged. Older payloads
+are compacted incrementally when opening/writing the store. Other categories
+evict their oldest records. If space cannot be reclaimed within a bounded pass,
+new records drop. Independently,
+the SQLite page limit caps the DB at 248 MiB. Dirty-page spills are disabled,
+and each batch must first truncate its WAL: even a transaction rewriting the
+whole DB fits with its WAL below the **512 MiB** physical budget. This conservative
+physical cap can shorten coverage before all logical budgets fill. It remains
+248 MiB to cover a worst-case full-DB WAL transaction (including frame overhead)
+without relying on a soft WAL size limit. Physical pressure reclaims raw
+resources/logs/events/lifecycle, then minute/hour/day history, and the status
+tier last. Ingestion also stops at a 64 MiB WAL backstop, including externally pinned readers. Disk
+admission uses the normal 64 MiB free-space margin plus a batch reserve.
+`SQLITE_FULL`, ENOSPC and EDQUOT follow `DISK_FULL`: drop, one daemon stderr
+notice per outage, retry once a minute. Other storage failures drop as well.
+Worker crashes/watchdog failures lose acknowledged-in-progress data, count drops
+and restart after 1 s. Resource polling retries storage even when there are no
+measurable children. Counters are reported per daemon boot; successful batches snapshot them for historical drop
+reporting. Unsaved drops can be lost on a daemon crash.
+
+HTTP rollups use UTC **1 m / 7 d**, **1 h / 90 d**, **1 d / 365 d** intervals.
+An internal 1 s / 5 min tier supplies the rolling status window. Parents are
+updated atomically with children, never by merging percentiles. Resource samples
+retain 15 s / 24 h detail and the same minute/hour/day rollups. Events and
+lifecycle retain 90 d; logs retain 7 d. Byte limits may shorten any coverage.
+Maintenance deletes at most 1,000 expired rows per batch, so time expiry is
+incremental. Coverage includes retained record bounds and the latest 128 writer
+intervals (up to 4,096 stored); missing data and restarts are **unknown**, never
+zero traffic. Read responses include requested range, cursor and drop counts.
+
+RED and saturation have only pebble and traffic-class dimensions: `ordinary`,
+`stream` (SSE/NDJSON/stream content types), `websocket`, `control` (reserved HTTP
+paths and supervisor IPC). Unknown hosts never create series. Starts are counted
+at admission, including cold wake, then assigned to stream at headers-ready if
+appropriate. Completions follow proxied body consumption/cancellation, not proven
+last-byte delivery. Failures count once for 5xx, fetch/transport or body failure;
+client aborts and 4xx/429 have separate counters. Client aborts do not enter latency
+histograms. WebSockets count handshakes separately; completion/lifetime refer to
+connection close. Current in-flight/open sockets, peaks and gauge integrals are
+available separately from counters. Headers-ready and lifetime histograms are
+split success/failure, version 1, noncumulative seconds buckets:
+`.005,.01,.025,.05,.075,.1,.25,.5,.75,1,2.5,5,7.5,10,+Inf`.
+`p95` is `{lower,upper,unit:"s",count}`, with `upper:null` for overflow and
+`null` for no samples. Sums/maxima are also retained.
+
+Every failure and request over 1 s is eligible for a diagnostic event, plus 1%
+of successes. Events have a 10/s/pebble cap with drop counts; RED remains
+unsampled. Event fields are allowlisted: bounded method/status/outcome, duration
+and route shape. Known public-route keys up to 256 characters are preferred; **all** segments of
+unknown paths become `:segment` (at most eight). No query strings, bodies,
+headers, cookies, credentials, identities, IPs or user agents are captured.
+Route shapes are never metric dimensions.
+
+Every 15 s, the Worker reads existing live child cgroups, summing both children
+during deploy overlap: `memory.current`, `memory.swap.current`, `cpu.stat`
+`usage_usec` deltas, `memory.events` `oom_kill` deltas. A first/reset sample
+establishes a baseline; CPU 100% means one core. Resource rollups preserve CPU
+consumption, covered duration, memory/swap integrals, peaks and last values.
+Missing/unreadable cgroups, idle children and non-Linux yield explicit nulls
+in status without persisting null resource samples; a stopped child cannot
+leave a stale resource value in status. Sampling never wakes a pebble and never
+infers OOM from SIGKILL alone. Lifecycle records include spawn, ready, exit/crash
+(code and signal), retry time, idle, wake, hibernate, stop, activation/deploy and
+retirement, with the child run/release identifier.
+
+New stdout/stderr lines are authoritative in SQLite with FTS5. They retain
+stream/run, use daemon ISO timestamps for text output and cap each line at
+16 KiB. Per-pebble limits are 50 lines/s and 128 KiB/s with drops/truncations
+counted. A line without a newline keeps at most 64 KiB while awaiting its end,
+then stores only the capped prefix. Pipe processing yields during floods.
+Configured secrets of at least eight characters and JSON-escaped variants are
+redacted before enqueueing and again in the Worker; logs read through the API
+are scrubbed again with current configured secrets. Applications must still
+avoid logging private data or deliberately encoded secrets. stderr is a stream,
+not an inferred error severity. `logs/cloudflared.log` retains its existing file
+rotation and own timestamps.
+
+Existing `pebbles/<name>/logs/pebble.log{,.1,.2,.3}` are left in place and never
+written again. Plain `bedrock logs <name>` / the text logs API includes their
+bounded tail before recent SQLite history; `--follow` adds live accepted lines
+with bounded subscriber buffering (1 MiB of live data during initialization;
+overflow closes the follower). Subscription precedes history reads; a stable
+per-boot acceptance watermark separates history from buffered live lines,
+including lines sharing a timestamp or identical text. Follow is best effort and can show an
+accepted line before its storage batch fails. JSON/search/paginated history
+covers SQLite only; old files are not indexed/imported and may be removed after
+inspection. Deleting a pebble purges its stored telemetry asynchronously.
+
+```sh
+bedrock status --json
+bedrock metrics notes --since 1h --step 1m --json
+bedrock logs notes --search '"connection reset" OR timeout' --since 1h --json
+bedrock logs notes --follow
+```
+
+`status` adds `telemetry` per pebble: now, last 5 min RED by class, latest
+resources/lifecycle, coverage and drops. Human output includes these fields;
+JSON preserves the existing status fields and Bedrock envelope. Idle pebbles
+remain asleep. `metrics` and JSON/search `logs` return `{ok:true,value:{rows,
+cursor,range,coverage,writer_coverage,drops,historical_drops,retained_losses,…}}`
+(with CLI command/name metadata). Cursors are opaque; pass `--cursor` unchanged.
+`--limit` is 1–1,000. `--since` is a positive integer `s|m|h|d`, at most 365 d;
+metric `--step` is `1m|1h|1d`. `--follow` (`-f`) cannot combine with search,
+since or cursor. JSON follow preserves the single JSON string stream and appends coverage/drop metadata when it closes.
+
+Creator-authenticated GET `/api/pebbles/:name/metrics|resources|lifecycle` uses
+scoped deploy action `status`; `/events|logs` uses `logs`. `monitor` also grants
+metrics, resources, lifecycle and logs, including follow. Pebble glob scope
+applies to every endpoint. Parameters: `since`, `from`/`to` (epoch ms), `step`,
+`limit`, `cursor`; logs also `q` (FTS5, at most 1,024 characters) and
+`format=json`. Plain `/logs` remains text; `follow=true` streams text.
+Malformed ranges/FTS/cursors return `INVALID_ARGS` with a hint; storage outages
+return `TELEMETRY_UNAVAILABLE`/`DISK_FULL`. Status stays available with explicit
+unknown coverage and `unavailable:true` if telemetry is down. See the readiness and alerting contract below.
 
 `restart: true` requires an existing deployed pebble. The normal restart now
 launches and health-checks a replacement before switching routing and retiring
@@ -1019,13 +1334,40 @@ and `?` (one character), lowercase letters, digits and hyphens only. Actions are
 - `lifecycle`: start, stop, restart, rollback and confirmed deletion.
 - `logs`: read and follow logs.
 - `secrets`: read and update secrets (including requested restart).
-- `status`: GET `/api/pebbles` and `/api/status`, filtered to matching pebbles.
+- `status`: GET `/api/pebbles` and `/api/status`, filtered to matching pebbles,
+  plus per-pebble metrics/resources/lifecycle (see [Daemon telemetry](#daemon-telemetry)).
   Status retains daemon version/features/domain needed by deploy clients; it
   omits tunnel information and does not disclose creator session presence.
 - `service-tokens`: create and revoke target pebble tokens.
+- `monitor`: read `/api/status`, `/api/pebbles`, per-pebble `metrics`, `resources`, `lifecycle`, `logs`
+  (including follow), `errors` (including issue detail), and
+  `/api/jobs/:pebble/history`; read `/api/alerts`, POST `/api/alerts/silence`
+  and `/api/alerts/test`, and POST error issue `resolve`/`ignore`. Error merge,
+  error transition history, events history, job control, and backup listing are excluded.
+  Per-pebble routes enforce the token's globs. Status/list filter matching pebbles
+  with the same daemon metadata restrictions as `status`. Alerts return only
+  matching pebble incidents, their active silences, and matching checks. A token
+  scoped to every pebble (`*`) watches the whole host and gets the full view:
+  host-wide incidents (tunnel, daemon backup) and outbox/pending delivery state;
+  narrower globs omit them. Silence requires an exact fingerprint from a visible
+  incident; unknown, hidden and nonmatching fingerprints return 403 `FORBIDDEN`.
+  No silence-removal endpoint exists. Alert test explicitly sends a global test
+  notification; it reveals no global monitoring data.
+
+For example, create a monitoring-only token (actions are additive when combined):
+
+```sh
+bedrock token create --name monitor --pebbles "bot-*" --actions monitor --json
+```
+
+Status pebble rows include read-only `backup: { last_success_at, interval_ms }`:
+last successful local backup time in Unix milliseconds (null when unknown), and
+configured backup interval in milliseconds (null when backups are unconfigured).
+These fields grant no backup operations and expose no other pebble or daemon
+backup state.
 
 Scoped tokens receive 403 `FORBIDDEN` with a repair hint for missing actions,
-unmatched pebbles, token management, self-update, backups, jobs, host/config and
+unmatched pebbles, token management, self-update, backups, job control, host/config and
 all other ungranted endpoints. There is no scoped route granting global admin.
 `GET /api/tokens` / `token ls` return scope as an object or null.
 
@@ -1063,6 +1405,181 @@ IPC failure on child exit returns `PEBBLE_STOPPED`; 15-second timeouts return
 must not assume that no token was created. Ordinary pebble tokens remain in
 `data/db.sqlite` and are included in database backups.
 
+
+### Readiness, jobs and alerts
+
+`/_bedrock/health` remains child liveness and deployment metadata. Readiness is
+private IPC: migrations completed, `sqlite_schema` readable, and **all declared
+services** successfully started (including exclusive services). A child reports
+`ready`, `degraded` (services unavailable), `failed` (DB unreadable), or `stopped`;
+the daemon adds `starting` and `idle`. This tests local resources, not external
+service connectivity or application correctness. Diagnostic DB reads disable
+SQLite lock waits for the synchronous read, restoring the application timeout
+afterwards. Services that fail later must
+let their process fail or expose their own application diagnostics.
+
+The daemon probes existing running children every 30 s, with two concurrent IPC
+requests, a 2 s deadline and no overlapping sweep. Three failures open the check;
+two successes recover it. A readiness page requires two minutes unhealthy or the
+supervisor's `crashed` state. Probes never call `ensure`, extend inactivity, or
+count as application traffic. A child replaced during a probe remains registered
+with starting/unknown readiness; only registry removal triggers deletion cleanup.
+Idle means **available on demand**, never probed awake; hibernation still means running. `bedrock status --json` includes
+`readiness: { state, observed_at }` (idle also `available_on_demand:true`). No
+recent observation (>65 s) is `starting`/unknown, never a fabricated green.
+
+Unauthenticated `GET https://bedrock.<domain>/healthz` returns exactly 200 and
+`bedrock-health-v1\n` when the daemon can read its registry; otherwise 503 and
+`bedrock-unavailable-v1\n`. Plain text, no redirects, no names/counts, no-store,
+fixed body under 32 bytes. Only the daemon hostname exposes this route. An
+external prober must enforce status **and** exact body, disable redirects and
+cache, and bound response size; configure a Cloudflare cache bypass for this
+path. This says nothing about individual pebbles. Whole-host/edge/network failure
+requires the external watcher (M5), independent of this host and webhook target.
+Locally, tunnel detection means cloudflared process presence, not proof of an
+established connector or public reachability.
+
+The daemon's SQLite Worker retains cron/release metadata and next expected
+occurrence independently of the child scheduler. Jobs emit correlated
+`scheduled`, `started`, `succeeded`, `failed`, `skipped` and `interrupted` IPC
+events; success follows executor commit/detached completion. Manual runs have no
+scheduled occurrence. Start grace is 5 min; runtime budget is 10 min (includes
+queue wait). Exceeding the budget records an incident and never kills/replays a
+job. On child death or daemon restart, unfinished starts become interrupted.
+Missed occurrences during a restart/gap become one episode per job; no catch-up.
+Deadlines advance from the previous expected occurrence, checking each overdue
+occurrence before advancing; a successful earlier run cannot hide a later miss.
+Each sweep handles at most 256 evidence/gap steps globally, oldest cursor first,
+and commits the advanced cursors with incident state. Indexed range lookups check
+spans with no start/success evidence as missing without walking every minute;
+even a long empty backlog therefore needs only one step per job. Dense evidence
+continues over subsequent sweeps/restarts, keeping one incident for the gap;
+no old backlog window is discarded and no executions are replayed.
+Intentionally idle/stopped pebbles have no expected-run pages. Removed jobs and
+pebbles resolve their obsolete incidents on the next sweep.
+
+Criticality belongs to the **host config**, using existing job names, with no new
+`job()` option or pebble primitive:
+
+```json
+{
+  "alerts": {
+    "webhook": "https://comms.example.test/api/v1/messages",
+    "criticalJobs": { "notes": ["sync"] }
+  }
+}
+```
+
+No jobs are critical by default. Only four conditions page: a configured tunnel's
+process is absent; desired-running readiness remains unhealthy for 2 min or the
+supervisor enters a crash loop; an explicitly critical job fails/is interrupted
+or misses its deadline; a configured backup target has no successful backup for
+more than twice its interval. Backup age is per pebble and daemon, including
+stopped/idle data. A never-backed-up target gets a persistent initial 2-interval
+grace; partial successes do not hide another target's stale backup. Probe sweeps
+reload backup configuration, so backup setup, interval edits and removal apply
+without restarting the daemon.
+
+Delivery failure >10 min creates a **local-only** `alert-delivery` incident and
+one stderr repair notice per episode. It cannot page through itself; the owner
+must inspect alerts or use independent external monitoring. It resolves when
+webhook submission resumes. Acceptance by a webhook is not provider delivery or
+human acknowledgment. Ordinary job failures, skipped runs and interruptions go
+to the digest. CPU/memory/request spikes and isolated failed probes never page.
+
+Incident fingerprints are JSON `[host, pebble, rule, job]`, stable across release
+and restart, with one incident per episode. Each page opening/resolution commits
+with exactly one immutable outbox row/key in the same transaction. A 30 s group
+window batches eligible transitions in each delivery sweep; it does not combine
+several transitions into one payload. Transitions for an incident submit in
+stored order: recovery waits for acceptance of its opening, including across
+Retry-After delays and restarts. Other incidents can still submit. Child-readiness
+messages wait beneath an open tunnel incident. A child recovering while inhibited produces no delayed
+page. Unrelated job/backup incidents remain eligible. Exact-fingerprint silences
+have an expiry; unresolved pages become eligible after expiry. Silences and
+inhibition retain the incident evidence. There is no acknowledgment API yet.
+
+Webhook URL uses HTTPS (HTTP only for loopback), no URL credentials, query or
+fragment. `alerts-secret` is an atomic 0600 file in BEDROCK_HOME, like backup
+credentials. It never enters a child environment or API response. Destinations
+in this daemon's `<pebble>.<domain>` namespace use its actual loopback proxy port,
+preserving Host/path and normal access checks, including waking idle pebbles.
+They never traverse cloudflared; external webhooks keep their configured URL.
+Configure it on the daemon host, then restart; URL defaults to comms on this
+domain:
+
+```sh
+# Dedicated bedrock-monitor client token, from stdin or a hidden terminal prompt:
+bedrock alerts setup --json
+bedrock alerts setup --webhook https://notify.example.test/messages --json
+bedrock alerts test --json
+bedrock alerts --json
+bedrock alerts silence '["example.test","notes","readiness",""]' --for 2h --json
+bedrock jobs history notes --json
+```
+
+`test` durably queues a non-critical test message; inspect its outbox state for
+acceptance. Only non-critical push notifications (including tests) wait during
+23:00–07:30 **Europe/Brussels**. Critical incident openings, resolutions,
+escalations and reminders bypass both Bedrock's and comms' quiet hours using
+`urgency:"high"`. Tests use normal urgency; email digests use low urgency.
+The comms-compatible JSON payload has `to:["me"]`, subject/text, urgency,
+explicit channels, `idempotency_key`, and metadata (incident, rule, target,
+fingerprint). Initial/resolution messages use ntfy (never Poke). Unresolved incidents escalate
+after 15 min to ntfy + email, then remind at most once per 6 h, all with separate
+durable transition keys. Comms owns provider routing/retries. Existing immutable
+outbox payloads retain their original urgency across upgrades.
+
+The generic receiver gets `Authorization: Bearer …` and `Idempotency-Key`, plus
+the same key in the payload. It must accept the comms-shaped payload and dedupe
+unchanged retries. Any 2xx means accepted. Redirects fail; response bodies are
+cancelled unread. At most 16 submissions per sweep, a 2 s network deadline,
+exponential retry 1 s to 6 h (including persistent auth/config failures, surfaced
+locally); numeric Retry-After seconds are honored up to 6 h. Pending payloads
+survive restarts and never change under the same key. HTTP/provider details or
+secrets are not retained in errors. Idempotency lasts only as long as receiver
+retention; this is at-least-once submission, not exactly-once provider delivery.
+
+Weekly Monday 08:00 **server local time**, or the first observation afterwards,
+a low-urgency email digest includes unresolved incidents, job failure/skip counts,
+latest probe observations and outbox counts. A daily digest is enabled only while
+incidents remain unresolved; one per local date, persisted across restarts. No
+missed digests are replayed. Text is bounded to 24,000 characters. Quiet-hour
+email bypass applies to digests; critical escalations also bypass quiet hours.
+
+`GET /api/alerts`, `POST /api/alerts/silence` (`{fingerprint,for:"2h"}`),
+`POST /api/alerts/test`, and `GET /api/jobs/:pebble/history` accept an unscoped
+creator token or scoped `monitor` action. Scoped results and silence targets are
+restricted as described in [Scoped deploy tokens](#pebble-secrets-and-delegated-administration).
+Job control and host configuration still require an unscoped creator token.
+Alert APIs use Bedrock envelopes/no-store.
+`alerts` returns open/recent incidents, active silences, checks, and outbox
+metadata/counts, not payloads or credentials; history returns newest 1,000 events.
+
+Storage is `alerts.sqlite`, separate from M1 telemetry so telemetry retention and
+Worker outages cannot remove pending notifications. All monitoring writes run in
+a separate Worker; store failure leaves serving/canary independent and surfaces
+`ALERTS_UNAVAILABLE`. Worker crash retries after 1 min; at most 128 pending IPC
+operations, 5 s response deadline. Probes have constant-size current-state rows;
+job history is 30 days/100,000 events globally. Accepted/suppressed transitions
+and resolved incidents expire after 365 days. At most 1,000 pending outbox rows;
+a full outbox rejects/rolls back a new transition (the condition is evaluated
+again next sweep), never evicts pending delivery. Terminal job events persist a
+pending-evaluation marker with their history row; the marker clears only when
+incident/outbox evaluation commits, and is retried in event order after saturation
+or restart. Retention excludes these pending events, unfinished starts, and all
+events whose scheduled occurrence is at or beyond their job's current deadline
+cursor. The same protection applies under byte pressure; this evidence can
+outlive the history age/count limits until its consumers advance. SQLite has a 64 MiB page
+budget;
+WAL autocheckpoints every 256 pages. Retention runs before evaluation/job-event
+admission and independently during delivery, so a failed evaluation cannot block
+cleanup. Under byte pressure, accepted/suppressed outbox history, unreferenced
+resolved incidents, then evaluated job history are reclaimed early to reserve
+4 MiB for pending work (one quarter of the page budget if smaller). Pending
+transitions/evaluations and active deadline/run evidence are never evicted. These are bounded diagnostic histories,
+not an audit archive. Alert state/credentials are not included in existing daemon DB
+backups; retain BEDROCK_HOME for outbox durability.
 
 ### One-time creator session links
 
@@ -1184,8 +1701,9 @@ ctx.invalidate([audit.schema.auditLog]);
   time. Restricted day-of-month/day-of-week use traditional OR semantics.
   By default, jobs execute in the pebble's write queue with `user: null` (bypassing pebble
   access, retaining bucket policies), invalidate sync after commit, log named
-  failures, and skip overlapping runs of the same job. There is no catch-up or
-  persisted history; overlap protection is process-local.
+  failures, and skip overlapping runs of the same job. There is no catch-up;
+  overlap protection is process-local. The daemon retains execution history and
+  expected deadlines (see [Readiness, jobs and alerts](#readiness-jobs-and-alerts)).
 - `bedrock jobs ls <pebble>` and `jobs run <pebble> <job>` use the authenticated
   daemon API and the IPC control channel to the child.
 - Route handlers keep `(request, server)` and receive FunctionContext as a third
@@ -1473,3 +1991,103 @@ against end users and the internet, not hostile creators.
 - The package ships the complete author guide `AGENTS.md` and a short `llms.txt` index.
 - Destructive commands (`db reset`, `pebble delete`) require `--yes`.
 
+
+### Testing pebbles (`bedrock test`)
+
+`bedrock test [path] [--grep <pattern>] [--project desktop|phone] [--json]`
+runs `bun test ./tests/unit` first, then `tests/e2e/**/*.spec.ts` and built-in
+Chromium smoke tests. Missing unit tests are reported as skipped. Unit tests use
+`startPebble({ dir, dataDir, port: 0, cron: false })` from `bedrock/server` and its
+real SQLite database, executor and `jobs.run(name)`; no database mocks are supplied.
+A temporary `BEDROCK_HOME` also protects runtime tests that omit `dataDir`.
+
+Browser tooling is optional, development-only: install
+`bun add --dev @playwright/test@1.64.0 @axe-core/playwright@4.14.0`, then
+`bunx playwright install chromium`. Neither the daemon nor pebble runtime imports
+these packages. A pebble that does not use browser tests need not install them.
+There is one Chromium worker; browsers close at the end of each run. Browser
+integration tests in Bedrock's own suite skip when Chromium is not installed.
+
+Each run builds a new seed template under the system temporary directory. It
+replays the pebble's committed migrations, inserts fixed daemon fixture identities
+(`bedrock-test-owner`, `bedrock-test-friend`, `bedrock-test-outsider`), then calls
+optional `tests/seed.ts`'s default export. The seed receives
+`{ db, sqlite, dataDir, users, now }`; `now` is `2024-01-01T00:00:00.000Z`.
+Use fixed application IDs and dates too. The template database is checkpointed
+and closed before copying. Each browser test gets a separate copy of the daemon
+identity DB, application DB and seeded files, and a fresh real dev daemon/pebble
+on port 0. Source watching and cron dispatch are disabled. Shutdown precedes case
+disposal. `server.runJob(name)` explicitly invokes a job through dev-worker/child
+IPC. Services still start normally: provide pebble-specific substitutes for
+external mail, devices or paid APIs; SQLite isolation does not isolate those.
+Shell application secrets are not inherited, and no deployed data or secrets are
+loaded by the harness.
+
+Optional `bedrock.test.ts` default-exports a plain object (unknown keys fail):
+
+```ts
+import type { TestConfig } from "bedrock/testing";
+export default {
+  users: { owner: "me@example.test", friend: "friend@example.test" },
+  pages: [{ path: "/", user: "owner", ready: '[data-testid="app-ready"]', visual: false }],
+  // seed: overrides the default tests/seed.ts function
+  // prepareScreenshot: async page => { ... put animated controls in a stable state ... }
+} satisfies TestConfig;
+```
+
+Roles are `anonymous`, `owner`, `friend`, `outsider`; default emails are
+`<role>@example.test`, and the owner is a daemon creator. Configured emails must
+be distinct; use the pebble's actual allow-list addresses when necessary. Tests
+can import `{ test, expect, loginAs }` from `bedrock/testing`. The exported `test`
+adds `server`, `loginAs(page, role)` and separate-context `anonymous`, `owner`,
+`friend`, `outsider` page fixtures. Login fills and submits the real same-origin
+dev form and verifies `/_bedrock/me`; it never forges identity headers or cookies.
+The default `page` remains anonymous until login. For browser API assertions use
+same-origin `page.evaluate(() => fetch(...))`: Chromium resolves `*.localhost`
+without host DNS, whereas Playwright's separate API request client may not.
+
+With no `pages`, web pebbles smoke `/` as owner and, if public, anonymously.
+Protected anonymous roots are explicitly skipped; declare an accessible anonymous
+page to cover that state. API-only pebbles skip smoke (authored e2e specs still
+run). Default readiness is the first `[data-bedrock-ready]`, `main` or
+`[role="main"]`; supply a meaningful selector for apps without these or with
+loading shells. A redirect to dev login never counts as application readiness.
+Each declared page runs at 1280×800 and 390×844, DPR 1, locale en-US, timezone UTC
+and reduced motion. Checks report readiness, zero `pageerror`/`console.error`,
+axe WCAG 2.0/2.1/2.2 A/AA violations of every impact, and document-level horizontal
+overflow above 1 CSS pixel. Axe `incomplete` results are listed for manual review;
+a pass is not WCAG certification. Dependent checks are skipped if readiness fails.
+
+Visual comparisons are opt-in per page (`visual: true`). They use Playwright
+`toHaveScreenshot`, color-distance threshold 0.2, **zero changed pixels**, disabled
+animations and hidden caret, after fonts and images settle and optional
+`prepareScreenshot(page)` runs. Bundle the pebble's fonts; do not depend on remote
+font availability or host fallback fonts. Canonical approval uses the home
+server's Linux and pinned Playwright Chromium. Baselines live in
+`tests/e2e/__screenshots__/<platform>/<project>/...`; generation requires
+`--update-snapshots --yes`. Review the images before committing. Missing baselines
+fail ordinary runs. Canvas/JS animation needs the app's real stable-state API in
+the hook; disabled CSS animations alone cannot freeze it.
+
+Additional options: `--list` discovers browser tests without running migrations,
+seed, servers or browsers; `--headed` diagnoses; `--repeat 1..100` repeats browser
+cases; `path` selects matching e2e spec paths (and omits built-in smoke).
+`--grep` and `--project` select browser cases; unit tests still run first.
+Retries default to zero. `--diagnostic-retry` allows one retry, preserves the
+first failure, reports `flaky` if it passes, and still exits nonzero. No silent
+quarantine is provided.
+
+Exit codes: 0 pass/discovery, 1 failed checks (including flakes), 2 setup/config
+failure. `--json` emits one Bedrock envelope: `{ ok: true, value: report }` or
+`{ ok: false, error: { code, message, hint, data: report } }`. Report version 1
+contains run ID, duration, configuration, per-check status/duration/attempts,
+artifact paths and reproduction argv. Bun JUnit and Playwright JSON supply the
+results; logs never mix into stdout. Logs, axe data, failure screenshots and
+retained failure traces live under `.bedrock/tests/<run>/`. Completed runs older
+than 7 days are removed, then oldest completed runs until below 500 MiB. Active
+and current runs are preserved; retention reports an oversized current run.
+Nothing is uploaded. `bedrock test --help` lists options and repair commands.
+
+`bedrock dev` retains its source-local `.bedrock/daemon` home, `.bedrock` data,
+source watching, cron and default port 3000. Its shared launcher accepts explicit
+home/data directory, port 0, watch and cron switches for isolated tests.

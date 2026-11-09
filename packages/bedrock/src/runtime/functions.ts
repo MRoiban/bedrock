@@ -1,3 +1,4 @@
+import { reportedServerErrors, reportServerError } from "./errors";
 import { getTableName } from "drizzle-orm";
 import { join } from "node:path";
 import { createStorage, type StorageEffects } from "../storage";
@@ -86,15 +87,17 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
         for (const cleanup of effects.commit) await cleanup().catch(error => console.error("Storage cleanup failed", error));
         return { ...result, args };
       } catch (error) {
+        reportServerError(error, handler ? name : kind);
         if (sqlite.inTransaction) sqlite.exec("ROLLBACK");
         if (!committed) for (const cleanup of effects.rollback) await cleanup().catch(error => console.error("Storage rollback cleanup failed", error));
-        throw asBedrockError(error, "FUNCTION_FAILED", kind === "query"
+        const typed = asBedrockError(error, "FUNCTION_FAILED", kind === "query"
           ? "Queries must only read data. Check the query handler and database schema."
           : "Check the mutation handler, arguments, and database schema.", database.dataDir);
+        reportedServerErrors.add(typed); throw typed;
       } finally {
         if (kind === "query") sqlite.exec("PRAGMA query_only=OFF");
       }
-    }));
+    })).catch(error => { reportServerError(error, handler ? name : kind); throw error; });
     // Rejections must not poison the queue for later requests.
     tail = run.then(() => { pending--; }, () => { pending--; });
     // Observers run outside the queue slot, so they can safely enqueue queries.
@@ -125,7 +128,11 @@ export function createExecutor(pebble: PebbleConfig, database: ReturnType<typeof
       };
       for (const key of ["db", "storage", "invalidate"]) Object.defineProperty(ctx, key, { get: unavailable });
       try { return await handler(ctx); }
-      catch (error) { throw asBedrockError(error, "FUNCTION_FAILED", "Check the detached handler and its read/write callbacks."); }
+      catch (error) {
+        reportServerError(error, label?.startsWith("job ") ? "job" : "route");
+        const typed = asBedrockError(error, "FUNCTION_FAILED", "Check the detached handler and its read/write callbacks.");
+        reportedServerErrors.add(typed); throw typed;
+      }
     });
     detachedRuns.add(run);
     void run.then(() => detachedRuns.delete(run), () => detachedRuns.delete(run));

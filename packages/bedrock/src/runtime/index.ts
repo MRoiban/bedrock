@@ -1,3 +1,4 @@
+import { databaseReadable } from "../db/readable";
 import { isPublicRoute, publicRouteKeys } from "../config/public-route";
 import { createServices } from "./services";
 import { createApplicationSockets, isApplication, type RuntimeSocketData } from "./sockets";
@@ -21,6 +22,9 @@ export type StartPebbleOptions = ({ dir: string; pebble?: never } | { pebble: Pe
   dataDir?: string;
   port?: number;
   dev?: boolean;
+  /** Disable scheduled dispatch while retaining explicit jobs.run(). */
+  cron?: boolean;
+  onJob?: (event: import("../daemon/alerts/model").JobEvent) => void;
   /** The daemon starts exclusive services after the previous child exits. */
   deferExclusive?: boolean;
   /** Reject fetch inside queue slots. On unless the caller opts out; production child processes decide from their environment. */
@@ -44,15 +48,15 @@ export async function startPebble(options: StartPebbleOptions) {
     if (!options.deferExclusive) await startExclusive();
     const jobs = createJobs(pebble.jobs ?? {}, (name, _handler, definition) => definition.transaction === false
       ? execute.detached(new Request("http://localhost/_bedrock/jobs"), definition.run, { user: null }, undefined, `job ${name}`)
-      : execute.job(definition.run, name));
+      : execute.job(definition.run, name), undefined, undefined, options.onJob);
     const files = createFileHandler(pebble, execute, join(database.dataDir, "uploads"));
     await files.cleanup();
     const release = process.env.BEDROCK_RELEASE_ID || `local-${crypto.randomUUID().slice(0, 8)}`;
     const sync = pebble.sync === true ? createSync(execute, release) : undefined;
     const appSockets = createApplicationSockets(pebble, execute);
-    const web = await loadWeb(dir, pebble.web);
+    const web = await loadWeb(dir, pebble.web, options.dev === true);
     // Bun's generated bundle assets outrank root params and bypass our handler wrappers.
-    if (web.html && pebble.access && pebble.access !== "public" && publicRouteKeys(pebble.routes).some(key => /^(GET|HEAD) \/:[^/]+$/.test(key)))
+    if ((web.html || web.bundled) && pebble.access && pebble.access !== "public" && publicRouteKeys(pebble.routes).some(key => /^(GET|HEAD) \/:[^/]+$/.test(key)))
       throw new BedrockError("INVALID_PUBLIC_ROUTE", "Root public parameter routes conflict with bundled web assets.", "Use a namespaced public parameter route (such as /files/:id), a static public route, or a static web directory.");
     const routes: Record<string, any> = {};
     for (const [key, handler] of Object.entries(pebble.routes ?? {})) {
@@ -73,8 +77,16 @@ export async function startPebble(options: StartPebbleOptions) {
       };
     }
     if (web.html && !Object.hasOwn(routes, "/*")) routes["/*"] = web.html;
+    if (web.bundled) {
+      if (!Object.hasOwn(routes, "/*")) routes["/*"] = web.staticResponse;
+      for (const path of web.assets ?? []) {
+        routes[path] ??= {};
+        routes[path].GET ??= web.staticResponse;
+        routes[path].HEAD ??= web.staticResponse;
+      }
+    }
     routes["/_bedrock/files/*"] = files.handle;
-    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, exclusive_services: services.exclusiveNames, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes), backup: pebble.backup ?? null, jobs: Object.keys(pebble.jobs ?? {}), services: Object.keys(pebble.services ?? {}) }) };
+    routes["/_bedrock/health"] = { GET: () => Response.json({ ok: true, exclusive_services: services.exclusiveNames, name: pebble.name, access: pebble.access ?? "public", stopTimeout: services.stopTimeout, public_routes: publicRouteKeys(pebble.routes), backup: pebble.backup ?? null, jobs: Object.keys(pebble.jobs ?? {}), job_schedules: Object.entries(pebble.jobs ?? {}).map(([name, job]) => ({ name, cron: job.cron })), services: Object.keys(pebble.services ?? {}) }) };
     routes["/_bedrock/q/:name"] = { POST: functionHandler(execute, "query") };
     routes["/_bedrock/m/:name"] = { POST: functionHandler(execute, "mutation") };
     routes["/_bedrock/*"] = () => Response.json({ ok: false, error: new BedrockError("NOT_FOUND", "Unknown Bedrock endpoint.", "Use POST /_bedrock/q/<name> or /_bedrock/m/<name>.").toJSON() }, { status: 404 });
@@ -123,10 +135,15 @@ export async function startPebble(options: StartPebbleOptions) {
     storageCleanup.unref();
     const tokenCleanup = pebble.tokens ? setInterval(() => { void execute.flushTokens().catch(error => console.error("Token usage flush failed", error)); }, 60_000) : undefined;
     tokenCleanup?.unref();
-    jobs.start();
+    if (options.cron !== false) jobs.start();
     let stopping: Promise<void> | undefined;
     return {
-      server, pebble, startExclusive, stopTimeout: services.stopTimeout, db: database.db, execute, jobs,
+      server, pebble, startExclusive,
+      readiness() {
+        if (stopping) return { state: "stopped" as const };
+        if (!databaseReadable(database.sqlite, "sqlite_schema")) return { state: "failed" as const };
+        return { state: services.ready() ? "ready" as const : "degraded" as const };
+      }, stopTimeout: services.stopTimeout, db: database.db, execute, jobs,
       async canIdle() {
         return !Object.keys(pebble.jobs ?? {}).length && !Object.keys(pebble.services ?? {}).length
           && !server.pendingRequests && !server.pendingWebSockets && !execute.pending() && !await files.active();

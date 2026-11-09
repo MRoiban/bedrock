@@ -1,0 +1,24 @@
+import { expect, test } from "bun:test";
+import { createJobs, job } from "./index";
+import type { JobEvent } from "../daemon/alerts/model";
+test("job execution emits correlated scheduled/start/success, failure and overlap without replay", async () => {
+  const events: JobEvent[] = [];
+  let release!: () => void, now = new Date(2026, 10, 3, 12, 0);
+  let complete!: () => void;
+  const completed = new Promise<void>(resolve => { complete = resolve; });
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const jobs = createJobs({ sync: job("* * * * *", () => {}) }, () => pending, () => now, () => {}, event => { events.push(event); if (event.state === "succeeded") complete(); });
+  jobs.tick();
+  await jobs.run("sync");
+  expect(events.map(e => e.state)).toEqual(["scheduled", "started", "skipped"]);
+  release(); await completed;
+  expect(events.map(e => e.state)).toEqual(["scheduled", "started", "skipped", "succeeded"]);
+  expect(events[0]!.run).toBe(events[3]!.run);
+  now = new Date(2026, 10, 3, 12, 10); jobs.tick();
+  expect(events.filter(e => e.state === "scheduled")).toHaveLength(2);
+  await jobs.stop();
+  const failure = createJobs({ sync: job("* * * * *", () => {}) }, async () => { throw new Error("failure"); }, () => now, () => {}, event => events.push(event));
+  await expect(failure.run("sync")).rejects.toThrow("failure");
+  expect(events.at(-1)!.state).toBe("failed");
+  await failure.stop();
+});

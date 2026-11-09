@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bedrock Monitor</title>
+<style>
+/* Mockup only. Tokens copied from @bedrock/ui (Onyx on Flexoki); shell patterns from Typewriter (titlebar, pane headers)
+   and Babel UI (48 px activity bar, 2 px active marker, count badge). */
+.app {
+  --paper:#fffcf0; --black:#100f0f; --b50:#f2f0e5; --b100:#e6e4d9; --b150:#dad8ce; --b200:#cecdc3; --b300:#b7b5ac;
+  --b400:#9f9d96; --b500:#878580; --b600:#6f6e69; --b700:#575653; --b800:#403e3c; --b850:#343331; --b900:#282726; --b950:#1c1b1a;
+  --font:"Segoe UI",system-ui,-apple-system,sans-serif; --mono:"Lilex",ui-monospace,"SF Mono",Menlo,monospace;
+  font-family:var(--font); font-size:13px; line-height:1.45; color:var(--fg); background:var(--app);
+  border-radius:10px; overflow:hidden; border:1px solid var(--border);
+}
+.app[data-theme=light] {
+  --app:var(--paper); --panel:var(--b50); --raised:var(--paper); --fg:var(--black); --muted:var(--b700); --desc:var(--b600);
+  --border:var(--b150); --subtle:var(--b100); --strong:var(--b300); --link:#205ea6; --focus:#205ea6;
+  --ok:#536907; --ok-bg:#edeecf; --ok-bd:#bec97e; --warn:#584113; --warn-bg:#faeec6; --warn-bd:#eccb60;
+  --bad:#af3029; --bad-bg:#ffe1d5; --bad-bd:#f89a8a; --bad-solid:#af3029; --info:#205ea6; --info-bg:#e1eceb; --info-bd:#92bfdb;
+  --unk:#575653; --unk-bg:#f2f0e5; --unk-bd:#cecdc3; --hatch:#b7b5ac;
+}
+.app[data-theme=dark] {
+  --app:var(--black); --panel:var(--b950); --raised:var(--b900); --fg:var(--b200); --muted:var(--b300); --desc:var(--b400);
+  --border:var(--b800); --subtle:var(--b900); --strong:var(--b700); --link:#4385be; --focus:#4385be;
+  --ok:#879a39; --ok-bg:#1a1e0c; --ok-bd:#3d4c07; --warn:#d0a215; --warn-bg:#241e08; --warn-bd:#584113;
+  --bad:#e8705f; --bad-bg:#261312; --bad-bd:#552725; --bad-solid:#af3029; --info:#66a0c8; --info-bg:#101a24; --info-bd:#133d62;
+  --unk:#b7b5ac; --unk-bg:#1c1b1a; --unk-bd:#403e3c; --hatch:#575653;
+}
+.app * { box-sizing:border-box; }
+.app button { font:inherit; color:inherit; background:none; border:0; cursor:pointer; }
+.app :focus-visible { outline:2px solid var(--focus); outline-offset:2px; border-radius:4px; }
+.num { font-variant-numeric:tabular-nums; }
+.mono { font-family:var(--mono); font-size:12px; }
+
+/* Mockup controls (not part of the design) */
+.controls { display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; margin:0 0 10px; font:12px system-ui,sans-serif; }
+.controls label { display:flex; gap:6px; align-items:center; }
+.controls select { font:inherit; padding:2px 4px; }
+
+/* Shell */
+.titlebar { display:flex; align-items:center; gap:10px; height:38px; padding:0 8px 0 12px; background:var(--panel); border-bottom:1px solid var(--border); }
+.brand { display:flex; align-items:center; gap:8px; font-weight:600; }
+.brand-mark { width:20px; height:20px; border-radius:5px; background:var(--fg); color:var(--app); display:grid; place-items:center; font-size:11px; font-weight:700; }
+.sep { color:var(--desc); }
+.grow { flex:1; }
+.icon-btn { width:32px; height:32px; display:inline-grid; place-items:center; border-radius:6px; color:var(--muted); }
+.icon-btn:hover { background:var(--subtle); color:var(--fg); }
+.body { display:flex; min-height:640px; }
+.activity { width:48px; flex:none; display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 0; background:var(--panel); border-right:1px solid var(--border); }
+.act { position:relative; width:48px; height:48px; display:grid; place-items:center; color:var(--desc); }
+.act:hover, .act[aria-current=page] { color:var(--fg); }
+.act[aria-current=page]::before { content:""; position:absolute; left:0; top:12px; width:2px; height:24px; border-radius:0 2px 2px 0; background:var(--fg); }
+.badge { position:absolute; right:6px; bottom:6px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; font-size:10px; font-weight:700; line-height:16px; text-align:center; background:var(--bad-solid); color:var(--paper); }
+.act-bottom { margin-top:auto; }
+.main { flex:1; min-width:0; overflow:auto; }
+.page { max-width:1040px; margin:0 auto; padding:20px 24px 40px; }
+.bottomnav { display:none; }
+
+.section-title { display:flex; align-items:center; gap:8px; margin:24px 0 8px; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--desc); }
+.section-title .grow { flex:1; }
+.section-title a { text-transform:none; letter-spacing:0; font-weight:500; }
+a { color:var(--link); text-decoration:none; }
+a:hover { text-decoration:underline; }
+h1 { font-size:22px; line-height:1.25; margin:0; font-weight:600; }
+h2 { font-size:15px; margin:0; font-weight:600; }
+.desc { color:var(--desc); }
+.muted { color:var(--muted); }
+
+/* Verdict */
+.verdict { display:flex; gap:14px; align-items:flex-start; padding:16px; border-radius:10px; border:1px solid var(--border); background:var(--raised); }
+.verdict[data-tone=bad] { border-color:var(--bad-bd); background:var(--bad-bg); }
+.verdict[data-tone=unk] { border-color:var(--unk-bd); border-style:dashed; }
+.verdict .big { flex:none; margin-top:2px; }
+.verdict h1 { font-size:24px; }
+.verdict p { margin:4px 0 0; color:var(--muted); }
+.evidence { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
+.ev { padding:10px 12px; border:1px solid var(--border); border-radius:6px; background:var(--app); }
+.ev b { display:flex; gap:6px; align-items:center; font-weight:600; }
+.ev .sub { display:block; color:var(--desc); font-size:12px; margin-top:2px; }
+
+/* Status label */
+.st { display:inline-flex; align-items:center; gap:6px; font-weight:600; white-space:nowrap; }
+.st[data-s=ok] { color:var(--ok); } .st[data-s=warn] { color:var(--warn); } .st[data-s=bad] { color:var(--bad); }
+.st[data-s=unk], .st[data-s=idle], .st[data-s=stop] { color:var(--unk); } .st[data-s=start] { color:var(--info); }
+.mode { display:inline-flex; align-items:center; gap:4px; padding:1px 7px; border-radius:999px; border:1px solid var(--border); color:var(--muted); font-size:12px; white-space:nowrap; }
+
+/* Incident card */
+.incident { display:block; padding:14px 16px; border:1px solid var(--bad-bd); border-left:4px solid var(--bad); border-radius:6px; background:var(--raised); color:inherit; }
+.incident:hover { text-decoration:none; background:var(--subtle); }
+.incident .row1 { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.incident h2 { font-size:15px; }
+.incident p { margin:6px 0 0; color:var(--muted); }
+.incident .next { margin-top:8px; font-weight:600; color:var(--fg); }
+.chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+
+/* Fleet summary */
+.fleet { display:grid; grid-template-columns:repeat(5,1fr); border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+.fleet div { padding:10px 12px; border-right:1px solid var(--border); }
+.fleet div:last-child { border-right:0; }
+.fleet b { display:block; font-size:20px; font-weight:600; }
+.fleet span { color:var(--desc); font-size:12px; }
+
+/* Pebble rows */
+.list { border:1px solid var(--border); border-radius:6px; overflow:hidden; background:var(--raised); }
+.prow { display:grid; grid-template-columns:minmax(150px,1.2fr) 170px 1fr 92px 20px; gap:12px; align-items:center; min-height:56px; padding:8px 12px; border-top:1px solid var(--subtle); color:inherit; }
+.prow:first-child { border-top:0; }
+.prow:hover { background:var(--subtle); text-decoration:none; }
+.pname { font-weight:600; overflow-wrap:anywhere; }
+.psub { font-size:12px; color:var(--desc); }
+.pmetric { text-align:right; font-size:12px; color:var(--muted); }
+.group-label { padding:6px 12px; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--desc); background:var(--panel); border-top:1px solid var(--border); }
+.group-label:first-child { border-top:0; }
+
+/* History strip: height encodes state, not latency */
+.strip { display:block; width:100%; height:22px; }
+.legend { display:flex; flex-wrap:wrap; gap:4px 14px; margin-top:8px; font-size:12px; color:var(--desc); }
+.legend i { display:inline-block; width:10px; height:12px; margin-right:5px; vertical-align:-2px; }
+
+/* Filters */
+.filters { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:12px 0; }
+.app .filter { padding:5px 10px; border-radius:999px; border:1px solid var(--border); color:var(--muted); min-height:32px; }
+.app .filter[aria-pressed=true] { background:var(--fg); color:var(--app); border-color:var(--fg); }
+.search { flex:1; min-width:160px; height:32px; padding:0 10px; border:1px solid var(--border); border-radius:6px; background:var(--app); color:var(--fg); font:inherit; }
+
+/* Detail */
+.crumb { font-size:12px; margin-bottom:8px; }
+.detail-head { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+.kv { display:grid; grid-template-columns:repeat(4,1fr); gap:0; border:1px solid var(--border); border-radius:6px; margin-top:12px; overflow:hidden; }
+.kv div { padding:10px 12px; border-right:1px solid var(--border); }
+.kv div:last-child { border-right:0; }
+.kv span { display:block; font-size:12px; color:var(--desc); }
+.kv b { font-weight:600; }
+.range { display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+.app .range button { padding:4px 10px; min-height:30px; color:var(--muted); border-right:1px solid var(--border); }
+.app .range button:last-child { border-right:0; }
+.app .range button[aria-pressed=true] { background:var(--subtle); color:var(--fg); font-weight:600; }
+.charts { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.chart { border:1px solid var(--border); border-radius:6px; padding:10px 12px 8px; background:var(--raised); }
+.chart h3 { margin:0; font-size:13px; font-weight:600; }
+.chart .sub { font-size:12px; color:var(--desc); }
+.chart svg { display:block; width:100%; height:110px; margin:6px 0 4px; }
+.chart svg * { vector-effect:non-scaling-stroke; }
+.events { list-style:none; margin:0; padding:0; border:1px solid var(--border); border-radius:6px; background:var(--raised); }
+.events li { display:grid; grid-template-columns:96px 22px 1fr; gap:8px; align-items:start; padding:9px 12px; border-top:1px solid var(--subtle); }
+.events li:first-child { border-top:0; }
+.events time { color:var(--desc); font-size:12px; }
+.log { margin:0; padding:10px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+.app .btn { display:inline-flex; align-items:center; gap:6px; min-height:32px; padding:0 12px; border:1px solid var(--border); border-radius:6px; background:var(--raised); font-weight:500; }
+.app .btn:hover { background:var(--subtle); }
+.cmd { display:flex; gap:8px; align-items:center; padding:8px 10px; border:1px solid var(--border); border-radius:6px; background:var(--panel); }
+.cmd code { flex:1; overflow-wrap:anywhere; }
+
+.banner { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px dashed var(--unk-bd); border-radius:6px; background:var(--unk-bg); margin-bottom:12px; }
+.banner b { display:block; }
+.empty { padding:28px 16px; text-align:center; border:1px dashed var(--border); border-radius:6px; color:var(--desc); }
+.empty h2 { color:var(--fg); margin-bottom:4px; }
+.tabs { display:flex; gap:2px; border-bottom:1px solid var(--border); margin:12px 0; }
+.app .tab { padding:8px 12px; min-height:36px; color:var(--desc); border-bottom:2px solid transparent; margin-bottom:-1px; }
+.app .tab[aria-selected=true] { color:var(--fg); border-color:var(--fg); font-weight:600; }
+.table { width:100%; border-collapse:collapse; background:var(--raised); border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+.table th { text-align:left; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--desc); padding:8px 12px; background:var(--panel); }
+.table td .st { white-space:nowrap; }
+.table td { padding:10px 12px; border-top:1px solid var(--subtle); vertical-align:top; }
+
+/* Public page */
+.public { max-width:720px; margin:0 auto; padding:32px 20px 48px; }
+.public .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:28px; }
+.public .status { padding:20px; border-radius:10px; border:1px solid var(--border); background:var(--raised); }
+.public .status[data-tone=bad] { border-color:var(--bad-bd); background:var(--bad-bg); }
+.public .status[data-tone=warn] { border-color:var(--warn-bd); background:var(--warn-bg); }
+.public .status[data-tone=unk] { border-style:dashed; border-color:var(--unk-bd); }
+.public .status h1 { display:flex; gap:10px; align-items:center; font-size:26px; }
+.public .status p { margin:6px 0 0; color:var(--muted); }
+.public .scope { margin-top:14px; font-size:12px; color:var(--desc); }
+.days { display:grid; grid-template-columns:repeat(90,1fr); gap:2px; height:34px; margin-top:8px; }
+.days i { display:block; border-radius:2px; }
+.daylabels { display:flex; justify-content:space-between; font-size:12px; color:var(--desc); margin-top:6px; }
+.update { padding:12px 0; border-top:1px solid var(--subtle); }
+.update:first-child { border-top:0; }
+
+/* Phone */
+.app[data-width=phone] .activity, .app[data-width=phone] .titlebar .wide { display:none; }
+.app[data-width=phone] .page { padding:14px 16px 88px; }
+.app[data-width=phone] .bottomnav { display:grid; grid-template-columns:repeat(4,1fr); position:sticky; bottom:0; background:var(--panel); border-top:1px solid var(--border); }
+.app[data-width=phone] .bottomnav button { position:relative; display:flex; flex-direction:column; align-items:center; gap:2px; min-height:56px; padding:8px 0; font-size:11px; color:var(--desc); }
+.app[data-width=phone] .bottomnav button[aria-current=page] { color:var(--fg); font-weight:600; }
+.app[data-width=phone] .bottomnav .badge { right:calc(50% - 22px); top:4px; bottom:auto; }
+.app[data-width=phone] .body { flex-direction:column; min-height:780px; }
+.app[data-width=phone] .main { flex:1; }
+.app[data-width=phone] .evidence { grid-template-columns:1fr; }
+.app[data-width=phone] .fleet { grid-template-columns:repeat(3,1fr); }
+.app[data-width=phone] .fleet div:nth-child(3) { border-right:0; }
+.app[data-width=phone] .fleet div:nth-child(n+4) { border-top:1px solid var(--border); }
+.app[data-width=phone] .prow { grid-template-columns:1fr auto; grid-template-areas:"name state" "strip strip"; gap:6px 10px; padding:10px 12px; }
+.app[data-width=phone] .prow .c-name { grid-area:name; } .app[data-width=phone] .prow .c-state { grid-area:state; text-align:right; }
+.app[data-width=phone] .prow .c-strip { grid-area:strip; } .app[data-width=phone] .prow .c-metric, .app[data-width=phone] .prow .c-chev { display:none; }
+.app[data-width=phone] .kv { grid-template-columns:1fr 1fr; }
+.app[data-width=phone] .kv div:nth-child(2) { border-right:0; }
+.app[data-width=phone] .kv div:nth-child(n+3) { border-top:1px solid var(--border); }
+.app[data-width=phone] .charts { grid-template-columns:1fr; }
+.app[data-width=phone] .events li { grid-template-columns:72px 20px 1fr; }
+.app[data-width=phone] .verdict h1 { font-size:21px; }
+.app[data-width=phone] .days { grid-template-columns:repeat(30,1fr); }
+.app[data-width=phone] .table .hide-phone { display:none; }
+.app[data-width=phone] .public { padding:20px 16px 32px; }
+@media (prefers-reduced-motion: no-preference) { .app .fade { animation:fade .12s ease-out; } @keyframes fade { from { opacity:.4 } } }
+</style>
+</head>
+<body>
+<div class="controls" id="controls">
+  <label>View <select id="c-view">
+    <option value="overview">Overview</option><option value="pebbles">Pebbles</option><option value="pebble">Pebble detail</option>
+    <option value="incidents">Incidents</option><option value="incident">Incident detail</option><option value="review">Review · errors</option>
+    <option value="jobs">Review · jobs</option><option value="settings">Settings</option><option value="public">Public status page</option>
+  </select></label>
+  <label>Scenario <select id="c-scn"><option value="good">All good</option><option value="incident">Incident open</option><option value="stale">Stale local data</option><option value="first">First run</option></select></label>
+  <label>Theme <select id="c-theme"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+  <label>Width <select id="c-width"><option value="desktop">Desktop</option><option value="phone">Phone</option></select></label>
+</div>
+<div class="app" id="app" data-theme="light" data-width="desktop"></div>
+
+<script>
+/* ───────── mock data (design only; no API) ───────── */
+const NOW = "Sat 7 Nov · 21:48";
+const icons = {
+  ok:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.6 8.2l2.2 2.2 4.6-4.8" stroke="var(--app)" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  warn:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.3L15.2 14H.8z" fill="currentColor"/><path d="M8 5.6v4M8 11.6v.4" stroke="var(--app)" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  bad:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.1 1h5.8L15 5.1v5.8L10.9 15H5.1L1 10.9V5.1z" fill="currentColor"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="var(--app)" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  unk:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2.6 2"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1M8 11.2v.3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>',
+  start:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>',
+  idle:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.8 1.9A6.4 6.4 0 1 0 14.1 10 5.2 5.2 0 0 1 10.8 1.9z" fill="currentColor"/></svg>',
+  stop:'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor"/></svg>',
+  moon:'<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.8 1.9A6.4 6.4 0 1 0 14.1 10 5.2 5.2 0 0 1 10.8 1.9z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+  bellx:'<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 11V7.5a4 4 0 0 1 8 0V11l1.2 1.4H2.8zM6.5 14h3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2 2l12 12" stroke="currentColor" stroke-width="1.6"/></svg>',
+  chev:'<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>',
+  deploy:'<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M4 7l4-4 4 4" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>',
+};
+const nav = [
+  { id:"overview", label:"Overview", svg:'<path d="M3 3h7v7H3zM14 3h7v4h-7zM14 11h7v10h-7zM3 14h7v7H3z"/>' },
+  { id:"pebbles", label:"Pebbles", svg:'<circle cx="7" cy="8" r="3.2"/><circle cx="16.5" cy="7" r="2.6"/><circle cx="9" cy="17" r="3.4"/><circle cx="17.5" cy="16" r="2.4"/>' },
+  { id:"incidents", label:"Incidents", svg:'<path d="M6 17V11a6 6 0 0 1 12 0v6l1.6 2H4.4zM10 21.5h4"/>' },
+  { id:"review", label:"Review", svg:'<path d="M5 4h14v16H5zM8.5 9h7M8.5 13h7M8.5 17h4"/>' },
+];
+const navIcon = n => `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">${n.svg}</svg>`;
+
+function strip(seed, kind) {           // 48 × 30-min fixed buckets
+  const a = []; let x = seed;
+  for (let i = 0; i < 48; i++) {
+    x = (x * 9301 + 49297) % 233280; const r = x / 233280;
+    if (kind === "idle") a.push(i < 20 ? (r < .1 ? "unk" : "ok") : "idle");
+    else if (kind === "stop") a.push("stop");
+    else if (kind === "crash") a.push(i > 43 ? "bad" : i === 30 ? "bad" : "ok");
+    else if (kind === "stale") a.push(i > 43 ? "unk" : "ok");
+    else if (kind === "new") a.push(i > 46 ? "ok" : "none");
+    else a.push(r < .012 ? "unk" : "ok");
+  }
+  return a;
+}
+const PEBBLES = [
+  ["newspaper-nightly","ready",false,"412 ms","118 MiB",1.4],["chrono","ready",false,"38 ms","61 MiB",0.9],["comms","ready",false,"22 ms","44 MiB",0.4],
+  ["babel","ready",true,"51 ms","9 MiB",0.1],["typewriter","ready",false,"64 ms","88 MiB",0.3],["university-mail","ready",true,"190 ms","412 MiB",0.2],
+  ["cabinet","ready",false,"19 ms","19 MiB",0.1],["chrono-mcp","ready",false,"27 ms","50 MiB",0.1],["hut","ready",true,"9 ms","8 MiB",0],
+  ["safe","ready",true,"14 ms","10 MiB",0],["cloudly","ready",true,"31 ms","12 MiB",0],["netflix","ready",true,"44 ms","17 MiB",0],
+  ["upty","ready",true,"12 ms","36 MiB",0],["nexusboard","ready",false,"58 ms","22 MiB",0.1],["poke-bridge","ready",false,"33 ms","38 MiB",0.1],
+  ["university-moodle","ready",false,"97 ms","46 MiB",0],["curator","ready",true,"21 ms","10 MiB",0],["codex","ready",true,"18 ms","7 MiB",0],
+  ["bot-manager","ready",true,"16 ms","8 MiB",0],["point-depart","ready",true,"25 ms","5 MiB",0],
+].map(([name, health, hib, p95, mem, rps], i) => ({ name, health, mode:"running", hib, p95, mem, rps, strip:strip(i * 37 + 11) }));
+PEBBLES[3].strip[33] = "bad"; // babel: one failed check, recovered — shows the encoding without implying an outage
+const IDLE = ["agentdesk-viewer-mockup","chrono-edits-mockup","chrono-mirror-mockup","chrono-timer-mockup","anima-kit"].map((name, i) => ({ name, health:"idle", mode:"idle", strip:strip(i + 3, "idle") }));
+const STOPPED = ["newspaper","nexusboard-lab"].map(name => ({ name, health:"stop", mode:"stopped", strip:strip(1, "stop") }));
+
+/* ───────── state ───────── */
+let S = { view:"overview", scn:"good", theme:"light", width:"desktop", filter:"all", range:"24h" };
+const $ = id => document.getElementById(id);
+
+function scenario() {
+  const p = structuredClone(PEBBLES);
+  if (S.scn === "incident") { Object.assign(p[0], { health:"bad", strip:strip(7, "crash"), p95:"—", mem:"—" }); }
+  if (S.scn === "stale") p.forEach(x => x.strip = strip(5, "stale"));
+  if (S.scn === "first") p.forEach(x => x.strip = strip(1, "new"));
+  return p;
+}
+const label = { ok:"Ready", ready:"Ready", warn:"Degraded", bad:"Not ready", unk:"Unknown", start:"Starting", idle:"Idle", stop:"Stopped" };
+const stateKey = h => h === "ready" ? "ok" : h;
+const big = (svg, px) => svg.replace(/width="\d+" height="\d+"/, `width="${px}" height="${px}"`);
+const st = (s, text) => `<span class="st" data-s="${s}">${icons[s]}${text ?? label[s]}</span>`;
+
+function stripSvg(a, name) {
+  const w = 4, gap = 2, H = 22, cells = a.map((s, i) => {
+    const x = i * (w + gap);
+    if (s === "ok") return `<rect x="${x}" y="${H - 7}" width="${w}" height="7" rx="1" fill="var(--ok)"/>`;
+    if (s === "bad") return `<rect x="${x}" y="0" width="${w}" height="${H}" rx="1" fill="var(--bad)"/>`;
+    if (s === "unk") return `<rect x="${x + .5}" y="${H - 14.5}" width="${w - 1}" height="14" rx="1" fill="url(#hatch)" stroke="var(--hatch)"/>`;
+    if (s === "idle") return `<rect x="${x}" y="${H - 2}" width="${w}" height="2" fill="var(--hatch)" opacity=".9"/>`;
+    if (s === "stop") return `<rect x="${x}" y="${H - 1}" width="${w}" height="1" fill="var(--hatch)"/>`;
+    return `<rect x="${x + .5}" y="${H - 14.5}" width="${w - 1}" height="14" rx="1" fill="none" stroke="var(--subtle)"/>`;
+  }).join("");
+  const fails = a.filter(s => s === "bad").length, unk = a.filter(s => s === "unk" || s === "none").length;
+  const summary = a[0] === "stop" ? "stopped all day" : a.every(s => s === "idle" || s === "ok" || s === "unk") && a.at(-1) === "idle" ? "idle, not probed" : `${fails} of 48 half-hours contain a failed check, ${unk} without full evidence`;
+  return `<svg class="strip" viewBox="0 0 ${48 * (w + gap) - gap} ${H}" preserveAspectRatio="none" role="img" aria-label="${name}, last 24 hours: ${summary}"><defs><pattern id="hatch" width="3" height="3" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="1.2" height="3" fill="var(--hatch)"/></pattern></defs>${cells}</svg>`;
+}
+const legend = `<div class="legend"><span><i style="background:var(--ok);height:5px;vertical-align:0"></i>All checks passed</span><span><i style="background:var(--bad)"></i>Contains a failed check</span><span><i style="border:1px solid var(--hatch);background:repeating-linear-gradient(45deg,var(--hatch) 0 1px,transparent 1px 3px)"></i>Missing evidence</span><span><i style="background:var(--hatch);height:2px;vertical-align:1px"></i>Idle, not probed</span><span>· 30 min per bar · height shows state, not latency</span></div>`;
+
+/* ───────── views ───────── */
+function evidence() {
+  const stale = S.scn === "stale", first = S.scn === "first";
+  return `<div class="evidence">
+    <div class="ev"><b>${stale ? st("unk","Local · stale") : first ? st("start","Local · warming up") : st("ok","Local checks")}</b><span class="sub num">${stale ? "Last observation 12 min ago · daemon unreachable" : first ? "First probe sweep in 18 s" : "Every 30 s · checked 12 s ago"}</span></div>
+    <div class="ev"><b>${first ? st("unk","Outside · waiting") : st("ok","Outside probe")}</b><span class="sub num">${first ? "No external observation yet" : "GitHub Actions · reachable · 3 min ago"}</span></div>
+    <div class="ev"><b>${first ? st("warn","Alerts · not set up") : st("ok","Alert delivery")}</b><span class="sub num">${first ? "Run bedrock alerts setup" : "comms · last accepted 2 h ago"}</span></div>
+  </div>`;
+}
+function incidentCard() {
+  return `<a class="incident" href="#" data-go="incident">
+    <div class="row1">${st("bad","Not ready")}<h2>newspaper-nightly is crash-looping</h2><span class="grow"></span><span class="desc num">open 14 min</span></div>
+    <p>5 starts in a row missed the 15 s health gate (HEALTH_TIMEOUT). Retrying every 5 min · next in 2 min.</p>
+    <div class="chips"><span class="mode">Paged · comms accepted 21:34</span><span class="mode">Rule: not ready &gt; 2 min</span></div>
+    <div class="next">Next: open logs, then restart once the disk is quiet ${icons.chev}</div>
+  </a>`;
+}
+function overview() {
+  const p = scenario(), inc = S.scn === "incident", stale = S.scn === "stale", first = S.scn === "first";
+  const ready = p.filter(x => x.health === "ready").length, hib = p.filter(x => x.hib).length;
+  const verdict = inc ? `<div class="verdict" data-tone="bad"><span class="big st" data-s="bad">${big(icons.bad, 28)}</span><div><h1>1 incident needs attention</h1><p class="num">newspaper-nightly is not ready · everything else checked 12 s ago</p></div></div>`
+    : stale ? `<div class="verdict" data-tone="unk"><span class="big st" data-s="unk">${big(icons.unk, 28)}</span><div><h1>Current status unknown</h1><p class="num">No local observation for 12 min. Last known: nothing needed attention. The outside probe still reaches the home cloud.</p></div></div>`
+    : first ? `<div class="verdict"><span class="big st" data-s="start">${big(icons.start, 28)}</span><div><h1>Waiting for the first observations</h1><p>Local checks start within 30 s. Set up alert delivery so pages can reach you.</p></div></div>`
+    : `<div class="verdict"><span class="big st" data-s="ok">${big(icons.ok, 28)}</span><div><h1>Nothing needs attention</h1><p class="num">All 20 running pebbles are ready · checked 12 s ago</p></div></div>`;
+  const healthy = p.filter(x => x.health === "ready").slice(0, 6);
+  return `<div class="page fade">
+    ${verdict}
+    ${evidence()}
+    ${inc ? `<div class="section-title">Open incidents</div>${incidentCard()}` : ""}
+    <div class="section-title">Fleet${stale ? " · last known 12 min ago" : ""}</div>
+    <div class="fleet num" style="${stale ? "opacity:.6" : ""}">
+      <div><b>${first ? "—" : inc ? ready : ready}</b><span>Ready</span></div>
+      <div><b>${inc ? 1 : 0}</b><span>Needs attention</span></div>
+      <div><b>${IDLE.length}</b><span>Idle · on demand</span></div>
+      <div><b>${hib}</b><span>Hibernated</span></div>
+      <div><b>${STOPPED.length}</b><span>Stopped</span></div>
+    </div>
+    <div class="section-title">Review <span class="grow"></span><a href="#" data-go="review">Open review</a></div>
+    ${first ? `<div class="empty">Nothing to review yet · error issues, job runs and backups appear after the first observations</div>` : `<div class="list">
+      <a class="prow" href="#" data-go="review" style="grid-template-columns:1fr auto"><div><div class="pname">2 new error issues</div><div class="psub">typewriter · TypeError in editor/lsp.ts · first seen 3 h ago</div></div>${st("warn","Review")}</a>
+      <a class="prow" href="#" data-go="jobs" style="grid-template-columns:1fr auto"><div><div class="pname">Backups</div><div class="psub num">Last full backup 41 min ago · every 60 min · 26 of 26 current</div></div>${st("ok","Current")}</a>
+    </div>`}
+    <div class="section-title">Running pebbles <span class="grow"></span><a href="#" data-go="pebbles">All ${p.length + IDLE.length + STOPPED.length}</a></div>
+    <div class="list">${(inc ? [p[0], ...healthy.slice(1)] : healthy).map(row).join("")}</div>
+    ${legend}
+  </div>`;
+}
+function row(x) {
+  const s = stateKey(x.health);
+  const mode = x.mode === "idle" ? `<span class="mode">${icons.idle} Available on demand</span>` : x.mode === "stopped" ? `<span class="mode">${icons.stop} Stopped intentionally</span>` : x.hib ? `<span class="mode">${icons.moon} Hibernated · running</span>` : "";
+  const stateText = x.mode === "idle" ? st("idle","Idle") : x.mode === "stopped" ? st("stop","Stopped") : S.scn === "stale" ? st("unk","Stale") : S.scn === "first" ? st("start","Waiting") : st(s);
+  return `<a class="prow" href="#" data-go="pebble">
+    <div class="c-name"><div class="pname">${x.name}</div><div class="psub">${mode || (s === "bad" ? "Crash-looping · retry in 2 min" : "Running")}</div></div>
+    <div class="c-state">${stateText}</div>
+    <div class="c-strip">${stripSvg(x.strip, x.name)}</div>
+    <div class="c-metric pmetric num">${x.mode === "running" ? `p95 ${x.p95}<br>${x.mem}` : "—"}</div>
+    <div class="c-chev desc">${icons.chev}</div>
+  </a>`;
+}
+function pebbles() {
+  const p = scenario(), att = p.filter(x => x.health !== "ready");
+  const groups = [["Needs attention", att], ["Ready", p.filter(x => x.health === "ready")], ["Available on demand", IDLE], ["Stopped intentionally", STOPPED]].filter(g => g[1].length);
+  const f = S.filter, chips = [["all","All", p.length + IDLE.length + STOPPED.length],["attention","Needs attention", att.length],["idle","On demand", IDLE.length],["stopped","Stopped", STOPPED.length]];
+  const shown = f === "all" ? groups : groups.filter(g => ({attention:"Needs attention",idle:"Available on demand",stopped:"Stopped intentionally"})[f] === g[0]);
+  return `<div class="page fade"><h1>Pebbles</h1>
+    <div class="filters"><input class="search" placeholder="Search pebbles" aria-label="Search pebbles">${chips.map(([id,l,n]) => `<button class="filter num" data-filter="${id}" aria-pressed="${f===id}">${l} ${n}</button>`).join("")}</div>
+    ${shown.length ? `<div class="list">${shown.map(([g, xs]) => `<div class="group-label">${g} · ${xs.length}</div>${xs.map(row).join("")}`).join("")}</div>` : `<div class="empty"><h2>No pebbles match this filter</h2><button class="btn" data-filter="all">Show all</button></div>`}
+    ${legend}</div>`;
+}
+function chartBars() {
+  let x = 7, ok = "", bad = "";
+  for (let i = 0; i < 48; i++) { x = (x * 9301 + 49297) % 233280; const v = 18 + (x / 233280) * 52 + (i > 30 && i < 38 ? 30 : 0); const f = S.scn === "incident" && i > 43 ? 0 : (i === 30 ? 9 : 0);
+    const h = S.scn === "incident" && i > 43 ? 0 : v; ok += `<rect x="${i * 6.2}" y="${100 - h}" width="4.4" height="${h}" fill="var(--strong)"/>`; if (f) bad += `<rect x="${i * 6.2}" y="${100 - h}" width="4.4" height="${f * 2}" fill="var(--bad)"/>`; }
+  const gap = S.scn === "incident" ? `<rect x="${44 * 6.2}" y="0" width="${4 * 6.2}" height="100" fill="url(#hatch2)" opacity=".7"/>` : "";
+  return `<svg viewBox="0 0 300 110" preserveAspectRatio="none" role="img" aria-label="Requests per 30 minutes, 24 hours; failures marked"><defs><pattern id="hatch2" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="1.4" height="4" fill="var(--hatch)"/></pattern></defs>${ok}${bad}${gap}${marker(186,"deploy")}</svg>`;
+}
+function marker(x, t) { return `<line x1="${x}" x2="${x}" y1="0" y2="104" stroke="var(--info)" stroke-dasharray="3 2" vector-effect="non-scaling-stroke"/>`; }
+function chartBand() {
+  let d1 = "", d2 = "", x = 3;
+  for (let i = 0; i <= 48; i++) { x = (x * 9301 + 49297) % 233280; const lo = 58 - (x / 233280) * 10 - (i > 30 && i < 38 ? 18 : 0), hi = lo - 14; const X = i * 6.2;
+    d1 += `${i ? "L" : "M"}${X},${lo} `; d2 = `L${X},${hi} ` + d2; }
+  return `<svg viewBox="0 0 300 110" preserveAspectRatio="none" role="img" aria-label="p95 headers-ready latency as a bucket range"><path d="${d1}${d2.replace(/^L/,"L")}Z" fill="var(--info-bg)" stroke="var(--info)" stroke-width="1"/><line x1="0" x2="300" y1="30" y2="30" stroke="var(--border)" stroke-dasharray="2 3"/>${marker(186,"deploy")}</svg>`;
+}
+function chartMem() {
+  let d = "", s = "", x = 9;
+  for (let i = 0; i <= 48; i++) { x = (x * 9301 + 49297) % 233280; const v = 60 - (x / 233280) * 8 - (i > 12 && i < 30 ? 22 : 0); d += `${i ? "L" : "M"}${i * 6.2},${v} `; s += `${i ? "L" : "M"}${i * 6.2},${i > 12 && i < 30 ? 70 : 96} `; }
+  return `<svg viewBox="0 0 300 110" preserveAspectRatio="none" role="img" aria-label="Resident memory and swap"><path d="${d}" fill="none" stroke="var(--fg)" stroke-width="1.4"/><path d="${s}" fill="none" stroke="var(--desc)" stroke-width="1.2" stroke-dasharray="4 3"/><line x1="${12 * 6.2}" x2="${12 * 6.2}" y1="0" y2="104" stroke="var(--desc)" stroke-dasharray="1 3"/></svg>`;
+}
+function pebble() {
+  const inc = S.scn === "incident", x = scenario()[0];
+  return `<div class="page fade"><div class="crumb"><a href="#" data-go="pebbles">Pebbles</a> <span class="desc">/</span> newspaper-nightly</div>
+    <div class="detail-head"><h1>newspaper-nightly</h1>${inc ? st("bad","Not ready · crash-looping") : st("ok","Ready")}<span class="mode">Running</span><span class="grow"></span><span class="range">${["1h","24h","7d"].map(r => `<button data-range="${r}" aria-pressed="${S.range===r}">${r}</button>`).join("")}</span></div>
+    ${inc ? `<div class="banner" style="border-color:var(--bad-bd);background:var(--bad-bg);border-style:solid;margin-top:12px">${icons.bad}<div><b>Part of an open incident · 14 min</b><span class="muted">Startup write took 9.8 s on a busy disk; 5 health timeouts in a row. <a href="#" data-go="incident">Open incident</a></span></div></div>` : ""}
+    <div class="kv num">
+      <div><span>Readiness</span><b>${inc ? "Failed · 14 min" : "Ready · 12 s ago"}</b></div>
+      <div><span>Requests · 24h</span><b>${inc ? "1,903" : "2,140"} · 9 failed</b></div>
+      <div><span>p95 headers-ready</span><b>${inc ? "—" : "(250, 500] ms"}</b></div>
+      <div><span>Last backup</span><b>41 min ago</b></div>
+    </div>
+    <div class="section-title">History · 48 × 30 min</div>${stripSvg(x.strip, x.name)}${legend}
+    <div class="section-title">Traffic and resources · 24 h</div>
+    <div class="charts">
+      <div class="chart"><h3>Requests</h3><div class="sub num">2,140 completed · <span style="color:var(--bad)">9 failed</span> · ordinary HTTP</div>${chartBars()}<div class="sub">Blue dashed line: deploy 14:02${S.scn === "incident" ? " · hatched: no process since 21:17" : ""}</div></div>
+      <div class="chart"><h3>Latency p95</h3><div class="sub num">Bucket range, not an exact value · 2,140 samples</div>${chartBand()}<div class="sub">Dotted line: 500 ms · blue dashed: deploy 14:02</div></div>
+      <div class="chart"><h3>Memory</h3><div class="sub num">Resident 118 MiB · swap (dashed) 0 MiB now</div>${chartMem()}<div class="sub">Dotted line: hibernated 09:40 · woke 13:58</div></div>
+      <div class="chart"><h3>Jobs</h3><div class="sub">No jobs declared · service <span class="mono">engine</span></div><div class="empty" style="margin-top:8px;padding:18px">Nothing scheduled</div></div>
+    </div>
+    <div class="section-title">Events</div>
+    <ul class="events num">
+      ${inc ? `<li><time>21:34</time>${st("bad","")}<div><b>Marked crashed</b> after 5 health timeouts · retrying every 5 min</div></li><li><time>21:17</time>${st("start","")}<div><b>Starting</b> after daemon restart · deploy 5f0ce16</div></li>` : ""}
+      <li><time>14:02</time><span class="st" style="color:var(--info)">${icons.deploy}</span><div><b>Deployed</b> release 1793873417845 · health-gated in 0.6 s</div></li>
+      <li><time>09:40</time><span class="st" data-s="unk">${icons.moon}</span><div><b>Hibernated</b> after 15 quiet minutes · woke on request at 13:58</div></li>
+    </ul>
+    <div class="section-title">Recent log lines <span class="grow"></span><a href="#">Search logs</a></div>
+    <pre class="log mono">21:19:39 HEALTH_TIMEOUT newspaper-nightly did not start within 15 seconds.
+21:19:16 Slow slot: detached write "services" held the write queue for 831 ms</pre>
+    <div class="section-title">From the CLI</div>
+    <div class="cmd"><code class="mono">bedrock restart newspaper-nightly</code><button class="btn">Copy</button></div>
+  </div>`;
+}
+function incidents() {
+  const inc = S.scn === "incident";
+  return `<div class="page fade"><h1>Incidents</h1>
+    <div class="tabs" role="tablist"><button class="tab" role="tab" aria-selected="true">Open ${inc ? 1 : 0}</button><button class="tab" role="tab">Resolved 3</button><button class="tab" role="tab">Silences 0</button></div>
+    ${inc ? incidentCard() : `<div class="empty"><h2>No open incidents</h2>Pages fire only for the tunnel, a pebble not ready for 2 min, a critical job, or a stale backup.</div>`}
+    <div class="section-title">Recently resolved</div>
+    <table class="table num"><thead><tr><th>Incident</th><th class="hide-phone">Opened</th><th>Lasted</th></tr></thead><tbody>
+      <tr><td>${st("ok","")} upty not ready</td><td class="hide-phone">Today 21:17</td><td>1 min 20 s</td></tr>
+      <tr><td>${st("ok","")} Backup older than 2× interval</td><td class="hide-phone">Thu 03:00</td><td>2 h 10 min</td></tr>
+      <tr><td>${st("ok","")} Tunnel process down</td><td class="hide-phone">Tue 11:42</td><td>4 min</td></tr>
+    </tbody></table></div>`;
+}
+function incident() {
+  return `<div class="page fade"><div class="crumb"><a href="#" data-go="incidents">Incidents</a> <span class="desc">/</span> open</div>
+    <div class="detail-head">${st("bad","Not ready")}<h1>newspaper-nightly is crash-looping</h1></div>
+    <div class="kv num">
+      <div><span>Opened</span><b>21:34 · 14 min</b></div><div><span>Rule</span><b>Not ready &gt; 2 min</b></div>
+      <div><span>Notification</span><b>Paged · accepted 21:34</b></div><div><span>Escalation</span><b>ntfy + email at 21:49</b></div>
+    </div>
+    <div class="section-title">Latest evidence</div>
+    <div class="list"><div class="prow" style="grid-template-columns:1fr"><div><div class="pname">HEALTH_TIMEOUT · 5 consecutive starts</div><div class="psub">Last at 21:34:02 · startup write held the queue 9.8 s · disk pressure 25 %</div></div></div></div>
+    <div class="section-title">What to do</div>
+    <div class="list"><div class="prow" style="grid-template-columns:1fr"><div>1. Check whether the disk is still busy (<a href="#">daemon status</a>).<br>2. Restart once it is quiet; it retries on its own every 5 min.<br>3. If it keeps failing, read the start-up logs.</div></div></div>
+    <div class="cmd" style="margin-top:8px"><code class="mono">bedrock restart newspaper-nightly</code><button class="btn">Copy</button></div>
+    <div class="section-title">Timeline</div>
+    <ul class="events num">
+      <li><time>21:36</time>${st("start","")}<div>Retry scheduled · next at 21:39 (± jitter)</div></li>
+      <li><time>21:34</time>${st("bad","")}<div><b>Incident opened</b> · page sent to comms (urgency high) · accepted</div></li>
+      <li><time>21:32</time>${st("warn","")}<div>Not ready for 2 min · 4th health timeout</div></li>
+      <li><time>21:17</time>${st("start","")}<div>Daemon restarted after deploy 5f0ce16 · 29 pebbles starting</div></li>
+    </ul>
+    <div class="section-title">Mute</div>
+    <div class="filters"><button class="btn">${icons.bellx} Silence for 2 h</button><span class="desc">Silencing stops notifications only; the incident stays open until checks recover.</span></div>
+  </div>`;
+}
+function review(tab) {
+  const errors = `<table class="table num"><thead><tr><th>Issue</th><th class="hide-phone">Pebble</th><th>Events · 24 h</th><th class="hide-phone">Last seen</th></tr></thead><tbody>
+    <tr><td><b>TypeError: cannot read 'range' of undefined</b><div class="psub mono">web/editor/lsp.ts:142 · browser · new</div></td><td class="hide-phone">typewriter</td><td>17</td><td class="hide-phone">8 min ago</td></tr>
+    <tr><td><b>Unhandled rejection: SQLITE_BUSY</b><div class="psub mono">server/sync.ts:58 · server · new</div></td><td class="hide-phone">typewriter</td><td>3</td><td class="hide-phone">3 h ago</td></tr>
+    <tr><td><b>ResizeObserver loop limit exceeded</b><div class="psub">counted, never alerted</div></td><td class="hide-phone">babel</td><td>212</td><td class="hide-phone">1 min ago</td></tr>
+  </tbody></table>`;
+  const jobs = `<table class="table num"><thead><tr><th>Job</th><th class="hide-phone">Schedule</th><th>Last run</th><th class="hide-phone">Next due</th></tr></thead><tbody>
+    <tr><td><b>nexusboard · radar</b><div class="psub"><span class="mono">*/15 * * * *</span> · critical</div></td><td class="hide-phone mono" style="white-space:nowrap">*/15 * * * *</td><td>${st("ok","OK")} 41 s</td><td class="hide-phone">21:45 + 5 min grace</td></tr>
+    <tr><td><b>chrono · digest</b><div class="psub"><span class="mono">0 7 * * *</span></div></td><td class="hide-phone mono" style="white-space:nowrap">0 7 * * *</td><td>${st("ok","OK")} 2.1 s</td><td class="hide-phone">tomorrow 07:00</td></tr>
+    <tr><td><b>university-mail · sync</b><div class="psub"><span class="mono">*/5 * * * *</span></div></td><td class="hide-phone mono" style="white-space:nowrap">*/5 * * * *</td><td>${st("warn","Failed")} 1 of last 12</td><td class="hide-phone">21:50</td></tr>
+  </tbody></table>
+  <div class="section-title">Backups</div><div class="list"><div class="prow" style="grid-template-columns:1fr auto"><div><div class="pname">All pebbles and the identity database</div><div class="psub num">Last full backup 41 min ago · every 60 min · disk target</div></div>${st("ok","Current")}</div></div>`;
+  return `<div class="page fade"><h1>Review</h1><p class="desc">Things to look at this week. None of these page you.</p>
+    <div class="tabs" role="tablist"><button class="tab" role="tab" data-go="review" aria-selected="${tab === "errors"}">Errors 2 new</button><button class="tab" role="tab" data-go="jobs" aria-selected="${tab === "jobs"}">Jobs &amp; backups</button><button class="tab" role="tab">Weekly digest</button></div>
+    ${S.scn === "first" ? `<div class="empty"><h2>${tab === "errors" ? "No issues captured yet" : "No job runs observed yet"}</h2>${tab === "errors" ? "An empty list does not prove capture works; trigger a test error from a pebble to check." : "Runs appear after each pebble's first scheduled job."}</div>` : tab === "errors" ? errors : jobs}</div>`;
+}
+function settings() {
+  return `<div class="page fade"><h1>Settings</h1>
+    <div class="section-title">Alert delivery</div>
+    <div class="list"><div class="prow" style="grid-template-columns:1fr auto"><div><div class="pname">comms · local route</div><div class="psub">Delivered through the daemon, so a tunnel outage can still page you. Quiet hours 23:00–07:30 apply to non-critical messages only.</div></div><button class="btn">Send test</button></div></div>
+    <div class="section-title">Outside probe</div>
+    <div class="list"><div class="prow" style="grid-template-columns:1fr auto"><div><div class="pname mono">https://bedrock.mc2.onl/healthz</div><div class="psub num">GitHub Actions every 5 min · last run 3 min ago · public page updated 3 min ago</div></div><a class="btn" href="#" data-go="public">View public page</a></div></div>
+    <div class="section-title">What the public page shows</div>
+    <div class="list"><div class="prow" style="grid-template-columns:1fr"><div>Only “Home cloud”: whether the gateway and daemon answer from outside, when it was checked, and redacted outage history. No pebble names, counts, logs or errors.</div></div></div>
+    <div class="section-title">Retention</div>
+    <div class="list"><div class="prow" style="grid-template-columns:1fr"><div class="num">Check results 14 days, then archived to a private GitHub repository · hourly summaries 400 days · incidents kept · 64 MiB cap</div></div></div>
+  </div>`;
+}
+function publicPage() {
+  const scn = S.scn, tone = scn === "incident" ? "bad" : scn === "stale" ? "unk" : scn === "first" ? "unk" : "ok";
+  const head = { ok:[icons.ok,"Home cloud — reachable","Last external check 3 min ago (21:45 CET)"], bad:[icons.bad,"Home cloud — unreachable","Unreachable since 21:12 · latest check 21:45 failed"], unk:scn === "first" ? [icons.unk,"Waiting for the first external observation","No checks have run yet"] : [icons.unk,"Current status unknown","Last check 41 min ago (21:07 CET): reachable"] }[tone];
+  let x = 13; const days = Array.from({length:90}, (_, i) => { x = (x * 9301 + 49297) % 233280; const r = x / 233280;
+    if (scn === "first") return "none"; if (i === 89 && scn === "incident") return "bad"; if (i === 89 && scn === "stale") return "unk"; return r < .03 ? "bad" : r < .06 ? "unk" : "ok"; });
+  const shown = S.width === "phone" ? days.slice(-30) : days;
+  const fill = d => d === "ok" ? "var(--ok)" : d === "bad" ? "var(--bad)" : d === "unk" ? "repeating-linear-gradient(45deg,var(--hatch) 0 1px,transparent 1px 3px)" : "var(--subtle)";
+  return `<div class="public fade">
+    <div class="head"><div class="brand"><span class="brand-mark">b</span>Home cloud status</div><span class="desc num">Page published 21:45</span></div>
+    <div class="status" data-tone="${tone}"><h1><span class="st" data-s="${tone === "ok" ? "ok" : tone}">${big(head[0], 26)}</span>${head[1]}</h1><p class="num">${head[2]}</p>
+      ${tone === "bad" ? `<p><b>Update 21:20</b> — We know the home cloud is unreachable and are looking into it.</p>` : ""}
+      <div class="scope">External check of the home gateway and daemon, normally every 5 minutes. Individual apps are private and are not tested here.</div></div>
+    <div class="section-title">Last ${shown.length} days <span class="grow"></span><span class="num" style="text-transform:none;letter-spacing:0">${scn === "first" ? "Probe success — · coverage 0 %" : "Probe success 99.6 % · coverage 98.9 %"}</span></div>
+    <div class="days" style="grid-template-columns:repeat(${shown.length},1fr)" role="img" aria-label="Daily external check results">${shown.map(d => `<i style="background:${fill(d)}${d === "unk" ? ";border:1px solid var(--hatch)" : ""};${d === "ok" ? "height:40%;align-self:end" : ""}"></i>`).join("")}</div>
+    <div class="daylabels"><span>${shown.length} days ago</span><span>Today</span></div>
+    ${legend.replace("30 min per bar","1 day per bar").replace("Idle, not probed","No data")}
+    <div class="section-title">Past incidents</div>
+    <div>${scn === "first" ? `<p class="desc">No incidents recorded.</p>` : `<div class="update"><b>Unreachable for 18 min</b><div class="desc num">2 Nov · 13:00–13:18 CET · resolved</div></div><div class="update"><b>Unreachable for 6 min</b><div class="desc num">27 Oct · 04:12–04:18 CET · resolved</div></div>`}</div>
+  </div>`;
+}
+
+/* ───────── render ───────── */
+function shell(content, active) {
+  const inc = S.scn === "incident" ? 1 : 0;
+  const acts = nav.map(n => `<button class="act" data-go="${n.id}" aria-label="${n.label}" ${active === n.id ? 'aria-current="page"' : ""}>${navIcon(n)}${n.id === "incidents" && inc ? `<span class="badge">1</span>` : ""}${n.id === "review" ? `<span class="badge" style="background:var(--strong);color:var(--fg)">2</span>` : ""}</button>`).join("");
+  const bottom = nav.map(n => `<button data-go="${n.id}" ${active === n.id ? 'aria-current="page"' : ""}>${navIcon(n)}${n.label}${n.id === "incidents" && inc ? `<span class="badge">1</span>` : ""}</button>`).join("");
+  return `<div class="titlebar"><div class="brand"><span class="brand-mark">b</span>Bedrock</div><span class="sep">/</span><span>Monitor</span><span class="grow"></span><span class="desc num wide">${NOW}</span><button class="icon-btn" data-go="settings" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button></div>
+    <div class="body"><nav class="activity" aria-label="Monitor">${acts}</nav><main class="main">${S.scn === "stale" && S.view !== "public" ? `<div class="page" style="padding-bottom:0"><div class="banner">${icons.unk}<div><b>Local data unavailable · last observed 12 min ago</b><span class="muted">Readings below are historical. <a href="#" data-go="public">The public status page</a> is independent of this box.</span></div></div></div>` : ""}${content}</main><nav class="bottomnav" aria-label="Monitor">${bottom}</nav></div>`;
+}
+function render() {
+  const app = $("app"); app.dataset.theme = S.theme; app.dataset.width = S.width;
+  const views = { overview:[overview,"overview"], pebbles:[pebbles,"pebbles"], pebble:[pebble,"pebbles"], incidents:[incidents,"incidents"], incident:[incident,"incidents"], review:[() => review("errors"),"review"], jobs:[() => review("jobs"),"review"], settings:[settings,""] };
+  if (S.view === "public") { app.innerHTML = publicPage(); app.style.maxWidth = S.width === "phone" ? "390px" : ""; return; }
+  const [fn, active] = views[S.view];
+  app.innerHTML = shell(fn(), active);
+  app.style.maxWidth = S.width === "phone" ? "390px" : "";
+}
+for (const [id, key] of [["c-view","view"],["c-scn","scn"],["c-theme","theme"],["c-width","width"]]) $(id).addEventListener("change", e => { S[key] = e.target.value; render(); });
+$("app").addEventListener("click", e => {
+  const go = e.target.closest("[data-go]"), f = e.target.closest("[data-filter]"), r = e.target.closest("[data-range]");
+  if (go) { e.preventDefault(); S.view = go.dataset.go; $("c-view").value = S.view; render(); }
+  if (f) { S.filter = f.dataset.filter; render(); }
+  if (r) { S.range = r.dataset.range; render(); }
+});
+const q = new URLSearchParams(location.search);
+for (const k of ["view","scn","theme","width"]) if (q.get(k)) { S[k] = q.get(k); $( "c-" + k).value = S[k]; }
+render();
+</script>
+</body>
+</html>

@@ -1,3 +1,7 @@
+import { databaseReadable } from "../db/readable";
+import { Alerts } from "./alerts";
+import { ingestErrors } from "./errors/ingest";
+import { Telemetry, type RequestObservation } from "./telemetry";
 import { detectCgroups } from "./cgroups";
 import { createSessionLinks } from "../auth/session-links";
 import { matchesPublicRoute } from "./public-routes";
@@ -25,7 +29,7 @@ import { deriveIdentitySecret, signIdentity } from "../auth/identity";
 import { enforceAccess } from "../auth/policy";
 import { sessionSockets } from "../auth/sockets";
 
-export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; hibernateTimeoutForTests?: number; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
+export interface StartDaemonOptions { /** Internal test clock override; never read from configuration or the environment. */ idleTimeoutForTests?: number; hibernateTimeoutForTests?: number; telemetryForTests?: boolean; alertsClockForTests?: () => number; home?: string; port?: number; domain?: string; dev?: boolean; devPebble?: { name: string; dir: string; dataDir?: string; cron?: boolean }; auth?: AuthOptions; tunnelBinary?: () => string; maintenance?: { info: Awaited<ReturnType<typeof buildInfo>>; update: () => Promise<unknown> } }
 
 export async function startDaemon(options: StartDaemonOptions = {}) {
   const home = resolve(options.home ?? bedrockHome());
@@ -39,7 +43,10 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
   const dev = options.dev === true;
   const master = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
   const cgroups = await detectCgroups({ dev });
-  const supervisor = new Supervisor(home, db, master, config.creators, dev, data, options.idleTimeoutForTests, undefined, cgroups, options.hibernateTimeoutForTests);
+  const telemetry: Telemetry = new Telemetry(home, () => supervisor.resourceGroups(), options.telemetryForTests !== false);
+  const supervisor: Supervisor = new Supervisor(home, db, master, config.creators, dev, data, options.idleTimeoutForTests, undefined, cgroups, options.hibernateTimeoutForTests, telemetry);
+  const alerts = new Alerts(home, options.alertsClockForTests, config);
+  supervisor.alerts = alerts;
   const sessions = createSessions(db.db);
   const sockets = sessionSockets(sessions);
   const auth = createAuth(config, dev, sessions, hash => sockets.revoke(hash), options.auth);
@@ -72,21 +79,43 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
       hostname: "127.0.0.1", port: config.port, maxRequestBodySize: 1024 ** 4,
       websocket: relayWebSocket,
       async fetch(request, server) {
+        let observation: RequestObservation | undefined;
+        let proxied = false;
+        const handle = async () => {
         try {
           const host = request.headers.get("host") ?? "";
           const target = hostTarget(host, config.domain);
           const url = new URL(request.url);
           const origin = `${dev || host.split(":")[0]!.endsWith(".localhost") ? "http" : "https"}://${host}`;
+          if (target === "bedrock" && request.method === "GET" && url.pathname === "/healthz") {
+            const viable = databaseReadable(db.db, "pebbles");
+            return new Response(viable ? "bedrock-health-v1\n" : "bedrock-unavailable-v1\n", { status: viable ? 200 : 503, headers: { "cache-control": "no-store, max-age=0", "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" } });
+          }
           if (target === "bedrock" || host.split(":")[0] === "127.0.0.1" && url.pathname.startsWith("/api/")) {
             if (request.method === "GET" && url.pathname === "/") return dashboard(request, origin, config, db, sessions, dev);
             if (request.method === "POST" && url.pathname === "/sign-out") return signOut(auth.logout(request, origin));
             if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
             if (url.pathname === "/cli-login") return await cliLogin(request, origin);
+            // Lifecycle calls wait for health gates (up to 15 s on a slow disk), deploys and logs follow longer;
+            // Bun's 10 s idle default would reset the CLI's connection mid-operation.
+            if (url.pathname.startsWith("/api/")) server.timeout(request, 0);
             return await api(request);
           }
           if (target === "auth" && host.split(":")[0] === `auth.${config.domain}`) return await auth.handle(request, origin);
           if (!target || ["auth", "www"].includes(target)) return notFound(request);
           if (url.pathname === "/_bedrock/session" && db.get(target)) return await links.handle(request, origin, target);
+          if (url.pathname === "/_bedrock/errors") {
+            const record = db.get(target);
+            const attached = options.devPebble?.name === target;
+            if (!record && !attached) return notFound(request);
+            requireOrigin(request, origin);
+            // Access is read from the retained release rather than asking a sleeping child.
+            const access = supervisor.child(target)?.access ?? (record ? (await Bun.file(join(record.release, ".bedrock-idle.json")).json().catch(() => null))?.access ?? "creators" : "public");
+            enforceAccess(access, sessions.resolve(cookieToken(request))?.user ?? null, config.creators);
+            request.headers.delete("cookie"); request.headers.delete("authorization");
+            return await ingestErrors(request, target, telemetry.errors);
+          }
+          if (telemetry.enabled && (supervisor.child(target) || db.get(target) || options.devPebble?.name === target)) observation = telemetry.begin(target, request.method, url.pathname, request.headers.get("upgrade")?.toLowerCase() === "websocket" ? "websocket" : url.pathname.startsWith("/_bedrock/") ? "control" : "ordinary");
           // Cold starts may exceed Bun's default request timeout on a slow disk.
           server.timeout(request, 0);
           let child;
@@ -98,6 +127,7 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             stopped.headers.set("retry-after", "5");
             return stopped;
           }
+          observation?.route(child.publicRoutes);
           if (dev && url.pathname === "/_bedrock/dev-login") return await auth.devLogin(request, origin);
           const websocket = request.headers.get("upgrade")?.toLowerCase() === "websocket";
           if (!websocket && matchesPublicRoute(child.publicRoutes, request.method, url.pathname)) {
@@ -106,7 +136,8 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
             for (const name of [...request.headers.keys()]) if (name.startsWith("x-bedrock-")) request.headers.delete(name);
             server.timeout(request, 0);
             const complete = supervisor.activity(child);
-            return await proxyHttp(request, child.port, child.releaseId, complete, { "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) });
+            proxied = true;
+            return await proxyHttp(request, child.port, child.releaseId, complete, { "x-forwarded-proto": new URL(origin).protocol.slice(0, -1) }, observation);
           }
           const hasSessionCookie = (request.headers.get("cookie") ?? "").split(";").some(part => part.trim().split("=", 1)[0] === "bedrock_session");
           const bearer = !hasSessionCookie && request.headers.get("authorization")?.startsWith("Bearer brk_") === true;
@@ -138,54 +169,80 @@ export async function startDaemon(options: StartDaemonOptions = {}) {
           if (websocket) {
             const complete = supervisor.activity(child);
             try {
-              return await proxyWebSocket(request, server, child.port, identity, relay => {
+              const response = await proxyWebSocket(request, server, child.port, identity, relay => {
                 const remove = session ? sockets.register(relay, token!, session.hash) : undefined;
                 if (session) sockets.revalidate();
                 return () => { remove?.(); complete(); };
-              });
-            } catch (error) { complete(); throw error; }
+              }, observation);
+              if (!response) { proxied = true; observation?.headers(101); }
+              return response;
+            } catch (error) { complete(); observation?.finish(request.signal.aborted ? "abort" : "failure"); throw error; }
           }
           server.timeout(request, 0);
           const complete = supervisor.activity(child);
-          const response = await proxyHttp(request, child.port, child.releaseId, complete, identity);
+          proxied = true;
+          const response = await proxyHttp(request, child.port, child.releaseId, complete, identity, observation);
           if (session?.refreshed) response.headers.append("set-cookie", auth.cookie(token!, session.expiresAt));
           return response;
         } catch (error) { return daemonError(error, request); }
+        };
+        const response = await handle();
+        if (!proxied && response) { observation?.headers(response.status); observation?.finish(request.signal.aborted ? "abort" : undefined); }
+        return response;
       },
       error: error => daemonError(error),
     });
+    alerts.setProxyPort(server.port!);
     supervisor.apiUrl = `http://127.0.0.1:${server.port}`;
     if (options.devPebble) {
       if (!dev) throw new BedrockError("INVALID_DEV_DOMAIN", "A dev pebble requires development mode.", "Use bedrock dev.");
+      supervisor.devOptions = options.devPebble;
       const child = await supervisor.launch(options.devPebble.name, options.devPebble.dir, true);
       supervisor.activate(options.devPebble.name, child);
       await supervisor.startExclusive(options.devPebble.name, child);
-    } else await supervisor.restore();
+    } else {
+      // Serve the public hostname as soon as the daemon listens: requests for pebbles still restoring
+      // wait on their own health gates, while waiting for restore() would take every site offline
+      // for as long as the slowest pebble needs to start (minutes on a busy disk).
+      tunnel?.start();
+      await supervisor.restore();
+    }
     await atomicWrite(join(home, "daemon.json"), JSON.stringify({ port: server.port, domain: config.domain }) + "\n");
-    tunnel?.start();
+    if (options.devPebble) tunnel?.start();
     if (!dev) backups.start();
+    if (!options.alertsClockForTests) alerts.start(db, supervisor, config, () => config.cloudflare ? tunnel?.status().running ?? false : null);
     let stopping: Promise<void> | undefined;
     return {
-      server, home,
+      server, home, telemetry, alerts,
+      async runDevJob(name: string) {
+        if (!options.devPebble) throw new BedrockError("DEV_ONLY", "Explicit dev jobs require an attached pebble.", "Use bedrock jobs run for deployed pebbles.");
+        return supervisor.jobs(options.devPebble.name, name);
+      },
       stop() {
         return stopping ??= (async () => {
           sockets.stop();
+          await alerts.pause();
           await backups.stop();
           await releases.shutdown();
           // Keep the relay alive until children send their restart close frames.
           await supervisor.shutdown();
           await server!.stop(true);
           await tunnel?.stop();
+          await alerts.close();
+          await telemetry.close();
           db.close();
         })();
       },
     };
   } catch (error) {
     sockets.stop();
+    await alerts.pause();
     await backups.stop();
     await server?.stop(true);
     await tunnel?.stop();
     await supervisor.shutdown();
+    await alerts.close();
+    await telemetry.close();
     db.close();
     throw asBedrockError(error, "DAEMON_START_FAILED", "Check setup, the listen port, and daemon home permissions.");
   }

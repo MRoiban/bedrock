@@ -1,8 +1,10 @@
+import { createSecrets } from "./secrets";
+import { buildReleaseWeb } from "./web-build";
 import { requireSpace } from "../disk";
 import { decodeProvenance, provenanceFile } from "./provenance";
 import { assertRollbackSafe } from "./rollback";
 import { mkdir, readdir, rename, rm, symlink } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { BedrockError, asBedrockError } from "../error";
 import { extract, installRelease } from "./archive";
 import type { DaemonDatabase, PebbleRecord } from "./db";
@@ -41,6 +43,7 @@ export class Releases {
       }
       old = this.supervisor.child(name);
       this.supervisor.activate(name, child);
+      this.supervisor.telemetry?.lifecycle(name, "deploy", child.releaseId);
     } finally { await rm(temporary, { force: true }); }
     if (old) await retireChild(old).catch(error => this.warn(name, error));
     return this.supervisor.startExclusive(name, child);
@@ -78,6 +81,12 @@ export class Releases {
         await extract(archive, release);
         await Bun.write(join(release, provenanceFile), JSON.stringify(decodeProvenance(request.headers.get("x-bedrock-provenance"))));
         await installRelease(release);
+        const secrets = await createSecrets(this.home).env(name);
+        const logs = this.supervisor.logs(name);
+        logs.protect(Object.values(secrets));
+        await buildReleaseWeb(release, { ...secrets, BEDROCK_HOME: this.home,
+          BEDROCK_DATA: pebbleDataDir(this.supervisor.dataRoot, name), BEDROCK_RELEASE_ID: basename(release),
+          BEDROCK_API_URL: this.supervisor.apiUrl }, value => logs.redact(value));
         child = await this.supervisor.launch(name, release);
         const exclusive_services = await this.switch(name, child, this.db.get(name));
         activated = true;

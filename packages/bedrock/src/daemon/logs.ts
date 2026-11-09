@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync, renameSync, statSync, existsSync, rmSync, openSync, readSync, closeSync, fstatSync } from "node:fs";
+import type { Telemetry } from "./telemetry";
 import { isDiskFull } from "../error";
 import { dirname, join } from "node:path";
 
@@ -11,6 +12,7 @@ export class PebbleLogs {
   // Short values such as "300" or "true" would mangle ordinary log text, so they are not redacted.
   protect(values: string[]) {
     for (const value of values) if (value.length >= MIN_SECRET_LENGTH) { this.secrets.add(value); this.secrets.add(JSON.stringify(value).slice(1, -1)); }
+    this.telemetry?.store.protect(this.telemetry.name, [...this.secrets].sort((a, b) => b.length - a.length));
   }
   redact(value: string) {
     for (const secret of [...this.secrets].sort((a, b) => b.length - a.length)) value = value.replaceAll(secret, "[REDACTED]");
@@ -21,9 +23,9 @@ export class PebbleLogs {
   private lineStart = true;
   private retryAt = 0;
   // cloudflared stamps its own lines and is pumped in arbitrary chunks, so it opts out.
-  constructor(home: string, name: string, private limit = 10 * 1024 * 1024, directory?: string, filename = "pebble.log", private timestamps = true, private append = appendFileSync, private now = Date.now) {
+  constructor(home: string, name: string, private limit = 10 * 1024 * 1024, directory?: string, filename = "pebble.log", private timestamps = true, private append = appendFileSync, private now = Date.now, private telemetry?: { store: Telemetry; name: string }) {
     const dir = directory ?? join(home, "pebbles", name, "logs");
-    try { mkdirSync(dir, { recursive: true }); }
+    try { if (!telemetry) mkdirSync(dir, { recursive: true }); }
     catch (error) { if (!isDiskFull(error)) throw error; }
     this.path = join(dir, filename);
   }
@@ -37,7 +39,18 @@ export class PebbleLogs {
     }
     return stamped;
   }
-  write(chunk: Uint8Array) {
+  write(chunk: Uint8Array, stream = "stdout", run = "") {
+    if (this.telemetry) {
+      const text = this.redact(new TextDecoder().decode(chunk));
+      const lines = text.split("\n"); if (lines.at(-1) === "") lines.pop();
+      for (const line of lines) {
+        const accepted = this.telemetry.store.log(this.telemetry.name, line, stream, run);
+        if (accepted === false) continue;
+        const stamped = new TextEncoder().encode(`${new Date().toISOString()} ${accepted}\n`);
+        for (const listener of this.listeners) listener(stamped);
+      }
+      return;
+    }
     if (this.secrets.size || this.timestamps) {
       const text = this.redact(new TextDecoder().decode(chunk));
       chunk = new TextEncoder().encode(this.timestamps ? this.stamp(text) : text);
@@ -65,7 +78,28 @@ export class PebbleLogs {
       this.retryAt = this.now() + 60000;
     }
   }
-  async pump(stream: ReadableStream<Uint8Array>) {
+  private async pumpTelemetry(stream: ReadableStream<Uint8Array>, source: string, run: string) {
+    const decoder = new TextDecoder();
+    let pending = "", truncated = false, lastYield = performance.now();
+    const consume = (text: string) => {
+      const parts = text.split("\n");
+      for (let i = 0; i < parts.length; i++) {
+        if (!truncated) {
+          pending += parts[i]!;
+          if (Buffer.byteLength(pending) > MAX_PENDING_LINE) { pending = Buffer.from(pending).subarray(0, MAX_PENDING_LINE).toString("utf8"); truncated = true; }
+        }
+        if (i < parts.length - 1) { this.write(new TextEncoder().encode(pending + "\n"), source, run); pending = ""; truncated = false; }
+      }
+    };
+    for await (const chunk of stream) {
+      consume(decoder.decode(chunk, { stream: true }));
+      if (performance.now() - lastYield >= 4) { await Bun.sleep(1); lastYield = performance.now(); }
+    }
+    consume(decoder.decode());
+    if (pending) this.write(new TextEncoder().encode(pending), source, run);
+  }
+  async pump(stream: ReadableStream<Uint8Array>, source = "stdout", run = "") {
+    if (this.telemetry) return this.pumpTelemetry(stream, source, run);
     const decoder = new TextDecoder();
     let pending = "";
     for await (const chunk of stream) {
@@ -79,14 +113,18 @@ export class PebbleLogs {
           if (pending.endsWith(secret.slice(0, length))) { boundary = Math.min(boundary, pending.length - length); break; }
         }
       }
-      if (boundary) { this.write(new TextEncoder().encode(pending.slice(0, boundary))); pending = pending.slice(boundary); }
+      if (boundary) { this.write(new TextEncoder().encode(pending.slice(0, boundary)), source, run); pending = pending.slice(boundary); }
     }
     pending += decoder.decode();
-    if (pending) this.write(new TextEncoder().encode(pending));
+    if (pending) this.write(new TextEncoder().encode(pending), source, run);
   }
   tail(lines = 100) {
-    if (!existsSync(this.path)) return "";
-    const fd = openSync(this.path, "r");
+    if (this.telemetry) return [3, 2, 1, 0].map(index => this.tailFile(index ? `${this.path}.${index}` : this.path, lines)).join("").split("\n").slice(-lines - 1).join("\n");
+    return this.tailFile(this.path, lines);
+  }
+  private tailFile(path: string, lines: number) {
+    if (!existsSync(path)) return "";
+    const fd = openSync(path, "r");
     try {
       const size = fstatSync(fd).size;
       const buffer = Buffer.alloc(Math.min(size, 256 * 1024));
@@ -94,22 +132,31 @@ export class PebbleLogs {
       return this.redact(buffer.toString("utf8")).split("\n").slice(-lines - 1).join("\n");
     } finally { closeSync(fd); }
   }
+  private async history(watermark?: ReturnType<Telemetry["logWatermark"]>) {
+    const legacy = this.tail();
+    if (!this.telemetry) return legacy;
+    const page = await this.telemetry.store.query({ kind: "logs", pebble: this.telemetry.name, from: Date.now() - 7 * 86400_000, to: Date.now(), step: 0, limit: 100, ...(watermark ? { watermark } : {}) }).catch(() => null);
+    return legacy + (page?.rows ?? []).reverse().map((row: { time: number; text: string }) => `${new Date(row.time).toISOString()} ${this.redact(row.text)}\n`).join("");
+  }
   async response(follow: boolean, signal: AbortSignal) {
-    if (!follow) return new Response(this.tail(), { headers: { "content-type": "text/plain" } });
+    if (!follow) return new Response(await this.history(), { headers: { "content-type": "text/plain" } });
     const encoder = new TextEncoder();
     let cleanup = () => {};
     let closed = false;
     const stream = new ReadableStream<Uint8Array>({
-      start: controller => {
+      start: async controller => {
+        let pending: Uint8Array[] | null = [], pendingBytes = 0;
         const listener = (chunk: Uint8Array) => {
           if (closed) return;
-          if ((controller.desiredSize ?? 0) < -1024 * 1024) { close(); return; }
-          controller.enqueue(chunk);
+          if (pendingBytes + chunk.byteLength > 1024 * 1024 || (controller.desiredSize ?? 0) < -1024 * 1024) { close(); return; }
+          if (pending) { pending.push(chunk); pendingBytes += chunk.byteLength; }
+          else controller.enqueue(chunk);
         };
         const close = () => {
           if (closed) return;
           closed = true;
           cleanup();
+          pending = null;
           controller.close();
         };
         cleanup = () => {
@@ -120,10 +167,15 @@ export class PebbleLogs {
         this.listeners.add(listener);
         this.followers.add(close);
         signal.addEventListener("abort", close, { once: true });
+        if (signal.aborted) { close(); return; }
         try {
-          const tail = this.tail();
+          // The listener is installed before the watermark; history excludes every later acceptance.
+          const watermark = this.telemetry?.store.logWatermark();
+          const tail = await this.history(watermark);
           if (closed) return;
           controller.enqueue(encoder.encode(tail));
+          for (const chunk of pending ?? []) controller.enqueue(chunk);
+          pending = null; pendingBytes = 0;
           if (signal.aborted) close();
         } catch (error) {
           if (!closed) { closed = true; cleanup(); controller.error(error); }

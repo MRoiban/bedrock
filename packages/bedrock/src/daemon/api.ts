@@ -1,3 +1,7 @@
+import { readConfig } from "./config";
+import { alertsApi } from "./alerts/api";
+import { errorApi } from "./errors/api";
+import { telemetryQuery, telemetryStatus } from "./telemetry/api";
 import { tokenCreator } from "./creator";
 import type { SessionLinks } from "../auth/session-links";
 import { join } from "node:path";
@@ -32,6 +36,8 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
     if (!token || !db.accepts(token)) throw new BedrockError("UNAUTHORIZED", "A valid deploy token is required.", "Run bedrock login for the remote server, pass a valid --token, or restart the local daemon to restore its admin token.");
     const scope = db.tokenScope(token);
     authorizeScope(scope, request);
+    const alertResponse = await alertsApi(request, supervisor.alerts, scope);
+    if (alertResponse) return alertResponse;
     const records = () => db.list().filter(record => !scope || matchesPebble(scope, record.name));
     const url = new URL(request.url);
     const secretMatch = /^\/api\/pebbles\/([^/]+)\/secrets$/.exec(url.pathname);
@@ -64,6 +70,18 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
       const value = await releases.exclusive(name, () => supervisor.serviceTokens(name, user, body, serviceMatch[2]));
       return Response.json({ ok: true, value }, { headers: { "cache-control": "no-store" } });
     }
+    const errorMatch = /^\/api\/pebbles\/([^/]+)\/errors(?:\/([^/]+))?(?:\/([^/]+))?$/.exec(url.pathname);
+    if (errorMatch) {
+      const name = errorMatch[1]!; validateName(name); releases.record(name);
+      if (!supervisor.telemetry) throw new BedrockError("ERRORS_UNAVAILABLE", "Error tracking is unavailable.", "Restart an updated daemon.");
+      return errorApi(request, supervisor.telemetry.errors, name, errorMatch[2], errorMatch[3]);
+    }
+    const telemetryMatch = /^\/api\/pebbles\/([^/]+)\/(metrics|events|lifecycle|resources)$/.exec(url.pathname);
+    if (telemetryMatch && request.method === "GET") {
+      const name = telemetryMatch[1]!; validateName(name); releases.record(name);
+      if (!supervisor.telemetry) throw new BedrockError("TELEMETRY_UNAVAILABLE", "Telemetry is not enabled.", "Restart an updated daemon.");
+      return Response.json({ ok: true, value: await supervisor.telemetry.query(telemetryQuery(url, telemetryMatch[2] as "metrics" | "events" | "lifecycle" | "resources", name)) }, { headers: { "cache-control": "no-store" } });
+    }
     let value: unknown;
     const backup = /^\/api\/backup\/(run|ls|restore)$/.exec(url.pathname);
     const jobs = /^\/api\/jobs\/([^/]+)$/.exec(url.pathname);
@@ -84,11 +102,16 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
     } else if (request.method === "GET" && url.pathname === "/api/pebbles") {
       value = await Promise.all(records().map(async record => ({ ...record, memory: await supervisor.memory(record.name), next_retry_at: supervisor.nextRetryAt(record.name), public_routes: supervisor.child(record.name)?.publicRoutes ?? await Bun.file(join(record.release, ".bedrock-public-routes.json")).json().catch(() => []), port: supervisor.child(record.name)?.port ?? null, pid: supervisor.child(record.name)?.process.pid ?? null })));
     } else if (request.method === "GET" && url.pathname === "/api/status") {
+      const backupConfig = (await readConfig(db.home).catch(() => config))?.backup;
+      const backupState = await Bun.file(join(db.home, "backup-state.json")).json().catch(() => null);
+      const observations = new Map<string, unknown>();
+      const measurable = new Set(supervisor.resourceGroups().map(group => group.pebble));
+      for (const record of records()) observations.set(record.name, await telemetryStatus(supervisor.telemetry, record.name, measurable.has(record.name)));
       value = { ...maintenance?.info, instanceId, features: daemonFeatures, domain: config?.domain, user: db.tokenEmail(token) ?? "server creator token", creatorSignedIn: !scope && !!config?.creators.some(email => db.db.query("SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.email=? AND s.expires_at>? LIMIT 1").get(email, Date.now())), ...(!scope ? { tunnel: tunnelStatus() } : {}), pebbles: await Promise.all(records().map(async record => {
         const child = supervisor.child(record.name);
         let healthy = false;
         if (child) try { healthy = (await fetch(`http://127.0.0.1:${child.port}/_bedrock/health`, { signal: AbortSignal.timeout(2000) })).ok; } catch {}
-        return { name: record.name, memory: await supervisor.memory(record.name), status: record.status, next_retry_at: supervisor.nextRetryAt(record.name), healthy, provenance: record.provenance };
+        return { name: record.name, backup: { last_success_at: backupState?.pebbles?.[record.name] ?? null, interval_ms: backupConfig ? (backupConfig.intervalMinutes ?? 60) * 60000 : null }, readiness: supervisor.alerts?.status(record.name, record.status) ?? { state: "starting", observed_at: null }, telemetry: observations.get(record.name), memory: await supervisor.memory(record.name), status: record.status, next_retry_at: supervisor.nextRetryAt(record.name), healthy, provenance: record.provenance };
       })) };
     } else if (request.method === "POST" && url.pathname === "/api/self-update" && maintenance) {
       value = await maintenance.update();
@@ -119,6 +142,13 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
       } else if (request.method === "GET" && action === "logs") {
         releases.record(name);
         supervisor.logs(name).protect(Object.values(await secrets.env(name)));
+        if (url.searchParams.get("format") === "json" || url.searchParams.has("q") || url.searchParams.has("since") || url.searchParams.has("cursor")) {
+          if (url.searchParams.get("follow") === "true") throw new BedrockError("INVALID_ARGS", "Search cannot be followed.", "Use logs --search without --follow; follow streams new redacted lines.");
+          if (!supervisor.telemetry) throw new BedrockError("TELEMETRY_UNAVAILABLE", "Telemetry is not enabled.", "Restart an updated daemon.");
+          const page = await supervisor.telemetry.query(telemetryQuery(url, "logs", name));
+          for (const row of page.rows) row.text = supervisor.logs(name).redact(row.text);
+          return Response.json({ ok: true, value: page }, { headers: { "cache-control": "no-store" } });
+        }
         return supervisor.logs(name).response(url.searchParams.get("follow") === "true", request.signal);
       } else if (request.method === "POST" && action === "rollback") value = await releases.rollback(name, url.searchParams.get("force") === "true");
       else if (request.method === "POST" && action && ["start", "stop", "restart"].includes(action)) value = await releases.control(name, action);

@@ -1,3 +1,4 @@
+import { reportServerError } from "./errors";
 import { serviceStopTimeout, DEFAULT_SERVICE_STOP_TIMEOUT, type ServiceContext, type ServiceDefinition } from "../config";
 import { BedrockError, asBedrockError } from "../error";
 
@@ -28,7 +29,7 @@ export function createServices(definitions: Record<string, ServiceDefinition>) {
           new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), Math.max(0, deadline - Date.now())); }),
         ]);
         if (!finished) console.error(new BedrockError("SERVICE_STOP_TIMEOUT", `Service ${name} exceeded the shutdown deadline.`, "Observe ctx.signal and finish cleanup within the declared stopTimeout; the supervisor may force-kill a stuck child.").toJSON());
-      } catch (error) { console.error(`Service ${name} stop failed`, asBedrockError(error, "SERVICE_STOP_FAILED", "Check the service stop handler; shutdown continues with the remaining services.").toJSON()); }
+      } catch (error) { reportServerError(error, "service"); console.error(`Service ${name} stop failed`, asBedrockError(error, "SERVICE_STOP_FAILED", "Check the service stop handler; shutdown continues with the remaining services.").toJSON()); }
       finally { clearTimeout(timer); if (definitions[name]!.exclusive) unavailable(name); }
     }
   }
@@ -50,12 +51,14 @@ export function createServices(definitions: Record<string, ServiceDefinition>) {
         Object.defineProperty(values, name, { configurable: true, enumerable: true, writable: true, value });
         started.push(name);
       } catch (error) {
+        reportServerError(error, "service");
         throw new BedrockError("SERVICE_START_FAILED", `Service ${name} failed to start: ${error instanceof Error ? error.message : String(error)}`, "Check the service start handler and resources; inspect the pebble logs and restart or redeploy.");
       }
     }
   }
   return {
     values, stop, stopTimeout, exclusiveNames,
+    ready: () => !controller.signal.aborted && started.length === Object.keys(definitions).length,
     async start(ctx: Omit<ServiceContext, "signal">) {
       try { await startNames(Object.keys(definitions).filter(name => !definitions[name]!.exclusive), ctx); }
       catch (error) { await stop(); throw error; }

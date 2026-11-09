@@ -1,0 +1,870 @@
+{
+  "base": "0e42da5",
+  "low_pressure": {
+    "days": 8,
+    "pebbles": 24,
+    "requests_per_minute": 1,
+    "resource_pebbles": 20,
+    "logs_every_minutes": 1,
+    "second_tier": "one request/minute",
+    "bytes": 251617280,
+    "wal_bytes": 0,
+    "dropped": 0,
+    "history": [
+      {
+        "kind": "events",
+        "step": 0,
+        "rows": 1842,
+        "oldest_ms": 1767456300000,
+        "newest_ms": 1767916560000,
+        "retained_days": 5.329861
+      },
+      {
+        "kind": "logs",
+        "step": 0,
+        "rows": 184219,
+        "oldest_ms": 1767456240000,
+        "newest_ms": 1767916740000,
+        "retained_days": 5.330556
+      },
+      {
+        "kind": "metrics",
+        "step": 1,
+        "rows": 120,
+        "oldest_ms": 1767916500000,
+        "newest_ms": 1767916740000,
+        "retained_days": 0.003472
+      },
+      {
+        "kind": "metrics",
+        "step": 60,
+        "rows": 241920,
+        "oldest_ms": 1767312000000,
+        "newest_ms": 1767916740000,
+        "retained_days": 7
+      },
+      {
+        "kind": "metrics",
+        "step": 3600,
+        "rows": 4608,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767913200000,
+        "retained_days": 8
+      },
+      {
+        "kind": "metrics",
+        "step": 86400,
+        "rows": 192,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767830400000,
+        "retained_days": 8
+      },
+      {
+        "kind": "resources",
+        "step": 0,
+        "rows": 115200,
+        "oldest_ms": 1767830400000,
+        "newest_ms": 1767916785000,
+        "retained_days": 1
+      },
+      {
+        "kind": "resources",
+        "step": 60,
+        "rows": 201600,
+        "oldest_ms": 1767312000000,
+        "newest_ms": 1767916740000,
+        "retained_days": 7
+      },
+      {
+        "kind": "resources",
+        "step": 3600,
+        "rows": 3840,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767913200000,
+        "retained_days": 8
+      },
+      {
+        "kind": "resources",
+        "step": 86400,
+        "rows": 160,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767830400000,
+        "retained_days": 8
+      }
+    ],
+    "tiers": [
+      {
+        "step": 0,
+        "bytes": 13708800
+      },
+      {
+        "step": 1,
+        "bytes": 17040
+      },
+      {
+        "step": 60,
+        "bytes": 64995840
+      },
+      {
+        "step": 3600,
+        "bytes": 1400064
+      },
+      {
+        "step": 86400,
+        "bytes": 59936
+      }
+    ],
+    "evictions": [
+      {
+        "reason": "physical_budget_evicted",
+        "count": 93184
+      }
+    ],
+    "status_pebbles": {
+      "count": 24
+    },
+    "status_rows_per_pebble": {
+      "min": 5,
+      "max": 5
+    },
+    "status_p0_completions": 5,
+    "integrity": {
+      "integrity_check": "ok"
+    }
+  },
+  "heavy": {
+    "days": 8,
+    "pebbles": 24,
+    "requests_per_minute": 60,
+    "resource_pebbles": 24,
+    "logs_every_minutes": 1,
+    "second_tier": "minute aggregates; final 5 minutes replayed at 1 second",
+    "bytes": 251604992,
+    "wal_bytes": 0,
+    "dropped": 0,
+    "history": [
+      {
+        "kind": "events",
+        "step": 0,
+        "rows": 77864,
+        "oldest_ms": 1767592380000,
+        "newest_ms": 1767916740000,
+        "retained_days": 3.754861
+      },
+      {
+        "kind": "logs",
+        "step": 0,
+        "rows": 129764,
+        "oldest_ms": 1767592380000,
+        "newest_ms": 1767916740000,
+        "retained_days": 3.754861
+      },
+      {
+        "kind": "metrics",
+        "step": 1,
+        "rows": 7200,
+        "oldest_ms": 1767916500000,
+        "newest_ms": 1767916799000,
+        "retained_days": 0.003472
+      },
+      {
+        "kind": "metrics",
+        "step": 60,
+        "rows": 241920,
+        "oldest_ms": 1767312000000,
+        "newest_ms": 1767916740000,
+        "retained_days": 7
+      },
+      {
+        "kind": "metrics",
+        "step": 3600,
+        "rows": 4608,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767913200000,
+        "retained_days": 8
+      },
+      {
+        "kind": "metrics",
+        "step": 86400,
+        "rows": 192,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767830400000,
+        "retained_days": 8
+      },
+      {
+        "kind": "resources",
+        "step": 0,
+        "rows": 138240,
+        "oldest_ms": 1767830400000,
+        "newest_ms": 1767916785000,
+        "retained_days": 1
+      },
+      {
+        "kind": "resources",
+        "step": 60,
+        "rows": 241920,
+        "oldest_ms": 1767312000000,
+        "newest_ms": 1767916740000,
+        "retained_days": 7
+      },
+      {
+        "kind": "resources",
+        "step": 3600,
+        "rows": 4608,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767913200000,
+        "retained_days": 8
+      },
+      {
+        "kind": "resources",
+        "step": 86400,
+        "rows": 192,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767830400000,
+        "retained_days": 8
+      }
+    ],
+    "tiers": [
+      {
+        "step": 0,
+        "bytes": 16450560
+      },
+      {
+        "step": 1,
+        "bytes": 1022400
+      },
+      {
+        "step": 60,
+        "bytes": 71370000
+      },
+      {
+        "step": 3600,
+        "bytes": 1548288
+      },
+      {
+        "step": 86400,
+        "bytes": 66000
+      }
+    ],
+    "evictions": [
+      {
+        "reason": "physical_budget_evicted",
+        "count": 234752
+      }
+    ],
+    "status_pebbles": {
+      "count": 24
+    },
+    "status_rows_per_pebble": {
+      "min": 300,
+      "max": 300
+    },
+    "status_p0_completions": 300,
+    "integrity": {
+      "integrity_check": "ok"
+    }
+  },
+  "original_growth": [
+    {
+      "scenario": "simulated day",
+      "pebbles": 24,
+      "requests_per_s_per_pebble": 1,
+      "logs_per_minute_per_pebble": 1,
+      "bytes": 51974144,
+      "dropped_records": 0,
+      "accounting": [
+        {
+          "kind": "metrics",
+          "bytes": 24459672,
+          "evicted": 0
+        },
+        {
+          "kind": "logs",
+          "bytes": 21358080,
+          "evicted": 0
+        },
+        {
+          "kind": "events",
+          "bytes": 11843712,
+          "evicted": 0
+        }
+      ]
+    },
+    {
+      "scenario": "default budget",
+      "dropped_records": 2560,
+      "retained_losses": [
+        {
+          "reason": "logs_budget_evicted",
+          "count": 1408
+        }
+      ],
+      "bytes": 193191936,
+      "accounting": [
+        {
+          "kind": "metrics",
+          "bytes": 24459672,
+          "evicted": 0
+        },
+        {
+          "kind": "logs",
+          "bytes": 268417240,
+          "evicted": 1408
+        },
+        {
+          "kind": "events",
+          "bytes": 11843712,
+          "evicted": 0
+        }
+      ],
+      "physical_limit": {
+        "max_page_count": 63488
+      },
+      "wal_bytes": 70072
+    }
+  ],
+  "proxy_summary": {
+    "fixed": {
+      "off": {
+        "trials": 6,
+        "p50_ms": 1.9406529999985196,
+        "p99_ms": 6.123899499999425,
+        "cpu_us": 1195944.0
+      },
+      "on": {
+        "trials": 6,
+        "p50_ms": 1.9680774999997084,
+        "p99_ms": 5.74105850000069,
+        "cpu_us": 1235550.0
+      }
+    },
+    "base_0e42da5": {
+      "off": {
+        "trials": 6,
+        "p50_ms": 2.09386749999976,
+        "p99_ms": 5.838828499999863,
+        "cpu_us": 1280175.5
+      },
+      "on": {
+        "trials": 6,
+        "p50_ms": 2.1854760000010174,
+        "p99_ms": 5.719323499999518,
+        "cpu_us": 1294448.5
+      }
+    }
+  },
+  "proxy_raw": {
+    "fixed": [
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.732839999999669,
+        "p99_ms": 5.707585000000108,
+        "elapsed_ms": 607.397702,
+        "op": "result",
+        "cpu_us": 1054518,
+        "max_lag_ms": 5.462922999999819,
+        "drops": {}
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.7953559999996287,
+        "p99_ms": 6.051427000000331,
+        "elapsed_ms": 635.9339170000003,
+        "op": "result",
+        "cpu_us": 1154025,
+        "max_lag_ms": 6.7690939999999955,
+        "drops": {
+          "event_rate": 68
+        }
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.9157709999999497,
+        "p99_ms": 5.43069000000105,
+        "elapsed_ms": 680.1065940000008,
+        "op": "result",
+        "cpu_us": 1186234,
+        "max_lag_ms": 2.71090600000025,
+        "drops": {
+          "event_rate": 61
+        }
+      },
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.6483699999989767,
+        "p99_ms": 6.543988999999783,
+        "elapsed_ms": 599.0011209999993,
+        "op": "result",
+        "cpu_us": 1090026,
+        "max_lag_ms": 3.404252999999926,
+        "drops": {}
+      },
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.1842649999998685,
+        "p99_ms": 7.700317000002542,
+        "elapsed_ms": 812.8302179999991,
+        "op": "result",
+        "cpu_us": 1344990,
+        "max_lag_ms": 7.725395000000162,
+        "drops": {}
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.020383999999467,
+        "p99_ms": 6.093414000002667,
+        "elapsed_ms": 725.3568029999988,
+        "op": "result",
+        "cpu_us": 1284866,
+        "max_lag_ms": 3.0582319999998617,
+        "drops": {
+          "event_rate": 66
+        }
+      },
+      {
+        "scenario": "3s log flood",
+        "printed_lines": 1781000,
+        "op": "result",
+        "cpu_us": 2749098,
+        "max_lag_ms": 2.3145239999994374,
+        "drops": {
+          "event_rate": 66,
+          "log_rate": 1780800
+        }
+      },
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.108082000000195,
+        "p99_ms": 6.1144640000002255,
+        "elapsed_ms": 740.9789390000001,
+        "op": "result",
+        "cpu_us": 1283913,
+        "max_lag_ms": 3.874853999999914,
+        "drops": {}
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.0767670000004728,
+        "p99_ms": 5.408152999999402,
+        "elapsed_ms": 725.397868,
+        "op": "result",
+        "cpu_us": 1298508,
+        "max_lag_ms": 2.9711850000003324,
+        "drops": {
+          "event_rate": 70
+        }
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.8415789999999106,
+        "p99_ms": 4.346919999999955,
+        "elapsed_ms": 630.6069530000004,
+        "op": "result",
+        "cpu_us": 1126728,
+        "max_lag_ms": 3.248529999999846,
+        "drops": {
+          "event_rate": 54
+        }
+      },
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.3348359999999957,
+        "p99_ms": 5.687434999999823,
+        "elapsed_ms": 773.6795719999991,
+        "op": "result",
+        "cpu_us": 1347562,
+        "max_lag_ms": 3.243948000000273,
+        "drops": {}
+      },
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.7732239999968442,
+        "p99_ms": 6.133334999998624,
+        "elapsed_ms": 636.6021819999987,
+        "op": "result",
+        "cpu_us": 1107975,
+        "max_lag_ms": 6.2251979999996365,
+        "drops": {}
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.6113880000011704,
+        "p99_ms": 6.3863629999978,
+        "elapsed_ms": 883.4443229999997,
+        "op": "result",
+        "cpu_us": 1561144,
+        "max_lag_ms": 4.035232999999607,
+        "drops": {
+          "event_rate": 54
+        }
+      },
+      {
+        "scenario": "3s log flood",
+        "printed_lines": 1477000,
+        "op": "result",
+        "cpu_us": 2737308,
+        "max_lag_ms": 2.002483000000211,
+        "drops": {
+          "event_rate": 54,
+          "log_rate": 1476800
+        }
+      }
+    ],
+    "base_0e42da5": [
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.3284480000002077,
+        "p99_ms": 6.573781999999937,
+        "elapsed_ms": 820.8208610000001,
+        "op": "result",
+        "cpu_us": 1396184,
+        "max_lag_ms": 5.143841000000066,
+        "drops": {}
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.185522000000674,
+        "p99_ms": 5.534881999999925,
+        "elapsed_ms": 749.5795369999996,
+        "op": "result",
+        "cpu_us": 1313479,
+        "max_lag_ms": 4.996289000000161,
+        "drops": {
+          "event_rate": 83
+        }
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 3.0029219999996712,
+        "p99_ms": 8.215475000000879,
+        "elapsed_ms": 1033.7520390000009,
+        "op": "result",
+        "cpu_us": 1630040,
+        "max_lag_ms": 8.065104000000247,
+        "drops": {
+          "event_rate": 48
+        }
+      },
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.291516999999658,
+        "p99_ms": 5.503174999999828,
+        "elapsed_ms": 782.7440599999991,
+        "op": "result",
+        "cpu_us": 1386571,
+        "max_lag_ms": 4.778055000000222,
+        "drops": {}
+      },
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 3.042234999997163,
+        "p99_ms": 7.33001399999921,
+        "elapsed_ms": 1032.7352060000012,
+        "op": "result",
+        "cpu_us": 1715904,
+        "max_lag_ms": 5.149909999999863,
+        "drops": {}
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.185430000001361,
+        "p99_ms": 5.286955999999918,
+        "elapsed_ms": 739.6396380000006,
+        "op": "result",
+        "cpu_us": 1275418,
+        "max_lag_ms": 4.244146999999884,
+        "drops": {
+          "event_rate": 55
+        }
+      },
+      {
+        "scenario": "3s log flood",
+        "printed_lines": 1186000,
+        "op": "result",
+        "cpu_us": 2705951,
+        "max_lag_ms": 15.282416000000012,
+        "drops": {
+          "event_rate": 55,
+          "log_rate": 1185800
+        }
+      },
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.8962179999998625,
+        "p99_ms": 6.174481999999898,
+        "elapsed_ms": 705.4280920000001,
+        "op": "result",
+        "cpu_us": 1173780,
+        "max_lag_ms": 3.7904520000001867,
+        "drops": {}
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.9516499999999724,
+        "p99_ms": 4.656385000000228,
+        "elapsed_ms": 662.815165,
+        "op": "result",
+        "cpu_us": 1160912,
+        "max_lag_ms": 2.5585179999998218,
+        "drops": {
+          "event_rate": 55
+        }
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 2.4808040000007168,
+        "p99_ms": 5.903764999999112,
+        "elapsed_ms": 848.3056350000006,
+        "op": "result",
+        "cpu_us": 1499386,
+        "max_lag_ms": 3.5471379999999044,
+        "drops": {
+          "event_rate": 61
+        }
+      },
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.625409000000218,
+        "p99_ms": 4.093864999998914,
+        "elapsed_ms": 560.1381000000001,
+        "op": "result",
+        "cpu_us": 1005922,
+        "max_lag_ms": 2.6570849999998245,
+        "drops": {}
+      },
+      {
+        "telemetry": false,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.7903619999997318,
+        "p99_ms": 4.0928619999976945,
+        "elapsed_ms": 598.984760000003,
+        "op": "result",
+        "cpu_us": 1061280,
+        "max_lag_ms": 2.093366999999944,
+        "drops": {}
+      },
+      {
+        "telemetry": true,
+        "requests": 5000,
+        "concurrency": 16,
+        "p50_ms": 1.7790419999982987,
+        "p99_ms": 6.934848000000784,
+        "elapsed_ms": 651.3984270000001,
+        "op": "result",
+        "cpu_us": 1175198,
+        "max_lag_ms": 5.981111000000283,
+        "drops": {
+          "event_rate": 65
+        }
+      },
+      {
+        "scenario": "3s log flood",
+        "printed_lines": 1554000,
+        "op": "result",
+        "cpu_us": 2737318,
+        "max_lag_ms": 2.2908729999999196,
+        "drops": {
+          "event_rate": 65,
+          "log_rate": 1553800
+        }
+      }
+    ]
+  },
+  "low": {
+    "days": 8,
+    "pebbles": 24,
+    "requests_per_minute": 1,
+    "resource_pebbles": 20,
+    "logs_every_minutes": 10,
+    "second_tier": "one request/minute",
+    "bytes": 158351360,
+    "wal_bytes": 0,
+    "dropped": 0,
+    "history": [
+      {
+        "kind": "events",
+        "step": 0,
+        "rows": 2765,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767916560000,
+        "retained_days": 8
+      },
+      {
+        "kind": "logs",
+        "step": 0,
+        "rows": 24192,
+        "oldest_ms": 1767312000000,
+        "newest_ms": 1767916200000,
+        "retained_days": 7
+      },
+      {
+        "kind": "metrics",
+        "step": 1,
+        "rows": 120,
+        "oldest_ms": 1767916500000,
+        "newest_ms": 1767916740000,
+        "retained_days": 0.003472
+      },
+      {
+        "kind": "metrics",
+        "step": 60,
+        "rows": 241920,
+        "oldest_ms": 1767312000000,
+        "newest_ms": 1767916740000,
+        "retained_days": 7
+      },
+      {
+        "kind": "metrics",
+        "step": 3600,
+        "rows": 4608,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767913200000,
+        "retained_days": 8
+      },
+      {
+        "kind": "metrics",
+        "step": 86400,
+        "rows": 192,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767830400000,
+        "retained_days": 8
+      },
+      {
+        "kind": "resources",
+        "step": 0,
+        "rows": 115200,
+        "oldest_ms": 1767830400000,
+        "newest_ms": 1767916785000,
+        "retained_days": 1
+      },
+      {
+        "kind": "resources",
+        "step": 60,
+        "rows": 201600,
+        "oldest_ms": 1767312000000,
+        "newest_ms": 1767916740000,
+        "retained_days": 7
+      },
+      {
+        "kind": "resources",
+        "step": 3600,
+        "rows": 3840,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767913200000,
+        "retained_days": 8
+      },
+      {
+        "kind": "resources",
+        "step": 86400,
+        "rows": 160,
+        "oldest_ms": 1767225600000,
+        "newest_ms": 1767830400000,
+        "retained_days": 8
+      }
+    ],
+    "tiers": [
+      {
+        "step": 0,
+        "bytes": 13708800
+      },
+      {
+        "step": 1,
+        "bytes": 17040
+      },
+      {
+        "step": 60,
+        "bytes": 64995840
+      },
+      {
+        "step": 3600,
+        "bytes": 1400064
+      },
+      {
+        "step": 86400,
+        "bytes": 59936
+      }
+    ],
+    "evictions": [],
+    "status_pebbles": {
+      "count": 24
+    },
+    "status_rows_per_pebble": {
+      "min": 5,
+      "max": 5
+    },
+    "status_p0_completions": 5,
+    "integrity": {
+      "integrity_check": "ok"
+    }
+  },
+  "verification": {
+    "install": "120 installs across 190 packages checked; no changes; exit 0",
+    "typecheck_exit": 0,
+    "full_suite": {
+      "pass": 575,
+      "skip": 5,
+      "fail": 2,
+      "assertions": 5901,
+      "tests": 582,
+      "files": 148,
+      "seconds": 229.05,
+      "exit": 1,
+      "failures": [
+        "real daemon keeps an unconfigured application burst alive for a paused consumer",
+        "real daemon closes application sockets only when their configured output bound is exceeded"
+      ]
+    },
+    "focused": {
+      "pass": 21,
+      "fail": 0,
+      "assertions": 1287,
+      "files": 3,
+      "seconds": 18.28
+    }
+  }
+}

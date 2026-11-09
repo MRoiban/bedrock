@@ -1,3 +1,4 @@
+import { reportServerError } from "./errors";
 import { handleControl } from "./control";
 import { loadPebble } from "./load";
 import { serviceStopTimeout } from "../config/hosting";
@@ -9,7 +10,7 @@ try {
   const pebble = await loadPebble(process.env.BEDROCK_RELEASE!);
   // Startup failures may unwind services before readiness; publish the budget first.
   process.send?.({ op: "stop-budget", stopTimeout: serviceStopTimeout(pebble.services ?? {}) });
-  const running = await startPebble({ pebble, dir: process.env.BEDROCK_RELEASE!, dataDir: process.env.BEDROCK_DATA!, port: 0, deferExclusive: true, dev: process.env.BEDROCK_DEV === "1", strictSlots: strictSlotsFromEnv() });
+  const running = await startPebble({ pebble, dir: process.env.BEDROCK_RELEASE!, dataDir: process.env.BEDROCK_DATA!, port: 0, cron: process.env.BEDROCK_CRON !== "0", deferExclusive: true, onJob: event => process.send?.({ op: "job-event", event }), dev: process.env.BEDROCK_DEV === "1", strictSlots: strictSlotsFromEnv() });
   process.send?.({ name: running.pebble.name, port: running.server.port, stopTimeout: running.stopTimeout });
   let stopping = false;
   let exitCode = 0;
@@ -33,6 +34,7 @@ try {
   });
   process.on("disconnect", () => void stop());
 } catch (error) {
+  reportServerError(error, "startup");
   const typed = asBedrockError(error).toJSON();
   console.error(JSON.stringify(typed));
   process.send?.({ error: typed });
