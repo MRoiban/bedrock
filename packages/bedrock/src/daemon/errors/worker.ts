@@ -48,6 +48,7 @@ export class ErrorWorker {
         }
         return page;
       }
+      if (data.op === "errors.suggestionIds") return store.suggestionIds(data.pebble);
       if (data.op === "errors.change") return store.change(data.pebble, data.issue!, data.action, data.target);
       if (data.op === "errors.forget") { store.forget(data.pebble); this.protections.delete(data.pebble); return true; }
       if (data.op === "errors.transitions") return store.db.query("SELECT * FROM transitions WHERE pebble=? AND id>? AND time>=? ORDER BY id LIMIT 100").all(data.pebble, data.after, Date.now() - 90 * 86400000);

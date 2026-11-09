@@ -58,3 +58,7 @@ export type Terminal = typeof terminal;
 export function marker(kind: "✓" | "✗" | "!", tty: boolean) {
   return tty && process.env.NO_COLOR === undefined ? `\x1b[${kind === "✓" ? 32 : kind === "✗" ? 31 : 33}m${kind}\x1b[0m` : kind;
 }
+/** Daemon- and pebble-supplied text must not drive the terminal: drop control and escape characters, keep line breaks and tabs. */
+export function plain(text: string) {
+  return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+}

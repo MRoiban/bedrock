@@ -16,7 +16,10 @@ test("alerts setup accepts secret stdin, defaults to comms, never echoes it and 
     expect(JSON.parse(output).webhook).toBe("https://comms.example.test/api/v1/messages");
     expect((await stat(join(temp.dir, "alerts-secret"))).mode & 0o777).toBe(0o600);
     const help = Bun.spawn([process.execPath, join(import.meta.dir, "index.ts"), "alerts", "--help", "--json"], { env: { ...process.env, BEDROCK_HOME: temp.dir }, stdout: "pipe", stderr: "pipe" });
-    expect(JSON.parse(await new Response(help.stdout).text()).usage).toContain("silence"); expect(await help.exited).toBe(0);
+    const spec = JSON.parse(await new Response(help.stdout).text());
+    expect(spec.defaultSubcommand).toBe("ls");
+    expect(spec.subcommands.some((sub: { name: string }) => sub.name === "silence")).toBe(true);
+    expect(await help.exited).toBe(0);
   } finally { temp.cleanup(); }
 });
 test("webhook configuration rejects credential URLs, insecure remote HTTP and malformed critical jobs", () => {

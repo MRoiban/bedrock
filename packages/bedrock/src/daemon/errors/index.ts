@@ -64,6 +64,7 @@ export class ErrorTracking {
     for (let i = 0; i < batches; i++) await this.flush();
     return { ...await this.rpc("errors.query", { pebble, issue: id, cursor }), drops_since_boot: { ...this.counters } };
   }
+  suggestionIds(pebble: string): Promise<string[]> { return this.rpc("errors.suggestionIds", { pebble }); }
   change(pebble: string, issue: string, action: string, target?: string) { return this.rpc("errors.change", { pebble, issue, action, target }); }
   transitions(pebble: string, after: number) { return this.rpc("errors.transitions", { pebble, after }); }
   forget(pebble: string) { this.bytes -= this.queue.filter(r => r.pebble === pebble).reduce((n, r) => n + Buffer.byteLength(JSON.stringify(r.event)), 0); this.queue = this.queue.filter(r => r.pebble !== pebble); this.rates.delete(pebble); void this.rpc("errors.forget", { pebble }).catch(() => {}); }

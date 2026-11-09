@@ -969,14 +969,73 @@ and `bun run build:css` in `packages/ui`.
 `install.sh`/`install.ps1` run `bun link` in `packages/bedrock` (the `bedrock`
 bin and `link:bedrock`) and `packages/ui` (`link:@bedrock/ui`); `self-update`
 repeats both and `new` registers any that are missing. Ensure Bun's bin
-directory is on PATH. `bedrock --version` prints local package/checkout identity, platform, architecture and Bun version; `--json` exposes version, commit, branch, dirty, platform, arch and bun. Git fields are null outside a checkout.
-All commands support `--json` (one object; doctor returns a checks array).
-Errors carry `code`, `message`, `hint`; failures set exit code 1.
-`new`, `init`, `db`, `deploy`, `rm`, `start`, `stop`, `restart`, `rollback`,
-`secrets`, `token`, `pebble-token`, `session`, `backup`, and `jobs` accept `--help`/`-h` to print usage and a
-description without performing actions (exit 0). With `--json`, help returns
-`{ ok: true, command, usage, description }`. Unknown flags to `new`/`init` fail
-with `INVALID_ARGS` and usage hints; invalid pebble names fail with `INVALID_PEBBLE_NAME`.
+directory is on PATH. `bedrock version` (also `bedrock --version`) prints local
+package/checkout identity, platform, architecture and Bun version; `--json`
+exposes version, commit, branch, dirty, platform, arch and bun. Git fields are null
+outside a checkout.
+
+Bare `bedrock`, `bedrock help`, `bedrock --help` and `bedrock -h` show the grouped
+command overview (exit 0). Every command/subcommand accepts `--help`/`-h` anywhere
+before `--`, without performing actions. `bedrock help <command> [<sub>]` shows
+usage, arguments, options, examples and guide links; `bedrock help env` explains
+environment settings and `bedrock help exit-codes` explains process results.
+JSON overview help returns `{ ok: true, command: "help", commands, topics,
+globalFlags, remoteFlags }` with the visible command tree. Command help retains
+`{ ok: true, command, usage, description }`, adding summary, args, flags,
+subcommands, examples and docs; `command` is the path and `usage` a synopsis string.
+Default-command help includes `defaultSubcommand` and describes the default
+form's arguments and options, such as `bedrock errors [ls] <pebble>`.
+
+Use `--flag value`, `--flag=value` or a declared short alias (`logs -f`). `--`
+ends options: later words are literal arguments. Prefix abbreviations, repeated
+flags, missing/extra arguments and invalid choices fail with a usage hint.
+A value flag accepts single-dash words (`--name -agent`), but needs `=` for a
+value starting with `--` or matching a declared flag. Flags may precede subcommands.
+An incomplete subcommand falls back to the default form when it accepts all
+words: `errors show` lists the pebble `show`; `errors show notes 42` inspects issue 42.
+Typos in commands, subcommands, flags and choices suggest corrected command lines;
+guesses are never executed and secret flag values are redacted. Text errors use
+`CODE: message`, an optional “Did you mean …?” block, then `Hint: ...` on stderr.
+JSON errors preserve `code`, `message`, `hint` and optional `data.suggestions`.
+Daemon name suggestions include `data.unknown` and only authorized candidates
+(pebbles, jobs, error issues or backup timestamps); the CLI renders them as commands.
+Repairs target the rejected argument, preserving command words and other flag
+values. Redaction covers secrets starting with `-`; messages omit inline option
+values. Synonym typos such as `jobs lsit` suggest `jobs ls`; mixed ties omit
+destructive commands. Unknown flags never suggest help: `logs -n` suggests
+`--limit`, and `rm -f notes` suggests `rm notes --yes` with a deletion warning.
+Unauthorized/public responses never gain suggestions; empty suggestions omit data.
+Exit codes: 0 success/discovery, 1 command failure, 2 usage error
+(`UNKNOWN_COMMAND`, `INVALID_ARGS`, `CONFIRM_REQUIRED`), 130 prompt cancellation
+(`CANCELLED`). `bedrock test` uses 1 for failed checks/flakes and 2 for setup failure.
+Text lists preserve complete identifiers (including token IDs and backup timestamps),
+using vertical `KEY: value` rows when the terminal is too narrow. Empty `ls`
+prints a next step; populated output includes release provenance and public routes.
+`status` summarizes readiness, URL, memory, last-five-minute requests, failure rate,
+p95 header latency ranges and backup age; missing observations say `unknown`.
+`whoami` focuses on the daemon URL, build and identity. `alerts` includes active
+silences and delivery pending/oldest, outbox states and last failure (or explicit
+unknown when scope omits delivery). Text strips terminal controls from supplied
+content; JSON is unchanged. Skipped/unverified tunnel checks use `!`. Doctor
+prints repair hints only for warnings and failures. Invalid daemon `--port`
+(0–65535), metrics/logs `--limit` (1–1000) or `--since` (positive integer
+s/m/h/d up to 365d) fails with command-local usage before connecting or starting.
+
+Text output uses tables, confirmations and useful `Next:` hints; colour requires
+a TTY without `NO_COLOR` (even an empty value disables it). Scripts should use
+`--json`: existing result shapes stay unchanged (one value; doctor returns an array).
+Destructive actions such as `bedrock rm notes --yes` require confirmation.
+Invalid pebble names fail with `INVALID_PEBBLE_NAME`.
+
+Install completion, then reload the shell configuration:
+
+- Bash: `bedrock completion bash >> ~/.bashrc`.
+- Zsh: add `source <(bedrock completion zsh)` after `compinit` in `~/.zshrc`.
+- Fish: create `~/.config/fish/completions/`, then run `bedrock completion fish > ~/.config/fish/completions/bedrock.fish`.
+- PowerShell: create `$PROFILE` if absent, then `bedrock completion powershell >> $PROFILE`.
+Completion includes commands, flags, choices and local daemon pebble names
+(with a 500 ms budget; static completion works without the daemon).
+Shell insertion quotes candidates as literal words, including shell metacharacters.
 
 ```sh
 # Home server (after checkout/install.sh):
@@ -1151,6 +1210,11 @@ Win32_Process.Create, outside the Scheduled Task tree reaped by taskkill /T;
 macOS/Linux use a detached Bun helper. Startup restores running/restarting pebbles,
 leaving idle ones asleep and stopped ones stopped. A failed install/restart may leave an advanced Git
 checkout. Older daemons need one server-local update before this endpoint exists.
+
+Missing secret unsets, deploy/service-token revocations and pebble deletion remain
+idempotent; secrets can still be staged before deploy. Alert silences still accept
+arbitrary fingerprints for unscoped callers; scoped callers must use a visible
+incident and retain the existing indistinguishable forbidden response otherwise.
 
 Daemon API (Bearer creator deploy token): GET `/api/pebbles`, GET `/api/status`,
 POST `/api/self-update`;

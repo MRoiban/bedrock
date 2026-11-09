@@ -3,6 +3,7 @@ import { sourceCheckout } from "../version";
 import { unlinkedPackages } from "../links";
 import { init } from "./init";
 import { dbCommand } from "./db";
+import { parse } from "./args";
 import { terminal, type Terminal } from "./terminal";
 
 export async function newPebble(name: string, template = "react", options: { cwd?: string; terminal?: Partial<Terminal>; generate?: typeof dbCommand; json?: boolean; globalModules?: string } = {}) {
@@ -12,7 +13,7 @@ export async function newPebble(name: string, template = "react", options: { cwd
   // A checkout updated by an older self-update may not have registered every link yet.
   if (checkout) for (const { dir } of await unlinkedPackages(checkout, options.globalModules)) await io.run([process.execPath, "link"], { cwd: join(checkout, dir) });
   await io.run([process.execPath, "install"], { cwd: result.dir });
-  if (template === "react") await (options.generate ?? dbCommand)("generate", result.dir);
+  if (template === "react") await (options.generate ?? dbCommand)(parse(["db"], ["generate"]), true, result.dir);
   if (io.which("git") && !await Bun.file(join(result.dir, ".git/HEAD")).exists()) {
     await io.run(["git", "init"], { cwd: result.dir });
     await io.run(["git", "add", "."], { cwd: result.dir });

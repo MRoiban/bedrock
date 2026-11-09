@@ -42,26 +42,17 @@ export default definePebble({
 ## Key CLI commands
 
 ```sh
+bedrock help [<command>]   # every command, with options and examples; --json for the full tree
 bedrock new hello --template minimal
 bedrock dev
 bedrock db generate [name]
-bedrock db new <name>
-bedrock db check
-bedrock db plan
-bedrock db migrate
-bedrock setup
-bedrock login example.com
 bedrock deploy
 bedrock status
 bedrock logs hello
 bedrock errors hello
-bedrock jobs ls hello
 bedrock jobs run hello refresh
 bedrock secrets set hello API_TOKEN --restart
-bedrock token ls
-bedrock backup run hello
-bedrock backup ls hello
 bedrock rollback hello
 ```
 
-CLI commands support --json; destructive commands require --yes.
+- [CLI usage](AGENTS.md#host-operations-and-backups): help, suggestions, exit codes, completion.

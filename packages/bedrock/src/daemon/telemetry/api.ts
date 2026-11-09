@@ -1,18 +1,21 @@
 import { BedrockError } from "../../error";
 import type { Telemetry } from "./index";
 import { emptyRed, mergeRed, quantile, type Red, type Query } from "./model";
-export function duration(value: string) {
+export function duration(value: string, parameter = "duration") {
   const match = /^(\d+)(s|m|h|d)$/.exec(value);
   const result = match ? Number(match[1]) * ({ s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]!] ?? 0) : 0;
-  if (!result || !Number.isSafeInteger(result) || result > 365 * 86400000) throw new BedrockError("INVALID_ARGS", "Invalid telemetry duration.", "Use a positive duration up to 365d, for example 15m or 1h.");
+  if (!result || !Number.isSafeInteger(result) || result > 365 * 86400000) throw new BedrockError("INVALID_ARGS", `Invalid ${parameter} '${value}'.`, "Use a positive duration up to 365d, for example 15m or 1h.");
   return result;
 }
 export function telemetryQuery(url: URL, kind: Query["kind"], pebble: string): Query {
   const to = Number(url.searchParams.get("to") ?? Date.now());
-  const from = Number(url.searchParams.get("from") ?? to - duration(url.searchParams.get("since") ?? (kind === "logs" ? "7d" : "1h")));
+  const from = Number(url.searchParams.get("from") ?? to - duration(url.searchParams.get("since") ?? (kind === "logs" ? "7d" : "1h"), "since"));
   const steps: { [key: string]: number } = { "1m": 60, "1h": 3600, "1d": 86400 };
   const step = steps[url.searchParams.get("step") ?? "1m"];
   const limit = Number(url.searchParams.get("limit") ?? 1000);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000)
+    throw new BedrockError("INVALID_ARGS", `Invalid limit '${url.searchParams.get("limit")}'.`, "Use limit 1–1000.");
+  if (!step) throw new BedrockError("INVALID_ARGS", `Invalid step '${url.searchParams.get("step")}'.`, "Use step 1m|1h|1d.");
   const token = url.searchParams.get("cursor");
   const decoded = token ? Buffer.from(token, "base64url").toString("utf8") : null;
   if (token && (!/^v1:[1-9]\d*$/.test(decoded ?? "") || Buffer.from(decoded!).toString("base64url") !== token)) throw new BedrockError("INVALID_ARGS", "Invalid telemetry cursor.", "Use the opaque cursor returned by the previous page.");

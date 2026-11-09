@@ -1,7 +1,7 @@
-import { deployActions, validateTokenScope } from "../daemon/token-scope";
+import { validateTokenScope } from "../daemon/token-scope";
 import { refreshLinuxService } from "../service";
 import { deployWarnings } from "./deploy-warnings";
-import { formatBuild, formatProvenance, gitProvenance } from "../version";
+import { formatProvenance, gitProvenance } from "../version";
 import { checkDaemonFeatures } from "../features";
 import { openBrowser, readCredentials, type Credentials } from "./credentials";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -13,26 +13,15 @@ import { bedrockHome, readConfig } from "../daemon/config";
 import { createArchive } from "../daemon/archive";
 import { encodeProvenance } from "../daemon/provenance";
 import { loadPebble } from "../runtime/load";
+import { plain } from "./terminal";
+import { usageError } from "./args";
+import type { Handler, Parsed } from "./spec";
 
-function parse(args: string[], hint: string) {
-  const positionals: string[] = [];
-  const flags: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (["--yes", "--force", "--no-open", "-f", "--follow"].includes(arg)) flags[arg] = "true";
-    else if (arg.startsWith("--")) {
-      if (!["--port", "--url", "--token", "--name", "--pebbles", "--actions", "--search", "--since", "--step", "--cursor", "--limit"].includes(arg) || !args[i + 1] || args[i + 1]!.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Invalid flag: ${arg}`, hint);
-      flags[arg] = args[++i]!;
-    } else positionals.push(arg);
-  }
-  return { positionals, flags };
-}
-
-export async function connection(flags: Record<string, string>, options: { home?: string; credentials?: () => Promise<Credentials | null>; fetch?: typeof fetch } = {}) {
+export async function connection(flags: Record<string, string | true>, options: { home?: string; credentials?: () => Promise<Credentials | null>; fetch?: typeof fetch } = {}) {
   const home = options.home ?? bedrockHome();
   const credentialsReader = options.credentials ?? readCredentials;
-  const explicit = flags["--url"] ?? process.env.BEDROCK_URL;
-  const explicitToken = flags["--token"] ?? process.env.BEDROCK_TOKEN;
+  const explicit = (flags["--url"] as string | undefined) ?? process.env.BEDROCK_URL;
+  const explicitToken = (flags["--token"] as string | undefined) ?? process.env.BEDROCK_TOKEN;
   if (explicit) {
     const credentials = explicitToken ? null : await credentialsReader();
     let origin: string;
@@ -55,7 +44,7 @@ export async function connection(flags: Record<string, string>, options: { home?
   throw new BedrockError("DAEMON_UNREACHABLE", "No local daemon or remote credentials are available.", "Start bedrock daemon locally, or run bedrock login --url https://bedrock.<domain>.");
 }
 
-export async function call(flags: Record<string, string>, path: string, init: RequestInit = {}) {
+export async function call(flags: Record<string, string | true>, path: string, init: RequestInit = {}) {
   const { url, token } = await connection(flags);
   const target = new URL(path, url);
   const headers = new Headers(init.headers);
@@ -65,26 +54,20 @@ export async function call(flags: Record<string, string>, path: string, init: Re
   const response = await fetch(target, { ...init, headers, redirect: "error" });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new BedrockError(body?.error?.code ?? "DAEMON_REQUEST_FAILED", body?.error?.message ?? `Daemon returned HTTP ${response.status}.`, body?.error?.hint ?? "Check the daemon URL, token, and logs.");
+    throw new BedrockError(body?.error?.code ?? "DAEMON_REQUEST_FAILED", body?.error?.message ?? `Daemon returned HTTP ${response.status}.`, body?.error?.hint ?? "Check the daemon URL, token, and logs.", undefined, { data: body?.error?.data });
   }
   return response;
 }
 
 export const daemonCommands = ["daemon", "deploy", "ls", "logs", "start", "stop", "restart", "rollback", "rm", "token", "whoami", "status", "metrics"];
-export async function daemonCommand(command: string, args: string[], json: boolean, options: { open?: typeof openBrowser; tty?: boolean } = {}): Promise<unknown> {
-  const usage: Record<string, string> = {
-    daemon: "[--port <port>]", deploy: "[dir] [--no-open]", ls: "", logs: "<name> [-f|--follow] [--search <fts>] [--since 1h] [--cursor <cursor>]",
-    start: "<name>", stop: "<name>", restart: "<name>", rollback: "<name> [--force]",
-    rm: "<name> --yes", token: `create [--name <name>] [--pebbles <globs> --actions <${deployActions.join(",")}>] | ls | revoke <id>`, whoami: "", status: "", metrics: "<name> [--since 1h] [--step 1m] [--cursor <cursor>]",
-  };
-  const hint = `Use bedrock ${command}${usage[command] ? ` ${usage[command]}` : ""}${command === "daemon" ? "" : " [--url <url>] [--token <token>]"} [--json].`;
-  const { positionals, flags } = parse(args, hint);
+export const daemonCommand = (async (parsed: Parsed, json: boolean, options: { open?: typeof openBrowser; tty?: boolean } = {}): Promise<unknown> => {
+  const { positionals, flags } = parsed;
+  const command = parsed.path[0]!;
   const name = positionals[0];
-  const invalid = () => { throw new BedrockError("INVALID_ARGS", `Invalid arguments for ${command}.`, hint); };
-  const allowed = command === "rollback" ? ["--url", "--token", "--force"] : command === "daemon" ? ["--port"] : command === "deploy" ? ["--url", "--token", "--no-open"] : command === "logs" ? ["--url", "--token", "-f", "--follow", "--search", "--since", "--cursor", "--limit"] : command === "metrics" ? ["--url", "--token", "--since", "--step", "--cursor", "--limit"] : command === "rm" ? ["--url", "--token", "--yes"] : command === "token" ? ["--url", "--token", "--name", "--pebbles", "--actions"] : ["--url", "--token"];
-  if (Object.keys(flags).some(key => !allowed.includes(key))) invalid();
   if (command === "daemon") {
-    if (positionals.length) invalid();
+    const port = flags["--port"];
+    if (port !== undefined && (!/^\d+$/.test(String(port)) || !Number.isInteger(Number(port)) || Number(port) > 65535))
+      throw usageError(parsed.path, `Invalid value '${plain(String(port))}' for --port; use an integer from 0 to 65535.`);
     // An unattended host must still boot when the unit cannot be refreshed (full disk, no user bus).
     await refreshLinuxService({ home: bedrockHome() }).catch(error => console.warn("Could not refresh the systemd unit; continuing.", asBedrockError(error).toJSON()));
     const running = await startDaemon({ ...(flags["--port"] ? { port: Number(flags["--port"]) } : {}) });
@@ -96,15 +79,12 @@ export async function daemonCommand(command: string, args: string[], json: boole
     return undefined;
   }
   if (command === "whoami" || command === "status") {
-    if (positionals.length) invalid();
     const daemon = await connection(flags);
     const value = (await (await call(flags, "/api/status")).json()).value;
     const pebbles = value.pebbles.map((pebble: { name: string }) => ({ ...pebble, url: value.domain === "localhost" ? `http://${pebble.name}.localhost:${new URL(daemon.url).port}` : `https://${pebble.name}.${value.domain}` }));
-    if (!json) { console.log(`Daemon  ${daemon.url} · ${formatBuild(value)}\nUser: ${value.user ?? "creator deploy token"}\n${pebbles.map((pebble: { name: string; url: string; status?: string; telemetry?: unknown; provenance?: import("../version").Provenance }) => `${pebble.name}  ${pebble.status ?? "unknown"}  ${pebble.url}  ${formatProvenance(pebble.provenance)}\n  Telemetry: ${JSON.stringify(pebble.telemetry ?? null)}`).join("\n") || "No pebbles yet. Run bedrock new my-app."}`); return; }
     return { command, daemon: daemon.url, ...value, pebbles };
   }
   if (command === "deploy") {
-    if (positionals.length > 1) invalid();
     const dir = resolve(name ?? process.cwd());
     const pebble = await loadPebble(dir);
     const status = (await (await call(flags, "/api/status")).json()).value;
@@ -133,40 +113,44 @@ export async function daemonCommand(command: string, args: string[], json: boole
     } finally { await rm(temp, { recursive: true, force: true }); }
   }
   if (command === "ls") {
-    if (positionals.length) invalid();
     const result = await (await call(flags, "/api/pebbles")).json();
-    if (!json) {
-      for (const pebble of result.value) console.log(`${pebble.name}  ${pebble.status}  ${formatProvenance(pebble.provenance)}  Public routes: ${(pebble.public_routes ?? []).join(", ") || "none"}`);
-      return;
-    }
     return { command, ...result };
   }
   if (command === "token") {
-    if (!name || !["create", "ls", "revoke"].includes(name) || positionals.length !== (name === "revoke" ? 2 : 1)) invalid();
-    if (name !== "create" && ["--name", "--pebbles", "--actions"].some(key => flags[key])) invalid();
-    if (!!flags["--pebbles"] !== !!flags["--actions"]) invalid();
-    if (flags["--actions"]) validateTokenScope({ pebbles: flags["--pebbles"]!.split(","), actions: flags["--actions"].split(",") });
-    const input = { ...(flags["--name"] ? { name: flags["--name"] } : {}), ...(flags["--pebbles"] ? { scope: { pebbles: flags["--pebbles"].split(","), actions: flags["--actions"]!.split(",") } } : {}) };
-    const id = positionals[1];
-    if (name === "revoke" && !/^[a-f0-9]{64}$/.test(id ?? "")) invalid();
-    return { command: `token ${name}`, ...(await (await call(flags, name === "revoke" ? `/api/tokens/${id}` : "/api/tokens", { method: name === "create" ? "POST" : name === "revoke" ? "DELETE" : "GET", ...(name === "create" ? { headers: { "content-type": "application/json" }, body: JSON.stringify(input) } : {}) })).json()) };
+    const action = parsed.path[1]!;
+    if (!!flags["--pebbles"] !== !!flags["--actions"]) throw usageError(parsed.path, "--pebbles and --actions must be provided together.");
+    const pebbles = (flags["--pebbles"] as string | undefined)?.split(",");
+    const actions = (flags["--actions"] as string | undefined)?.split(",");
+    if (actions) validateTokenScope({ pebbles: pebbles!, actions });
+    const input = { ...(flags["--name"] ? { name: flags["--name"] } : {}), ...(pebbles ? { scope: { pebbles, actions } } : {}) };
+    const id = positionals[0];
+    if (action === "revoke" && !/^[a-f0-9]{64}$/.test(id ?? "")) throw usageError(parsed.path, `Invalid token ID '${id}'; expected 64 lowercase hexadecimal characters.`);
+    return { command: `token ${action}`, ...(await (await call(flags, action === "revoke" ? `/api/tokens/${id}` : "/api/tokens", { method: action === "create" ? "POST" : action === "revoke" ? "DELETE" : "GET", ...(action === "create" ? { headers: { "content-type": "application/json" }, body: JSON.stringify(input) } : {}) })).json()) };
   }
-  if (positionals.length !== 1) invalid();
+  if (command === "metrics" || command === "logs") {
+    const limit = flags["--limit"], since = flags["--since"];
+    if (limit !== undefined && (!/^\d+$/.test(String(limit)) || Number(limit) < 1 || Number(limit) > 1000))
+      throw usageError(parsed.path, `Invalid value '${plain(String(limit))}' for --limit; use an integer from 1 to 1000.`);
+    if (since !== undefined) {
+      const match = /^(\d+)(s|m|h|d)$/.exec(String(since));
+      const duration = match ? Number(match[1]) * ({ s: 1, m: 60, h: 3600, d: 86400 }[match[2]!] ?? 0) : 0;
+      if (!Number.isSafeInteger(duration) || duration <= 0 || duration > 365 * 86400)
+        throw usageError(parsed.path, `Invalid value '${plain(String(since))}' for --since; use a positive s/m/h/d duration up to 365d.`);
+    }
+  }
   const path = `/api/pebbles/${encodeURIComponent(name!)}`;
-  if (command === "metrics" || command === "logs" && !(flags["-f"] || flags["--follow"]) && (json || flags["--search"] || flags["--since"] || flags["--cursor"] || flags["--limit"])) {
+  if (command === "metrics" || command === "logs" && !flags["--follow"] && (json || flags["--search"] || flags["--since"] || flags["--cursor"] || flags["--limit"])) {
     const query = new URLSearchParams({ format: "json" });
-    for (const [flag, key] of [["--search", "q"], ["--since", "since"], ["--step", "step"], ["--cursor", "cursor"], ["--limit", "limit"]]) if (flags[flag!]) query.set(key!, flags[flag!]!);
+    for (const [flag, key] of [["--search", "q"], ["--since", "since"], ["--step", "step"], ["--cursor", "cursor"], ["--limit", "limit"]]) if (flags[flag!]) query.set(key!, flags[flag!] as string);
     const result = await (await call(flags, `${path}/${command}?${query}`)).json();
-    if (!json && command === "logs") { for (const row of result.value.rows.reverse()) console.log(`${new Date(row.time).toISOString()} ${row.text}`); return; }
     return { command, name, ...result, ...(command === "logs" ? { logs: [...result.value.rows].reverse().map((row: { time: number; text: string }) => `${new Date(row.time).toISOString()} ${row.text}\n`).join("") } : {}) };
   }
   if (command === "logs") {
-    if ((flags["-f"] || flags["--follow"]) && ["--search", "--since", "--cursor", "--limit"].some(key => flags[key])) invalid();
-    if (!(flags["-f"] || flags["--follow"])) {
+    const conflict = ["--search", "--since", "--cursor", "--limit"].find(key => flags[key]);
+    if (flags["--follow"] && conflict) throw usageError(parsed.path, `--follow cannot be combined with ${conflict}.`);
+    if (!flags["--follow"]) {
       const logs = await (await call(flags, `${path}/logs`)).text();
-      if (json) return { command, name, logs };
-      process.stdout.write(logs);
-      return undefined;
+      return { command, name, logs };
     }
     const controller = new AbortController();
     const stop = () => controller.abort();
@@ -174,7 +158,14 @@ export async function daemonCommand(command: string, args: string[], json: boole
     process.on("SIGTERM", stop);
     let opened = false;
     const decoder = new TextDecoder();
-    const write = (text: string) => process.stdout.write(json ? JSON.stringify(text).slice(1, -1) : text);
+    // A transport chunk can end halfway through a terminal escape sequence.
+    let pending = "";
+    const write = (text: string, flush = false) => {
+      if (json) { process.stdout.write(JSON.stringify(text).slice(1, -1)); return; }
+      pending += text;
+      const end = flush ? pending.length : pending.lastIndexOf("\n") + 1;
+      if (end) { process.stdout.write(plain(pending.slice(0, end))); pending = pending.slice(end); }
+    };
     try {
       const response = await call(flags, `${path}/logs?follow=true`, { signal: controller.signal });
       if (json) process.stdout.write('{"ok":true,"command":"logs","logs":"');
@@ -183,7 +174,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
     } catch (error) { if (!controller.signal.aborted) throw error; }
     finally {
       if (opened) {
-        write(decoder.decode());
+        write(decoder.decode(), true);
         if (json) {
           const page = await call(flags, `${path}/logs?format=json&limit=1`).then(response => response.json()).then(body => body.value).catch(() => null);
           process.stdout.write(`","value":${JSON.stringify({ cursor: null, coverage: page?.coverage ?? null, drops: page?.drops ?? null, historical_drops: page?.historical_drops ?? null })}}\n`);
@@ -201,7 +192,7 @@ export async function daemonCommand(command: string, args: string[], json: boole
   const result = await (await call(flags, `${path}/${command}${flags["--force"] ? "?force=true" : ""}`, { method: "POST" })).json();
   warnExclusive(name!, result);
   return { command, ...result };
-}
+}) satisfies Handler;
 
 export function warnExclusive(name: string, result: { value?: { exclusive_services?: string } }) {
   if (result.value?.exclusive_services === "failed") console.warn(`Warning: exclusive services failed for ${name}; the replacement release is selected. Check bedrock logs ${name}.`);
