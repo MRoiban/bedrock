@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { alertsCommand } from "./alerts";
 import { errorsCommand } from "./errors";
-import { creatorCommand, creatorUsage } from "./creator";
+import { creatorCommand } from "./creator";
 import { secretsCommand } from "./secrets";
 import { setupWizard } from "./setup";
 import { newPebble } from "./new";
@@ -18,103 +18,240 @@ import { dev, devWorker } from "./dev";
 import { bedrockHome } from "../daemon/config";
 import { moveData } from "../daemon/move-data";
 
-const commandHelp: Record<string, [usage: string, description: string]> = {
-  test: ["[path] [--grep <pattern>] [--project desktop|phone] [--list] [--headed] [--repeat <1..100>] [--diagnostic-retry] [--update-snapshots --yes]", "Run Bun unit tests, then isolated Chromium smoke and Playwright specs. Install optional dev dependencies with bun add --dev @playwright/test@1.64.0 @axe-core/playwright@4.14.0; bunx playwright install chromium. Screenshots are opt-in; diagnostic retries still fail on flakes."],
-  new: ["<name> [--template react|minimal]", "Create a pebble directory, install dependencies, and initialize Git and migrations."],
-  init: ["<name> [--template react|minimal]", "Scaffold a pebble in the current empty directory."],
-  db: ["generate [name] [--allow-data-loss] | new <name> | check | plan | migrate", "Generate, create, check, inspect, or apply pebble database migrations."],
-  deploy: ["[dir] [--no-open] [--url <url>] [--token <token>]", "Deploy a pebble to the daemon."],
-  rm: ["<name> --yes [--url <url>] [--token <token>]", "Remove a deployed pebble."],
-  start: ["<name> [--url <url>] [--token <token>]", "Start a deployed pebble."],
-  stop: ["<name> [--url <url>] [--token <token>]", "Stop a deployed pebble."],
-  restart: ["<name> [--url <url>] [--token <token>]", "Restart a deployed pebble."],
-  rollback: ["<name> [--force] [--url <url>] [--token <token>]", "Restore a pebble's previous release."],
-  secrets: ["ls <pebble> | set <pebble> <NAME> | unset <pebble> <NAME>... [--restart] [--url <url>] [--token <token>]", "List secret names or set and remove pebble secrets."],
-  "pebble-token": [creatorUsage["pebble-token"], "Create or revoke a creator-owned pebble token; creation prints the secret once."],
-  session: [creatorUsage.session, "Create a one-time creator sign-in URL with a fixed expiry."],
-  token: ["create [--name <name>] [--pebbles <globs> --actions <actions>] | ls | revoke <id> [--url <url>] [--token <token>]", "Create, list, or revoke deploy tokens. Actions: deploy,lifecycle,logs,secrets,status,service-tokens,monitor."],
-  backup: ["setup --dir <path> | setup --r2-account <id> --r2-bucket <bucket> --r2-access-key-id <key> [--r2-secret-access-key <secret>] | run [pebble] | ls <pebble> | restore <pebble> [--at <ts>] --yes", "Configure backups, create or list snapshots, or restore pebble data."],
-  errors: ["<pebble> | show|resolve|ignore|merge <pebble> <issue> [target] [--yes]", "Inspect or change grouped browser/server error issues."],
-  metrics: ["<pebble> [--since 1h] [--step 1m|1h|1d] [--cursor <cursor>]", "Read daemon RED rollups and bucket-range percentiles."],
-  logs: ["<pebble> [--follow] [--search <fts>] [--since 1h] [--cursor <cursor>]", "Read or follow redacted logs; search retained SQLite history."],
-  alerts: ["[ls] | silence <fingerprint> --for 2h | test | setup [--webhook <url>]", "Inspect incidents, silence pages or configure/test durable webhook delivery."],
-  jobs: ["history <pebble> | ls <pebble> | run <pebble> <job> [--url <url>] [--token <token>]", "List or run pebble jobs."],
-  data: ["move <dir>", "With the daemon stopped, copy pebble data and logs to <dir>, verify the copy, and switch dataDir; the old copy is kept."],
+import { commands } from "./commands";
+import { diagnosticWord, locateValue, parse, replaySuggestions, usageError } from "./args";
+import { commandAt, flagsFor, resolveCommand, suggestCommands } from "./registry";
+import { globalFlags, type CommandSpec, type Handler } from "./spec";
+import { formatResult } from "./format";
+import { completeCommand, completionCommand } from "./completion";
+import { commandJSON, overviewJSON, renderCommandHelp, renderOverview, renderTopicHelp, topicJSON, topics } from "./help";
+import { suggest } from "../suggest";
+import { plain } from "./terminal";
+
+function stdout(text: string) { process.stdout.write(`${text}\n`); }
+function stderr(text: string) { process.stderr.write(`${text}\n`); }
+
+function cliArgs(raw: string[]) {
+  const end = raw.indexOf("--");
+  const options = end < 0 ? raw : raw.slice(0, end);
+  return { json: options.includes("--json"), args: raw.filter((arg, i) => arg !== "--json" || end >= 0 && i > end) };
+}
+
+function unknownCommand(word: string, level = commands, path: string[] = [], argv: string[] = [], index = 0) {
+  const context = ["bedrock", ...path].join(" ");
+  // An option-looking word before any command is a mistyped global flag, never a command name.
+  const option = word.startsWith("-");
+  const key = word.split("=", 1)[0]!;
+  const candidates = ["--version", ...globalFlags.filter(flag => flag.name !== "--help").map(flag => flag.name)];
+  const matches = option ? suggest(key, candidates).map(name => name + (word.includes("=") ? word.slice(word.indexOf("=")) : "")) : suggestCommands(word, level);
+  const suggestions = replaySuggestions(argv, index, matches);
+  const shown = diagnosticWord(argv, index);
+  return new BedrockError("UNKNOWN_COMMAND", option ? `Unknown option ${shown} before the command.` : `'${shown}' is not a ${context} command.`,
+    path.length ? `Run 'bedrock help ${path.join(" ")}' for details.` : "Run 'bedrock help' to see all commands.", undefined, suggestions.length ? { data: { suggestions } } : {});
+}
+
+function helpPath(words: string[]) {
+  let resolved = resolveCommand(words.slice(0, 1), commands, false);
+  for (let i = 1; resolved && i < words.length; i++) {
+    const word = words[i]!;
+    if (word.startsWith("-")) {
+      const flags = (spec: CommandSpec): ReturnType<typeof flagsFor> => [...flagsFor(spec), ...(spec.subcommands ?? []).flatMap(flags)];
+      const key = word.split("=", 1)[0];
+      const flag = flags(resolved.spec).find(flag => flag.name === key || flag.short === key);
+      if (flag?.value && !word.includes("=")) i++;
+      continue;
+    }
+    const child = commandAt(word, resolved.spec.subcommands ?? []);
+    if (!child) break;
+    resolved = { path: [...resolved.path, child.name], spec: child, consumed: i + 1 };
+  }
+  return resolved;
+}
+
+function showHelp(args: string[], json: boolean) {
+  const explicit = args[0] === "help";
+  const end = args.indexOf("--");
+  const before = end < 0 ? args : args.slice(0, end);
+  const helpFlag = before.some(arg => arg === "--help" || arg === "-h");
+  if (args.length && !explicit && !helpFlag) return false;
+  const words = (explicit ? before.slice(1) : before).filter(arg => arg !== "-h" && arg !== "--help");
+  const color = Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
+  let value: unknown, text: string;
+  if (!words.length) { value = overviewJSON(); text = renderOverview(color); }
+  else if (topics.includes(words[0] as typeof topics[number]) && words.length === 1) {
+    const topic = words[0] as typeof topics[number];
+    value = topicJSON(topic); text = renderTopicHelp(topic, color);
+  } else {
+    const resolved = explicit ? resolveCommand(words, commands, false) : helpPath(words);
+    if (!resolved || explicit && resolved.consumed < words.length) {
+      const path = resolved?.path ?? [];
+      const word = words[resolved?.consumed ?? 0]!;
+      const level = resolved?.spec.subcommands ?? (resolved ? [] : [...commands, ...topics.map(name => ({ name, summary: name }))]);
+      throw unknownCommand(word, level, path, args, args.indexOf(word));
+    }
+    value = commandJSON(resolved.path, resolved.spec);
+    text = renderCommandHelp(resolved.path, resolved.spec, color);
+  }
+  stdout(json ? JSON.stringify({ ok: true, ...value as object }) : text);
+  return true;
+}
+
+// One handler per top-level command; each receives input already checked against commands.ts.
+const handlers: Record<string, Handler> = {
+  new: (parsed, json) => newCommand(parsed, json),
+  init: (parsed, json) => initCommand(parsed, json),
+  dev: (parsed, json) => devCommand(parsed, json),
+  db: (parsed, json) => dbCommand(parsed, json),
+  data: (parsed, json) => dataCommand(parsed, json),
+  "self-update": (parsed, json) => updateCommand(parsed, json),
+  version: (parsed, json) => versionCommand(parsed, json),
+  test: async (parsed, json) => (await import("./test")).testCommand(parsed, json),
+  setup: async (parsed, json) => { const result = await setupWizard(parsed, json); return json ? result : undefined; },
+  completion: async (parsed, json) => completionCommand(parsed.positionals, json),
+  ...Object.fromEntries(daemonCommands.map(name => [name, daemonCommand])),
+  ...Object.fromEntries(opsCommands.map(name => [name, opsCommand])),
+  "pebble-token": creatorCommand, session: creatorCommand,
+  secrets: secretsCommand, backup: backupCommand, alerts: alertsCommand, errors: errorsCommand, jobs: jobsCommand,
 };
 
 async function main() {
   const raw = process.argv.slice(2);
-  const json = raw.includes("--json");
-  const args = raw.filter(arg => arg !== "--json");
-  const command = args.shift();
-  const help = command && Object.hasOwn(commandHelp, command) ? commandHelp[command] : undefined;
-  if (help && args.some(arg => arg === "--help" || arg === "-h")) {
-    const [usage, description] = help;
-    const value = { command, usage: `bedrock ${command} ${usage} [--json]`, description };
-    console.log(json ? JSON.stringify({ ok: true, ...value }) : `Usage: ${value.usage}\n${description}`);
-    return;
-  }
-  if ((command === "new" || command === "init") && args.some(arg => arg.startsWith("-") && arg !== "--template")) {
-    throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, `Use bedrock ${command} ${commandHelp[command]![0]} [--json].`);
-  }
-  if (command === "--version" && !args.length) { const info = await buildInfo(); console.log(json ? JSON.stringify({ ok: true, ...info }) : formatBuild(info)); return; }
-  if (command === "test") { await (await import("./test")).testCommand(args, json); return; }
-  if (command === "__dev_worker") { await devWorker(); return; }
-  if (command === "dev") {
-    let port = 3000;
-    if (args[0] === "--port" && args.length === 2) { port = Number(args[1]); args.length = 0; }
-    if (args.length || !Number.isInteger(port) || port < 0 || port > 65535) throw new BedrockError("INVALID_ARGS", "Invalid dev arguments.", "Use bedrock dev [--port 0..65535] [--json].");
-    await dev(json, port);
-    return;
-  }
-  let result: unknown;
-  const dbOptions = command === "db" ? dbArgs(args) : undefined;
-  if (command === "setup") { result = await setupWizard(args, json); if (!json) return; }
-  else if (command === "self-update" && (!args.length || args.length === 1 && args[0] === "--remote")) { const update = args[0] === "--remote" ? await remoteSelfUpdate(json ? {} : { onUpdate: update => console.log(`Updating remote bedrock ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)} · waiting for daemon…`) }) : await selfUpdate(); result = update; if (!json) { console.log("remote" in update ? `✓ Updated bedrock on ${update.domain} ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)} · daemon back in ${update.seconds}s` : `✓ Updated bedrock ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)}${update.restarted ? " · service restarted" : ""}`); return; } }
-  else if (command === "new" && !args[0]?.startsWith("-") && (args.length === 1 || args.length === 3 && args[1] === "--template")) { result = await newPebble(args[0]!, args[2] ?? "react", { json }); if (!json) return; }
-  else if (command === "pebble-token" || command === "session") result = await creatorCommand(command, args);
-  else if (command === "secrets") result = await secretsCommand(args);
-  else if (command === "backup") result = await backupCommand(args);
-  else if (command === "alerts") result = await alertsCommand(args);
-  else if (command === "errors") result = await errorsCommand(args);
-  else if (command === "jobs") result = await jobsCommand(args);
-  else if (command === "data" && args[0] === "move" && args.length === 2 && !args[1]!.startsWith("-")) result = { command: "data move", ...await moveData(bedrockHome(), args[1]!, json ? {} : { progress: line => console.error(line) }) };
-  else if (command && opsCommands.includes(command)) {
-    result = await opsCommand(command, args, json);
-    if (result === undefined) return;
-  } else if (command && daemonCommands.includes(command)) {
-    result = await daemonCommand(command, args, json);
-    if (result === undefined) return;
-  }
-  else if (command === "init" && !args[0]?.startsWith("-") && (args.length === 1 || args.length === 3 && args[1] === "--template")) result = { command: "init", ...await init(args[0]!, process.cwd(), args[2], true, await sourceCheckout()) };
-  else if (dbOptions) result = await dbCommand(args[0]!, process.cwd(), dbOptions);
-  else if (command && ["new", "init", "db", "data", "self-update"].includes(command)) {
-    const usage = command === "new" || command === "init" ? " <name> [--template react|minimal]" : command === "db" || command === "data" ? ` ${commandHelp[command]![0]}` : " [--remote]";
-    throw new BedrockError("INVALID_ARGS", `Invalid ${command} arguments.`, `Use bedrock ${command}${usage} [--json].`);
-  }
-  else throw new BedrockError("UNKNOWN_COMMAND", "Unknown command or arguments.", "Use bedrock init <name> [--template react], dev [--port n], test [path], db generate|new|check|plan|migrate, setup, daemon, deploy, ls, logs, start|stop|restart, rollback, rm, token create|ls|revoke, pebble-token create|revoke, session create, secrets ls|set|unset, tunnel setup|status|teardown, service install|uninstall|status, doctor, login <domain>, logout, new <name>, self-update, whoami, status, backup setup|run|ls|restore, jobs ls|run, data move <dir>, or --version; add --json for machine-readable output.");
-  console.log(json ? JSON.stringify({ ok: true, ...(result as object) }) : JSON.stringify(result, null, 2));
+  if (internalEntry(raw) === "__dev_worker") { await devWorker(); return; }
+  // Completion consumes raw words, including option-looking ones.
+  if (raw[0] === "__complete") { await completeCommand(raw.slice(1), false, commands); return; }
+  const { args, json } = cliArgs(raw);
+  if (showHelp(args, json)) return;
+  const typedCommand = args.shift()!;
+  const spec = commandAt(typedCommand);
+  if (!spec) throw unknownCommand(typedCommand, commands, [], [typedCommand, ...args]);
+  const command = spec.name;
+  const parsed = parse([command], args);
+  const result = await handlers[command]!(parsed, json);
+  if (result === undefined) return;
+  const color = Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
+  stdout(json ? JSON.stringify({ ok: true, ...result as object })
+    : formatResult(result, { color, width: process.stdout.columns }) ?? JSON.stringify(result, null, 2));
 }
 
-function dbArgs(args: string[]) {
-  const [sub, ...rest] = args;
-  const names = rest.filter(arg => !arg.startsWith("-"));
-  const flags = rest.filter(arg => arg.startsWith("-"));
-  if (sub === "generate" && names.length <= 1 && flags.every(flag => flag === "--allow-data-loss")) return { name: names[0], allowDataLoss: flags.length > 0 };
-  if (sub === "new" && names.length === 1 && !flags.length) return { name: names[0] };
-  if (["check", "plan", "migrate"].includes(sub!) && !rest.length) return {};
-  return undefined;
+export function internalEntry(raw: string[]) {
+  if (raw[0] === "__complete") return "__complete";
+  return cliArgs(raw).args[0] === "__dev_worker" ? "__dev_worker" : undefined;
+}
+
+const newCommand: Handler = async (parsed, json) => {
+  const result = await newPebble(parsed.positionals[0]!, parsed.flags["--template"] as string | undefined, { json });
+  return json ? result : undefined;
+};
+
+const initCommand: Handler = async parsed => ({
+  command: "init",
+  ...await init(parsed.positionals[0]!, process.cwd(), parsed.flags["--template"] as string | undefined, true, await sourceCheckout()),
+});
+
+const devCommand: Handler = async (parsed, json) => {
+  const value = parsed.flags["--port"];
+  const port = value === undefined ? 3000 : Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw usageError(parsed.path, `Invalid value '${value}' for --port; use an integer from 0 to 65535.`);
+  }
+  await dev(json, port);
+};
+
+const dataCommand: Handler = async (parsed, json) => ({
+  command: "data move",
+  ...await moveData(bedrockHome(), parsed.positionals[0]!, json ? {} : { progress: line => stderr(plain(line)) }),
+});
+
+const updateCommand: Handler = async (parsed, json) => {
+  const update = parsed.flags["--remote"] ? await remoteSelfUpdate(json ? {} : {
+    onUpdate: update => stdout(plain(`Updating remote bedrock ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)} · waiting for daemon…`)),
+  }) : await selfUpdate();
+  if (json) return update;
+  stdout(plain("remote" in update
+    ? `✓ Updated bedrock on ${update.domain} ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)} · daemon back in ${update.seconds}s`
+    : `✓ Updated bedrock ${update.from.slice(0, 7)} → ${update.to.slice(0, 7)}${update.restarted ? " · service restarted" : ""}`));
+};
+
+const versionCommand: Handler = async (_parsed, json) => {
+  const info = await buildInfo();
+  if (json) return info;
+  stdout(formatBuild(info));
+};
+
+export function exitCodeFor(code: string, command?: string) {
+  if (code === "CANCELLED") return 130;
+  if (command === "test" || ["UNKNOWN_COMMAND", "INVALID_ARGS", "CONFIRM_REQUIRED"].includes(code)) return 2;
+  return 1;
+}
+
+export function errorValue(error: BedrockError, argv: string[], json = false) {
+  const value = error.toJSON();
+  const data = errorData(value.data);
+  if (!data || !Array.isArray(data.suggestions)) return value;
+  const unknown = typeof data.unknown === "string" ? data.unknown : undefined;
+  const argument = error.code === "PEBBLE_NOT_FOUND" ? "pebble" : error.code === "JOB_NOT_FOUND" ? "job"
+    : error.code === "BACKUP_NOT_FOUND" ? "--at" : error.code === "NOT_FOUND" && argv[0] === "errors"
+      ? error.message === "Merge target not found." ? "target" : "issue" : undefined;
+  const location = unknown === undefined ? undefined : locateValue(argv, unknown, argument);
+  const lines = data.suggestions.filter((word: unknown): word is string => typeof word === "string")
+    .flatMap((word: string) => unknown === undefined ? [word]
+      : location ? replaySuggestions(argv, location.index, [`${location.prefix}${word}`]) : []);
+  // argv arrives without --json; an agent that asked for JSON should be handed a line that keeps asking.
+  value.data = { ...data, suggestions: json ? lines.map(withJson) : lines };
+  return value;
+}
+
+/** Adds --json to a suggested command line, before any `--` so it stays an option. */
+function withJson(line: string) {
+  const words = shellWords(line);
+  const end = words.find(word => word.text === "--");
+  if (words.some(word => word.text === "--json" && (!end || word.start < end.start))) return line;
+  return end ? `${line.slice(0, end.start)}--json ${line.slice(end.start)}` : `${line} --json`;
+}
+
+/** Splits a line built by replaySuggestions: words are bare or single-quoted with '\'' escapes. */
+function shellWords(line: string) {
+  const words: { text: string; start: number }[] = [];
+  let text = "", start = 0, quoted = false;
+  for (let i = 0; i <= line.length; i++) {
+    const char = line[i];
+    if (!quoted && (char === " " || char === undefined)) {
+      if (i > start) words.push({ text, start });
+      text = ""; start = i + 1;
+    } else if (char === "'") quoted = !quoted;
+    else if (!quoted && char === "\\") text += line[++i] ?? "";
+    else text += char;
+  }
+  return words;
+}
+
+export function formatError(value: ReturnType<BedrockError["toJSON"]>) {
+  const data = errorData(value.data);
+  const suggestions = data && Array.isArray(data.suggestions)
+    ? data.suggestions.filter((word: unknown): word is string => typeof word === "string") as string[] : [];
+  const block = suggestions.length ? `\n\nDid you mean ${suggestions.length === 1 ? "this" : "one of these"}?\n${suggestions.map(word => `    ${plain(word)}`).join("\n")}\n` : "";
+  const hint = plain(value.hint);
+  const repair = suggestions.length && typeof data?.unknown === "string"
+    ? hint.replace(/^Did you mean [^?]*\?\s*/, "") : hint;
+  return `${value.code}: ${plain(value.message)}${block}\nHint: ${repair}`;
+}
+
+function errorData(value: unknown) {
+  return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
 }
 
 if (import.meta.main) {
   await main().catch(error => {
     const typed = asBedrockError(error, "CLI_FAILED", "Check the working directory, dependencies, and command arguments.");
-    if (process.argv.includes("__dev_worker")) {
+    if (internalEntry(process.argv.slice(2)) === "__dev_worker") {
       process.send?.({ error: typed.toJSON() });
       process.exitCode = 1;
       return;
     }
-    console[process.argv.includes("--json") ? "log" : "error"](process.argv.includes("--json") ? JSON.stringify({ ok: false, error: typed.toJSON() }) : `${typed.code}: ${typed.message}\nHint: ${typed.hint}`);
-    process.exitCode = process.argv.slice(2).filter(arg => arg !== "--json")[0] === "test" ? 2 : 1;
+    const { args, json } = cliArgs(process.argv.slice(2));
+    const value = errorValue(typed, args, json);
+    if (json) stdout(JSON.stringify({ ok: false, error: value }));
+    else stderr(formatError(value));
+    process.exitCode = exitCodeFor(typed.code, args[0]);
   });
 }

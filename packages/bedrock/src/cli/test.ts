@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { childEnvironment } from "../daemon/child-env";
 import { BedrockError, asBedrockError } from "../error";
 import { testOptions } from "./test-options";
+import type { Parsed } from "./spec";
 import { browserChecks, unitChecks, sourceState, type Check } from "../testing/report";
 import { pruneRuns } from "../testing/artifacts";
 
@@ -33,8 +34,8 @@ function playwrightCli() {
   catch { throw new BedrockError("TEST_DEPENDENCIES_MISSING", "Browser testing dependencies are not installed.", "Run bun add --dev @playwright/test@1.64.0 @axe-core/playwright@4.14.0 && bunx playwright install chromium."); }
 }
 
-export async function testCommand(args: string[], json: boolean) {
-  const options = testOptions(args);
+export async function testCommand(parsed: Parsed, json: boolean) {
+  const options = testOptions(parsed);
   const dir = process.cwd();
   const started = Date.now();
   const runId = new Date().toISOString().replace(/[:.]/g, "-") + `-${crypto.randomUUID().slice(0, 8)}`;
@@ -48,7 +49,9 @@ export async function testCommand(args: string[], json: boolean) {
   let configuration: unknown;
   let chromiumVersion: string | null = null;
   const env = childEnvironment(process.env, {}, false, { BEDROCK_HOME: temp, BEDROCK_TEST_DIR: dir, BEDROCK_TEST_TEMPLATE: join(temp, "template"), BEDROCK_TEST_CASES: join(temp, "cases"), BEDROCK_TEST_MANIFEST: join(temp, "manifest.json"), BEDROCK_TEST_LIST: options.list ? "1" : "0", TZ: "UTC" });
-  const repro = ["bedrock", "test", ...args, ...(json ? ["--json"] : [])];
+  const repro = ["bedrock", ...parsed.path,
+    ...Object.entries(parsed.flags).flatMap(([name, value]) => value === true ? [name] : [name, value]),
+    ...(json ? ["--json"] : []), ...(parsed.positionals.length ? ["--", ...parsed.positionals] : [])];
   try {
     if (!options.list) {
       const unitDir = join(dir, "tests", "unit");

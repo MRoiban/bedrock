@@ -109,6 +109,9 @@ export class ErrorStore {
       counts: this.db.query("SELECT c.* FROM counts c JOIN issues i ON i.id=c.issue WHERE i.pebble=? AND (?='' OR i.id=?) AND c.day>=? ORDER BY day DESC LIMIT 1000").all(pebble, id ?? "", id ?? "", Date.now() - 90 * day),
       drops: this.db.query("SELECT * FROM losses").all(), payload_bytes: this.db.query<{ bytes: number }, []>("SELECT bytes FROM accounting").get()!.bytes, payload_budget: this.budget };
   }
+  suggestionIds(pebble: string) {
+    return this.db.query<{ id: string }, [string]>("SELECT id FROM issues WHERE pebble=? ORDER BY last_seen DESC LIMIT 200").all(pebble).map(row => row.id);
+  }
   change(pebble: string, id: string, action: string, target?: string) {
     const merged = this.db.query<{ target: string }, [string, string]>("SELECT target FROM merges WHERE pebble=? AND id=?").get(pebble, id);
     if (action === "merge" && merged?.target === target && this.db.query("SELECT 1 FROM issues WHERE pebble=? AND id=?").get(pebble, target!)) return { id, action, target };

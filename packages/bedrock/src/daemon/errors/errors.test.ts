@@ -1,6 +1,6 @@
 import { ErrorWorker, type ErrorWork } from "./worker";
 import { createSecrets } from "../secrets";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { ErrorStore } from "./store";
@@ -10,6 +10,25 @@ import { cleanEvent, errorEvent, scrub, stackFrames } from "../../errors/model";
 import { tempDirectory } from "../../../test/helpers";
 
 const event = () => ({ ...errorEvent(new TypeError("user x@example.test token=supersecret http://host/private?q=secret 192.168.1.1"), "browser", "unhandled-error", "r1"), frames: [{ file: "/app.js", function: "fail", line: 1, column: 1 }] });
+test("issue suggestion IDs use one lightweight query capped at the 200 most recent per pebble", () => {
+  const temp = tempDirectory(), store = new ErrorStore(join(temp.dir, "errors.sqlite"));
+  try {
+    const insert = store.db.query("INSERT INTO issues VALUES(?,?,'server','Error','open',0,?,'r1',0,0,0)");
+    store.db.transaction(() => {
+      for (let i = 0; i < 251; i++) insert.run(`issue-${i}`, "notes", i);
+      insert.run("private-issue", "private", 1000);
+    })();
+    const query = spyOn(store.db, "query");
+    try {
+      expect(store.suggestionIds("notes")).toEqual(Array.from({ length: 200 }, (_, i) => `issue-${250 - i}`));
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(query.mock.calls[0]![0]).toStartWith("SELECT id FROM issues");
+    } finally { query.mockRestore(); }
+    expect(store.suggestionIds("private")).toEqual(["private-issue"]);
+    expect(store.suggestionIds("missing")).toEqual([]);
+  } finally { store.close(); temp.cleanup(); }
+});
+
 test("error protocol scrubs fields, rejects malformed frames and parses browser stacks", () => {
   let reads = 0;
   const unsafe = new Error("safe"); Object.defineProperty(unsafe, "message", { get() { reads++; return "private"; } });

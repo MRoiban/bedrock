@@ -83,6 +83,16 @@ to resume after a failure. Use `bedrock setup --status`, or redo a single step:
 Configuration changes invalidate service/verification; identity changes also
 invalidate tunnel configuration. Rerun the full setup to apply those changes.
 
+Run `bedrock` for the command overview or `bedrock help <command> [<sub>]` for
+options and examples. Every command accepts `-h`/`--help` before `--`, without
+performing actions. `bedrock help env` and `bedrock help exit-codes` cover settings
+and results; `bedrock version` reports the local CLI build. Typos suggest corrected
+commands without running them. Use `--json` for scripts; text output uses tables
+and confirmations, with colour only on a TTY without `NO_COLOR`.
+`bedrock completion bash|zsh|fish|powershell` prints a completion script;
+see [CLI usage](docs/reference.md#cli-usage) for shell installation, argument grammar,
+JSON help shapes and exit codes.
+
 ## Non-interactive setup (agents)
 
 Every prompt has a flag. With redirected stdin, `--yes`, or `--json`, setup never
@@ -218,7 +228,7 @@ bedrock rollback hello
 
 Backups run in the daemon (default every 60 minutes). They use consistent SQLite
 `VACUUM INTO`, gzip, SHA-256 file deduplication, and manifests. Retention keeps the
-newest 24 snapshots and prunes older ones; unreferenced file blobs are collected. Adjust with setup flags `--interval-minutes` and `--keep` (how many
+newest 24 snapshots and prunes older ones; unreferenced file blobs are collected. Adjust with `bedrock backup setup` flags `--interval-minutes` and `--keep` (how many
 snapshots to keep), or the `backup` section of `$BEDROCK_HOME/config.json`.
 
 Restore stops the pebble, verifies the database and every file, swaps its data

@@ -21,7 +21,21 @@ test("daemon CLI uses local credentials, honors explicit flags, and reports one 
     expect((await setup(home, "localhost", undefined, 0)).created).toBe(true);
     expect((await setup(home, "other.test")).created).toBe(false);
     daemon = await startDaemon({ home });
+    const text = async (args: string[]) => {
+      const child = Bun.spawn([process.execPath, cli, ...args], { env, stdout: "pipe", stderr: "pipe" });
+      const output = await new Response(child.stdout).text();
+      expect(await child.exited).toBe(0);
+      return output;
+    };
+    expect(await text(["ls"])).toContain("No pebbles yet. Run bedrock new my-app.");
     expect((await command(["deploy", "examples/notes"])).code).toBe(0);
+    const listing = await text(["ls"]);
+    expect(listing).toContain("NAME");
+    expect(listing).toContain("PUBLIC ROUTES");
+    expect(listing).toContain("SOURCE");
+    expect(listing).toContain("notes");
+    expect(await text(["status"])).not.toContain("Telemetry:");
+    expect(await text(["whoami"])).not.toContain("notes.localhost");
     expect((await command(["ls"])).value.value[0].name).toBe("notes");
     expect((await command(["status"])).value.pebbles[0].url).toStartWith("http://notes.localhost:");
     expect((await command(["whoami"])).value.user).toBe("server creator token");
@@ -47,3 +61,18 @@ test("daemon CLI uses local credentials, honors explicit flags, and reports one 
     expect((await command(["ls"])).value.value).toEqual([]);
   } finally { await daemon?.stop(); temp.cleanup(); }
 }, 30000);
+
+test("invalid daemon and telemetry options exit 2 with local usage before side effects", async () => {
+  const temp = tempDirectory();
+  try {
+    for (const args of [["daemon", "--port=abc"], ["daemon", "--port=70000"], ["metrics", "notes", "--limit=0"], ["logs", "notes", "--since=366d"]]) {
+      const child = Bun.spawn([process.execPath, cli, ...args], { env: { ...process.env, BEDROCK_HOME: temp.dir }, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      expect(code).toBe(2);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("INVALID_ARGS: Invalid value '");
+      expect(stderr).toContain(`bedrock ${args[0]}`);
+    }
+    expect(await Bun.file(join(temp.dir, "daemon.json")).exists()).toBe(false);
+  } finally { temp.cleanup(); }
+});

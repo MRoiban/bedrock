@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { linkedBunEnv, tempDirectory } from "./helpers";
 import { init } from "../src/cli/init";
 import { dbCommand } from "../src/cli/db";
+import { parse } from "../src/cli/args";
 import { run } from "../src/cli/terminal";
 import { setup } from "../src/daemon/config";
 import { createArchive } from "../src/daemon/archive";
@@ -28,7 +29,7 @@ async function reactStarter(dir: string, env: NodeJS.ProcessEnv) {
   const source = await Bun.file(join(pebble, "pebble.ts")).text();
   await Bun.write(join(pebble, "pebble.ts"), source.replace('access: "users"', 'access: "public"'));
   await run([process.execPath, "install"], { cwd: pebble, env });
-  await dbCommand("generate", pebble);
+  await dbCommand(parse(["db"], ["generate"]), false, pebble);
   return pebble;
 }
 

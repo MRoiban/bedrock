@@ -7,6 +7,7 @@ import { readdirSync } from "node:fs";
 import { tempDirectory } from "./helpers";
 import { wizardHarness, fakeCloudflare } from "./onboarding-harness";
 import { setupWizard } from "../src/cli/setup";
+import { parse } from "../src/cli/args";
 import { readConfig } from "../src/daemon/config";
 import { tunnelStatus, tunnelTeardown } from "../src/tunnel";
 import { newPebble } from "../src/cli/new";
@@ -21,7 +22,7 @@ test("scripted full wizard uses fake cloudflared, private local config and real 
   const temp = tempDirectory();
   try {
     const fixture = await wizardHarness(temp.dir, ["example.com", "", "", "", client, "google-secret", "disk", "/mnt/backup/bedrock"]);
-    await setupWizard([], false, fixture.options);
+    await setupWizard(parse(["setup"], []), false, fixture.options);
     const config = await readConfig(fixture.home);
     expect(config.cloudflare?.mode).toBe("local");
     // Relative paths keep config.json valid when BEDROCK_HOME moves; cloudflared gets absolute ones.
@@ -41,7 +42,7 @@ test("scripted full wizard uses fake cloudflared, private local config and real 
     if (process.env.UPDATE_ONBOARDING_TRANSCRIPT) await Bun.write(join(import.meta.dir, "fixtures/wizard-transcript.txt"), transcript);
     expect(transcript).toBe((await Bun.file(join(import.meta.dir, "fixtures/wizard-transcript.txt")).text()).replaceAll("\r\n", "\n"));
     fixture.calls.length = 0;
-    await setupWizard([], false, fixture.options);
+    await setupWizard(parse(["setup"], []), false, fixture.options);
     expect(fixture.calls).toHaveLength(0);
   } finally { temp.cleanup(); }
 });
@@ -52,16 +53,16 @@ test("wizard resumes after cloudflare failure and redo rewrites one step, invali
     const fixture = await wizardHarness(temp.dir, ["example.com", "creator@example.com", "", "", "skip", "skip"]);
     const execute = fixture.options.terminal!.run!;
     fixture.options.terminal!.run = async (args, opts) => { if (args.includes("route") && !args.includes("--help")) throw new Error("simulated DNS failure"); return execute(args, opts); };
-    await expect(setupWizard([], false, fixture.options)).rejects.toMatchObject({ code: "LOCAL_DNS_FAILED" });
-    let status = await setupWizard(["--status"], true, fixture.options);
+    await expect(setupWizard(parse(["setup"], []), false, fixture.options)).rejects.toMatchObject({ code: "LOCAL_DNS_FAILED" });
+    let status = await setupWizard(parse(["setup"], ["--status"]), true, fixture.options);
     expect(status.steps.filter(s => s.done).map(s => s.step)).toEqual(["prereqs", "identity"]);
     fixture.options.terminal!.run = execute;
-    await setupWizard([], false, fixture.options);
+    await setupWizard(parse(["setup"], []), false, fixture.options);
     expect(fixture.calls.filter(args => args.includes("create"))).toHaveLength(1);
     fixture.calls.length = 0;
-    await setupWizard(["identity", "--domain", "example.com", "--creator", "new@example.com", "--port", "4000", "--yes"], false, fixture.options);
+    await setupWizard(parse(["setup"], ["identity", "--domain", "example.com", "--creator", "new@example.com", "--port", "4000", "--yes"]), false, fixture.options);
     expect((await readConfig(fixture.home)).port).toBe(4000);
-    status = await setupWizard(["--status"], true, fixture.options);
+    status = await setupWizard(parse(["setup"], ["--status"]), true, fixture.options);
     expect(status.steps.find(s => s.step === "service")?.done).toBe(false);
     expect(fixture.calls).toHaveLength(0);
   } finally { temp.cleanup(); }
@@ -72,7 +73,7 @@ test("setup identity stores --data-dir and refuses to switch it under existing p
   try {
     const fixture = await wizardHarness(temp.dir);
     const disk = join(temp.dir, "disk");
-    const identity = (dir: string) => setupWizard(["identity", "--yes", "--domain", "example.com", "--creator", "creator@example.com", "--data-dir", dir], true, { ...fixture.options, tty: false });
+    const identity = (dir: string) => setupWizard(parse(["setup"], ["identity", "--yes", "--domain", "example.com", "--creator", "creator@example.com", "--data-dir", dir]), true, { ...fixture.options, tty: false });
     await expect(identity(join(fixture.home, "pebbles", "notes"))).rejects.toMatchObject({ code: "INVALID_DATA_DIR" });
     if (process.platform !== "win32") {
       await mkdir(fixture.home, { recursive: true });
@@ -93,7 +94,7 @@ test("noninteractive missing flags are collected before changes and JSON never p
   const temp = tempDirectory();
   try {
     const fixture = await wizardHarness(temp.dir);
-    try { await setupWizard([], true, fixture.options); throw new Error("expected error"); }
+    try { await setupWizard(parse(["setup"], []), true, fixture.options); throw new Error("expected error"); }
     catch (error) { expect(error).toMatchObject({ code: "SETUP_FLAGS_MISSING" }); const hint = (error as { hint: string }).hint; for (const flag of ["--domain", "--creator", "--api-token", "--google-client-id", "--google-client-secret", "--dir"]) expect(hint).toContain(flag);
       expect(hint).toStartWith("Minimal fresh setup: --domain <domain> --creator <email> --api-token <token> --skip-google --skip-backups.");
       expect(hint).toContain("browser login cannot run unattended");
@@ -110,14 +111,14 @@ test("noninteractive complete flags discover zone/account and use remote tunnel 
   try {
     const fixture = await wizardHarness(temp.dir);
     const cf = fakeCloudflare();
-    await setupWizard(flags, true, { ...fixture.options, tty: false, api: cf.api });
+    await setupWizard(parse(["setup"], flags), true, { ...fixture.options, tty: false, api: cf.api });
     const config = await readConfig(fixture.home);
     expect(config.cloudflare).toMatchObject({ accountId: cf.account, zoneId: cf.zone, tunnelId: "remote-id" });
     expect(cf.requests[0]?.path).toContain("/zones?name=example.com");
     expect(fixture.prompts).toHaveLength(0);
     expect(fixture.output).toHaveLength(0);
     expect(await Bun.file(join(fixture.home, "config.json")).text()).not.toContain("fake-secret");
-    expect((await setupWizard(["--status"], true, fixture.options)).steps.every(step => step.done)).toBe(true);
+    expect((await setupWizard(parse(["setup"], ["--status"]), true, fixture.options)).steps.every(step => step.done)).toBe(true);
   } finally { temp.cleanup(); }
 });
 
@@ -125,9 +126,9 @@ test("R2 setup discovers account and saves secret separately; local teardown use
   const temp = tempDirectory();
   try {
     const fixture = await wizardHarness(temp.dir, ["example.com", "creator@example.com", "", "", "skip", "skip"]);
-    await setupWizard([], false, fixture.options);
+    await setupWizard(parse(["setup"], []), false, fixture.options);
     const cf = fakeCloudflare();
-    await setupWizard(["backups", "--yes", "--r2-bucket", "bedrock-backups", "--r2-access-key-id", "key", "--r2-secret-access-key", "secret"], true, { ...fixture.options, api: cf.api });
+    await setupWizard(parse(["setup"], ["backups", "--yes", "--r2-bucket", "bedrock-backups", "--r2-access-key-id", "key", "--r2-secret-access-key", "secret"]), true, { ...fixture.options, api: cf.api });
     expect((await readConfig(fixture.home)).backup).toMatchObject({ type: "r2", account: cf.account });
     expect(await Bun.file(join(fixture.home, "config.json")).text()).not.toContain('"secret"');
     if (process.platform !== "win32") expect((await stat(join(fixture.home, "backup-credentials"))).mode & 0o777).toBe(0o600);
@@ -179,7 +180,7 @@ test("new React scaffold installs, migrates, commits, builds and deploy prints U
       return Response.json({ ok: true, value: { name: "my-app" } });
     } });
     console.log = (...args: unknown[]) => output.push(args.join(" "));
-    await daemonCommand("deploy", [created.dir, "--url", `http://127.0.0.1:${daemon.port}`, "--token", "fake-token", "--no-open"], false);
+    await daemonCommand(parse(["deploy"], [created.dir, "--url", `http://127.0.0.1:${daemon.port}`, "--token", "fake-token", "--no-open"]), false);
     console.log = originalLog;
     const transcript = output.join("\n") + "\n";
     if (process.env.UPDATE_ONBOARDING_TRANSCRIPT) await Bun.write(join(import.meta.dir, "fixtures/creator-transcript.txt"), transcript);
@@ -193,9 +194,9 @@ test("local wildcard routing falls back to discovered DNS API without changing t
     const fixture = await wizardHarness(temp.dir, ["example.com", "creator@example.com", "", "", "skip", "skip"]);
     const execute = fixture.options.terminal!.run!;
     fixture.options.terminal!.run = async (args, opts) => { if (args.includes("route") && !args.includes("--help")) throw new Error("unsupported wildcard"); return execute(args, opts); };
-    await expect(setupWizard([], false, fixture.options)).rejects.toMatchObject({ code: "LOCAL_DNS_FAILED" });
+    await expect(setupWizard(parse(["setup"], []), false, fixture.options)).rejects.toMatchObject({ code: "LOCAL_DNS_FAILED" });
     const cf = fakeCloudflare();
-    await setupWizard(["cloudflare", "--yes"], true, { ...fixture.options, api: cf.api });
+    await setupWizard(parse(["setup"], ["cloudflare", "--yes"]), true, { ...fixture.options, api: cf.api });
     expect((await readConfig(fixture.home)).cloudflare?.mode).toBe("local");
     expect(cf.requests.find(request => request.method === "POST" && request.path.includes("dns_records"))?.body).toMatchObject({ name: "*.example.com", content: "11111111-1111-1111-1111-111111111111.cfargotunnel.com", proxied: true });
     expect(await tunnelStatus(fixture.home, cf.api)).toMatchObject({ matches: true });
@@ -265,10 +266,10 @@ test("Linux linger requires an explicit flag in unattended mode, and daemon star
   try {
     const fixture = await wizardHarness(temp.dir);
     const cf = fakeCloudflare();
-    await setupWizard([...flags, "--enable-linger"], true, { ...fixture.options, platform: "linux", api: cf.api });
+    await setupWizard(parse(["setup"], [...flags, "--enable-linger"]), true, { ...fixture.options, platform: "linux", api: cf.api });
     expect(fixture.calls.some(args => args[0] === "loginctl" && args.includes("enable-linger"))).toBe(true);
-    await expect(setupWizard(["service", "--yes"], true, { ...fixture.options, status: async () => { throw new Error("not ready"); } })).rejects.toMatchObject({ code: "DAEMON_UNREACHABLE" });
-    expect((await setupWizard(["--status"], true, fixture.options)).steps.find(s => s.step === "service")?.done).toBe(false);
+    await expect(setupWizard(parse(["setup"], ["service", "--yes"]), true, { ...fixture.options, status: async () => { throw new Error("not ready"); } })).rejects.toMatchObject({ code: "DAEMON_UNREACHABLE" });
+    expect((await setupWizard(parse(["setup"], ["--status"]), true, fixture.options)).steps.find(s => s.step === "service")?.done).toBe(false);
   } finally { temp.cleanup(); }
 });
 
@@ -307,7 +308,7 @@ test("unexpected setup command and parse errors name the step/command and retain
         if (kind === "execute") throw new Error("raw failure");
         return "invalid json";
       };
-      try { await setupWizard(["cloudflare", "--yes"], true, fixture.options); throw new Error("expected failure"); }
+      try { await setupWizard(parse(["setup"], ["cloudflare", "--yes"]), true, fixture.options); throw new Error("expected failure"); }
       catch (error) {
         if (kind === "typed") expect(error).toBe(typed);
         else {
@@ -316,7 +317,7 @@ test("unexpected setup command and parse errors name the step/command and retain
           expect((error as BedrockError).toJSON()).toHaveProperty("detail");
         }
       }
-      expect((await setupWizard(["--status"], true, fixture.options)).steps.find(step => step.step === "cloudflare")?.done).toBe(false);
+      expect((await setupWizard(parse(["setup"], ["--status"]), true, fixture.options)).steps.find(step => step.step === "cloudflare")?.done).toBe(false);
     } finally { temp.cleanup(); }
   }
 });
@@ -325,9 +326,9 @@ test("prerequisites reports the running Bun path and rejects Bun older than 1.2"
   const temp = tempDirectory();
   try {
     const fixture = await wizardHarness(temp.dir);
-    await setupWizard(["prereqs", "--yes"], false, { ...fixture.options, version: "1.2.19" });
+    await setupWizard(parse(["setup"], ["prereqs", "--yes"]), false, { ...fixture.options, version: "1.2.19" });
     expect(fixture.output).toContain(`✓ Bun 1.2.19 (${process.execPath})`);
-    await expect(setupWizard(["prereqs", "--yes"], true, { ...fixture.options, version: "1.1.9" })).rejects.toMatchObject({ code: "BUN_TOO_OLD" });
+    await expect(setupWizard(parse(["setup"], ["prereqs", "--yes"]), true, { ...fixture.options, version: "1.1.9" })).rejects.toMatchObject({ code: "BUN_TOO_OLD" });
   } finally { temp.cleanup(); }
 });
 
@@ -337,7 +338,7 @@ test("Windows prerequisites installs cloudflared through WinGet with explicit un
     const fixture = await wizardHarness(temp.dir);
     let installed = false;
     const commands: string[][] = [];
-    await setupWizard(["prereqs", "--yes", "--install-cloudflared"], true, { ...fixture.options, platform: "win32",
+    await setupWizard(parse(["setup"], ["prereqs", "--yes", "--install-cloudflared"]), true, { ...fixture.options, platform: "win32",
       binary: () => { if (!installed) throw new BedrockError("CLOUDFLARED_MISSING", "missing", "install"); return "cloudflared.exe"; },
       terminal: { ...fixture.options.terminal, run: async args => { commands.push(args); installed = true; return ""; } },
     });

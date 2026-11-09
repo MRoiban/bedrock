@@ -8,13 +8,18 @@ import { openDatabase, migrationPlan, applyMigrations, validateMigrationSql } fr
 import { loadPebble } from "../runtime/load";
 import { BedrockError } from "../error";
 import { diffSchema } from "./schema-diff";
+import { usageError } from "./args";
+import type { Parsed } from "./spec";
 
 export interface DbOptions { name?: string | undefined; allowDataLoss?: boolean }
 
-export async function dbCommand(command: string, dir = process.cwd(), options: DbOptions = {}) {
+export async function dbCommand(parsed: Parsed, _json = false, dir = process.cwd()) {
+  const command = parsed.path[1];
+  const options: DbOptions = { name: parsed.positionals[0], allowDataLoss: !!parsed.flags["--allow-data-loss"] };
   const migrations = join(dir, "migrations");
   if (command === "new") {
     const name = slug(options.name ?? "");
+    if (!name) throw usageError(parsed.path, `Invalid migration name '${options.name}'; use letters or digits.`);
     const file = await reserveFile(migrations, name);
     await Bun.write(join(migrations, file), `-- ${name}: hand-written migration; Bedrock applies it in one transaction.\n`);
     return { command: "db new", file: `migrations/${file}` };
@@ -36,7 +41,7 @@ export async function dbCommand(command: string, dir = process.cwd(), options: D
   try {
     if (command === "plan") return { command: "db plan", pending: await migrationPlan(database.sqlite, migrations) };
     if (command === "migrate") return { command: "db migrate", applied: await applyMigrations(database.sqlite, migrations) };
-    throw new BedrockError("UNKNOWN_COMMAND", `Unknown db command: ${command}`, "Use bedrock db generate, new, check, plan, or migrate.");
+    throw usageError(parsed.path, `Unknown db command '${command}'.`);
   } finally { database.close(); }
 }
 
@@ -74,7 +79,6 @@ function slug(name: string) {
 
 // Timestamped names sort after legacy 0000_* files and keep parallel branches from colliding.
 async function reserveFile(migrations: string, name: string) {
-  if (!name) throw new BedrockError("INVALID_ARGS", "A migration name is required.", "Use bedrock db new <name>, for example bedrock db new backfill_titles.");
   await mkdir(migrations, { recursive: true });
   const stamps = (await readdir(migrations)).map(file => /^(\d{14})_/.exec(file)?.[1]).filter(Boolean) as string[];
   const latest = stamps.sort().at(-1);

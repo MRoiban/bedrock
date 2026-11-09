@@ -1,3 +1,4 @@
+import { suggestDaemonError } from "./suggestions";
 import { readConfig } from "./config";
 import { alertsApi } from "./alerts/api";
 import { errorApi } from "./errors/api";
@@ -5,7 +6,7 @@ import { telemetryQuery, telemetryStatus } from "./telemetry/api";
 import { tokenCreator } from "./creator";
 import type { SessionLinks } from "../auth/session-links";
 import { join } from "node:path";
-import { authorizeScope, matchesPebble } from "./token-scope";
+import { authorizeScope, matchesPebble, type TokenScope } from "./token-scope";
 import { createSecrets } from "./secrets";
 import type { BuildInfo } from "../version";
 import { daemonFeatures } from "../features";
@@ -36,6 +37,10 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
     if (!token || !db.accepts(token)) throw new BedrockError("UNAUTHORIZED", "A valid deploy token is required.", "Run bedrock login for the remote server, pass a valid --token, or restart the local daemon to restore its admin token.");
     const scope = db.tokenScope(token);
     authorizeScope(scope, request);
+    try { return await route(request, token, scope); }
+    catch (error) { throw await suggestDaemonError(error, request, scope, db, supervisor, backups); }
+  };
+  async function route(request: Request, token: string, scope: TokenScope | null) {
     const alertResponse = await alertsApi(request, supervisor.alerts, scope);
     if (alertResponse) return alertResponse;
     const records = () => db.list().filter(record => !scope || matchesPebble(scope, record.name));
@@ -155,5 +160,5 @@ export function createApi(db: DaemonDatabase, releases: Releases, supervisor: Su
       else throw new BedrockError("NOT_FOUND", "Unknown daemon endpoint or method.", "Use GET logs, POST start/stop/restart/rollback, or DELETE with confirm=true.");
     }
     return Response.json({ ok: true, value });
-  };
+  }
 }

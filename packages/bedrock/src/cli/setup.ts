@@ -6,14 +6,13 @@ import { Cloudflare } from "../tunnel/client";
 import { type Check } from "./doctor";
 import { BedrockError } from "../error";
 import { stepActions } from "./setup-steps";
+import type { Parsed } from "./spec";
 import { terminal, marker, type Terminal } from "./terminal";
 
 export const setupSteps = ["prereqs", "identity", "cloudflare", "google", "backups", "service", "verify"] as const;
 type Step = typeof setupSteps[number];
 const stepLabels: Record<Step, string> = { prereqs: "Prerequisites", identity: "Identity", cloudflare: "Cloudflare", google: "Google", backups: "Backups", service: "Service", verify: "Verify" };
 interface State { version: 1; steps: Partial<Record<Step, { completedAt: string; skipped?: boolean }>> }
-const booleans = ["--yes", "--status", "--install-cloudflared", "--skip-google", "--skip-backups", "--enable-linger", "--skip-sign-in"];
-const values = ["--domain", "--creator", "--port", "--data-dir", "--api-token", "--google-client-id", "--google-client-secret", "--dir", "--r2-account", "--r2-bucket", "--r2-access-key-id", "--r2-secret-access-key"];
 export interface SetupOptions {
   home?: string; tty?: boolean; terminal?: Partial<Terminal>; binary?: () => string; api?: Cloudflare;
   platform?: string; version?: string; disk?: typeof statfs; portFree?: (port: number) => Promise<boolean>;
@@ -34,16 +33,10 @@ export async function portFree(port: number): Promise<boolean> {
     server.listen(port, "127.0.0.1", () => server.close(() => resolve(true)));
   });
 }
-export async function setupWizard(args: string[], json = false, options: SetupOptions = {}) {
-  const flags: Record<string, string> = {};
-  let step: Step | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (setupSteps.includes(arg as Step) && !step) { step = arg as Step; continue; }
-    if (![...booleans, ...values].includes(arg) || flags[arg]) throw new BedrockError("INVALID_ARGS", `Unknown or repeated setup argument: ${arg}`, "Use bedrock setup [prereqs|identity|cloudflare|google|backups|service|verify] [--status] [--json].");
-    if (booleans.includes(arg)) flags[arg] = "true";
-    else { const value = args[++i]; if (!value || value.startsWith("--")) throw new BedrockError("INVALID_ARGS", `Missing ${arg} value.`, `Pass ${arg} <value>.`); flags[arg] = value; }
-  }
+export async function setupWizard(parsed: Parsed, json = false, options: SetupOptions = {}) {
+  // Setup steps share string flags with their interactive prompt answers.
+  const flags = Object.fromEntries(Object.entries(parsed.flags).map(([name, value]) => [name, String(value)]));
+  const step = parsed.positionals[0] as Step | undefined;
   const home = options.home ?? bedrockHome();
   const io = { ...terminal, ...options.terminal };
   let lastCommand: string | undefined;

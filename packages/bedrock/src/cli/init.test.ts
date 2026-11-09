@@ -46,9 +46,9 @@ for (const command of ["new", "init", "db", "deploy", "rm", "start", "stop", "re
         const result = await runCli([command, flag], temp.dir);
         expect(result.code).toBe(0);
         expect(result.stderr).toBe("");
-        expect(result.stdout).toContain(`Usage: bedrock ${command} `);
+        expect(result.stdout).toContain(`usage: bedrock ${command} `);
         if (command === "new" || command === "init") expect(result.stdout).toContain("<name> [--template react|minimal]");
-        expect(result.stdout.trim().split("\n")).toHaveLength(2);
+        expect(result.stdout).toContain("Options\n");
         expect(await readdir(temp.dir)).toEqual([]);
       }
     } finally { temp.cleanup(); }
@@ -59,9 +59,9 @@ for (const command of ["new", "init"]) {
   test(`${command} rejects unknown flags with usage hints before writing files`, async () => {
     const temp = tempDirectory();
     try {
-      for (const args of [["-x"], ["--unknown"], ["--template"], ["notes", "--unknown"], ["notes", "--template", "-x"]]) {
+      for (const args of [["-x"], ["--unknown"], ["--template"], ["notes", "--unknown"], ["notes", "--template", "-x"], ["notes", "--template", "default"]]) {
         const result = await runCli([command, ...args, "--json"], temp.dir);
-        expect(result.code).toBe(1);
+        expect(result.code).toBe(2);
         expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: "INVALID_ARGS", hint: expect.stringContaining(`bedrock ${command} <name>`) } });
         expect(await readdir(temp.dir)).toEqual([]);
       }
